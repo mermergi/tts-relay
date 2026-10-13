@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">朗读中转</string>
+    <string name="notif_channel">朗读中转服务</string>
+    <string name="notif_title">朗读中转运行中</string>
+</resources>
