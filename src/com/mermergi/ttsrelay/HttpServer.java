@@ -33,7 +33,22 @@ import java.util.Map;
  */
 public final class HttpServer {
 
+    /**
+     * "这是后台小活、别念" 的关键词。
+     * 只扫 <b>system / developer</b> 提示词，绝不扫整包 messages ——
+     * 联网搜索的结果长这样 {"title":…,"link":…,"snippet":…}，
+     * 扫整包必然命中 "title"，于是搜索结果之后那条正牌回复被整段静音。
+     */
     private static final String[] SKIP_MARKERS = {"标题", "title", "摘要", "summar", "命名"};
+
+    /** 一次"念不念"的判定结果 + 理由，出问题看日志就知道是谁把嘴捂上的。 */
+    private static final class Decision {
+        final boolean speak;
+        /** 要不要打断正在念的上一段。false = 接在它后面排队（同一个回合的工具续写）。 */
+        final boolean cut;
+        final String why;
+        Decision(boolean s, boolean c, String w) { speak = s; cut = c; why = w; }
+    }
 
     private final Context ctx;
     private final Speaker speaker;
@@ -133,7 +148,7 @@ public final class HttpServer {
             }
 
             if (path.startsWith("/_")) {
-                admin(rawOut, method, path, query);
+                admin(rawOut, method, path, query, body);
             } else if ("OPTIONS".equals(method)) {
                 // 浏览器/网页版客户端（酒馆这类）会先发预检，必须答好，否则跨域直接被拦
                 Map<String, String> h = new LinkedHashMap<String, String>();
@@ -152,8 +167,21 @@ public final class HttpServer {
     }
 
     // ══════════════════════════ 管理接口 ══════════════════════════
-    private void admin(OutputStream out, String method, String path, String query) throws IOException {
+    private void admin(OutputStream out, String method, String path, String query, byte[] body)
+            throws IOException {
         Map<String, String> qs = parseQuery(query);
+        if ("/_check".equals(path)) {
+            // 把一段请求体喂进来，只做"念不念"的判定、不转发 —— 用来复现静音问题
+            Decision d = decide(body == null ? new byte[0] : body);
+            JSONObject o = bodyInfo(body == null ? new byte[0] : body);
+            try {
+                o.put("speak", d.speak);
+                o.put("cut", d.cut);
+                o.put("why", d.why);
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
+            return;
+        }
         if ("/_log".equals(path)) {
             byte[] b = LogBus.dump().getBytes(StandardCharsets.UTF_8);
             Map<String, String> h = new LinkedHashMap<String, String>();
@@ -253,8 +281,9 @@ public final class HttpServer {
                        Map<String, String> headers, byte[] body) throws IOException {
 
         boolean chat = path.endsWith("/chat/completions") && "POST".equals(method);
-        boolean speak = chat && shouldSpeak(body);
-        logRequest(method, path, body, speak, chat);
+        Decision dec = chat ? decide(body) : new Decision(false, true, "非对话请求");
+        boolean speak = dec.speak;
+        logRequest(method, path, body, dec, chat);
 
         // 不在这里就打断！等这一轮真的吐出第一句可念的正文时再打断。
         // 否则"会话标题生成""摘要"这类不发声的请求会把正在念的回复整段清空 → 直接没声音。
@@ -309,7 +338,7 @@ public final class HttpServer {
             if (ct != null) outHeaders.put("Content-Type", ct);
 
             if (ct != null && ct.contains("text/event-stream")) {
-                streamSse(out, conn, code, outHeaders, speak, turnStarted);
+                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut);
                 return;
             }
 
@@ -329,8 +358,10 @@ public final class HttpServer {
                             Object c = msg.opt("content");
                             if (c instanceof String) {
                                 Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4);
-                                emit(sp.feed((String) c), turnStarted);
-                                emit(sp.flush(), turnStarted);
+                                int[] sent = new int[]{0};
+                                emit(sp.feed((String) c), turnStarted, sent, dec.cut);
+                                emit(sp.flush(), turnStarted, sent, dec.cut);
+                                if (sent[0] > 0) LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
                             }
                         }
                     }
@@ -348,8 +379,8 @@ public final class HttpServer {
 
     /** 边转发边解析，客户端拿到的字节和上游一模一样。 */
     private void streamSse(OutputStream out, HttpURLConnection conn, int code,
-                           Map<String, String> headers, boolean speak, boolean[] started)
-            throws IOException {
+                           Map<String, String> headers, boolean speak, boolean[] started,
+                           boolean cut) throws IOException {
         writeHead(out, code, headers, -1, true);
 
         InputStream in = conn.getInputStream();
@@ -361,6 +392,7 @@ public final class HttpServer {
 
         byte[] buf = new byte[8192];
         int n;
+        int[] sent = new int[]{0};
         while ((n = in.read(buf)) > 0) {
             writeChunk(out, buf, 0, n);            // 原样透传
             if (!speak) continue;
@@ -373,32 +405,39 @@ public final class HttpServer {
             while ((nl = lineBuf.indexOf("\n")) >= 0) {
                 String l = lineBuf.substring(0, nl);
                 lineBuf.delete(0, nl + 1);
-                sseLine(l, sp, started);
+                sseLine(l, sp, started, sent, cut);
             }
         }
         if (speak) {
-            if (lineBuf.length() > 0) sseLine(lineBuf.toString(), sp, started);
-            emit(sp.flush(), started);
+            if (lineBuf.length() > 0) sseLine(lineBuf.toString(), sp, started, sent, cut);
+            emit(sp.flush(), started, sent, cut);
+            // 这条请求到底吐了几句正文？—— 和请求日志对起来就知道是哪一发在发声
+            LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
         }
         endChunks(out);
     }
 
     /** 真的凑出可念的句子了，才去打断上一段 —— 这是"没声音"那个坑的正解。 */
-    private void emit(java.util.List<String> sentences, boolean[] started) {
+    private void emit(java.util.List<String> sentences, boolean[] started, int[] sent,
+                      boolean cut) {
         if (sentences == null || sentences.isEmpty()) return;
         if (!started[0]) {
             started[0] = true;
-            speaker.interrupt();
+            // 同一个回合的工具续写：接在后面念，不腰斩正在播的那一句
+            if (cut) speaker.interrupt();
         }
-        for (String s : sentences) speaker.feed(s);
+        for (String s : sentences) {
+            speaker.feed(s);
+            sent[0]++;
+        }
     }
 
-    private void sseLine(String line, Splitter sp, boolean[] started) {
+    private void sseLine(String line, Splitter sp, boolean[] started, int[] sent, boolean cut) {
         line = line.trim();
         if (!line.startsWith("data:")) return;
         String payload = line.substring(5).trim();
         if (payload.length() == 0 || "[DONE]".equals(payload)) {
-            emit(sp.flush(), started);
+            emit(sp.flush(), started, sent, cut);
             return;
         }
         try {
@@ -411,27 +450,40 @@ public final class HttpServer {
                 JSONObject d = c.optJSONObject("delta");
                 if (d != null) {
                     Object v = d.opt("content");
-                    if (v instanceof String) emit(sp.feed((String) v), started);
+                    if (v instanceof String) emit(sp.feed((String) v), started, sent, cut);
                 }
                 JSONObject m = c.optJSONObject("message");
                 if (m != null) {
                     Object v = m.opt("content");
-                    if (v instanceof String) emit(sp.feed((String) v), started);
+                    if (v instanceof String) emit(sp.feed((String) v), started, sent, cut);
                 }
             }
         } catch (Throwable ignored) { }
     }
 
     /** 每个转发请求都记一笔 —— 出问题时看一眼日志就知道 Chatbox 到底发了几发、发的什么。 */
-    private void logRequest(String method, String path, byte[] body, boolean speak, boolean chat) {
+    private void logRequest(String method, String path, byte[] body, Decision d, boolean chat) {
         if (!chat) {
             if (!"GET".equals(method)) LogBus.add("← " + method + " " + path);
             return;
         }
-        String info = "";
+        JSONObject info = bodyInfo(body);
+        LogBus.add("← " + method + " " + path
+                + " model=" + info.optString("model", "?")
+                + " msgs=" + info.optInt("msgs", 0)
+                + " 末条=" + info.optString("last", "-") + "(" + info.optInt("lastLen", 0) + "字)"
+                + " max_tokens=" + info.optInt("max_tokens", -1)
+                + " stream=" + info.optBoolean("stream", false)
+                + "  →  " + (d.speak ? (d.cut ? "念" : "念·接在后面") : "跳过")
+                + "（" + d.why + "）");
+    }
+
+    /** 把请求体里能看懂的字段抠出来，日志和 /_check 共用。 */
+    private static JSONObject bodyInfo(byte[] body) {
+        JSONObject o = new JSONObject();
         try {
-            JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
-            JSONArray m = o.optJSONArray("messages");
+            JSONObject src = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            JSONArray m = src.optJSONArray("messages");
             int cnt = m == null ? 0 : m.length();
             String lastRole = "-";
             int lastLen = 0;
@@ -443,27 +495,70 @@ public final class HttpServer {
                     lastLen = c == null ? 0 : String.valueOf(c).length();
                 }
             }
-            info = " model=" + o.optString("model", "?")
-                    + " msgs=" + cnt + " 末条=" + lastRole + "(" + lastLen + "字)"
-                    + " max_tokens=" + o.optInt("max_tokens", -1)
-                    + " stream=" + o.optBoolean("stream", false);
+            o.put("model", src.optString("model", "?"));
+            o.put("msgs", cnt);
+            o.put("last", lastRole);
+            o.put("lastLen", lastLen);
+            o.put("max_tokens", src.optInt("max_tokens", -1));
+            o.put("stream", src.optBoolean("stream", false));
         } catch (Throwable ignored) { }
-        LogBus.add("← " + method + " " + path + info + "  →  " + (speak ? "念" : "跳过"));
+        return o;
     }
 
-    private boolean shouldSpeak(byte[] body) {
-        if (Prefs.muted(ctx)) return false;
-        if (!Prefs.skipSmall(ctx)) return true;
+    /**
+     * 念不念？ —— 唯一的判定入口，理由会写进日志。
+     *
+     * 规矩只有三条：
+     *   ① 额度特别小的请求 = 客户端在后台起标题/写摘要，不念；
+     *   ② 末条是 tool 结果 / 带 tool_calls 的 assistant = 工具轮的续写，
+     *      联网搜索回灌后的那一条正是最终答复 —— 必须念（老版本这里被误杀），
+     *      而且要**接在上一段后面排队**、不许打断，因为它是同一个回合的后半截；
+     *   ③ "起标题"关键词只在 system 提示词里找，绝不碰用户和工具正文。
+     */
+    private Decision decide(byte[] body) {
+        if (Prefs.muted(ctx)) return new Decision(false, true, "已静音");
+        if (!Prefs.skipSmall(ctx)) return new Decision(true, true, "跳过规则已关");
         try {
             JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
+
             int mt = o.optInt("max_tokens", -1);
-            if (mt > 0 && mt < 200) return false;
+            if (mt > 0 && mt < 200) return new Decision(false, true, "max_tokens=" + mt + "，后台小活");
             int mct = o.optInt("max_completion_tokens", -1);
-            if (mct > 0 && mct < 200) return false;
-            String blob = String.valueOf(o.opt("messages")).toLowerCase(Locale.US);
-            for (String m : SKIP_MARKERS) if (blob.contains(m)) return false;
+            if (mct > 0 && mct < 200) {
+                return new Decision(false, true, "max_completion_tokens=" + mct + "，后台小活");
+            }
+
+            JSONArray m = o.optJSONArray("messages");
+            StringBuilder sys = new StringBuilder();
+            String lastRole = "";
+            boolean lastToolCalls = false;
+            if (m != null) {
+                for (int i = 0; i < m.length(); i++) {
+                    JSONObject msg = m.optJSONObject(i);
+                    if (msg == null) continue;
+                    String role = msg.optString("role", "");
+                    if ("system".equals(role) || "developer".equals(role)) {
+                        sys.append(String.valueOf(msg.opt("content"))).append('\n');
+                    }
+                    if (i == m.length() - 1) {
+                        lastRole = role;
+                        lastToolCalls = msg.opt("tool_calls") instanceof JSONArray;
+                    }
+                }
+            }
+            // 工具轮的续写：这一发是"搜索结果回来之后"的正文
+            boolean continuation = "tool".equals(lastRole) || "function".equals(lastRole)
+                    || lastToolCalls;
+            if (continuation) {
+                return new Decision(true, false, "工具轮续写：接在上一段后面念，不打断");
+            }
+
+            String s = sys.toString().toLowerCase(Locale.US);
+            for (String mk : SKIP_MARKERS) {
+                if (s.contains(mk)) return new Decision(false, true, "system 提示词含「" + mk + "」，后台小活");
+            }
         } catch (Throwable ignored) { }
-        return true;
+        return new Decision(true, true, "正常对话：这一段会打断上一段");
     }
 
     // ══════════════════════════ HTTP 读写 ══════════════════════════

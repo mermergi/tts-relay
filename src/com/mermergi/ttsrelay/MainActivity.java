@@ -146,7 +146,7 @@ public class MainActivity extends Activity {
         col.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("让 Chatbox 把 AI 的每一条回复念出来");
+        sub.setText("手机上的 AI 对话软件，每一条回复都念出来");
         sub.setTextColor(0xFF7C83A0);
         sub.setTextSize(13);
         sub.setPadding(0, dp(4), 0, dp(16));
