@@ -223,6 +223,8 @@ public final class HttpServer {
                 o.put("tts", Prefs.ttsBase(ctx));
                 o.put("splitMode", Prefs.splitMode(ctx));
                 o.put("splitModeName", Splitter.modeName(Prefs.splitMode(ctx)));
+                o.put("ttsCrashedRecently", TtsReviver.crashedJustNow());
+                o.put("autoRevive", Prefs.autoRevive(ctx));
             } catch (Throwable ignored) { }
             json(out, 200, o.toString());
             return;
@@ -302,6 +304,11 @@ public final class HttpServer {
             for (String s : parts) LogBus.add("   ▸ " + s);
             json(out, 200, "{\"ok\":true,\"msg\":\"自检音频已排队\",\"modeName\":\""
                     + esc(Splitter.modeName(Prefs.splitMode(ctx))) + "\",\"count\":" + parts.size() + "}");
+            return;
+        }
+        if ("/_revive".equals(path)) {
+            String r = TtsReviver.revive(ctx, "1".equals(qs.get("force")));
+            json(out, 200, "{\"ok\":true,\"result\":\"" + esc(r) + "\"}");
             return;
         }
         if ("/_stop".equals(path)) {

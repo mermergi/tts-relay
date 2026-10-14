@@ -62,6 +62,10 @@ public final class Prefs {
     public static boolean skipSmall(Context c) { return sp(c).getBoolean("skip_small", true); }
     public static void setSkipSmall(Context c, boolean v) { sp(c).edit().putBoolean("skip_small", v).apply(); }
 
+    /** TTS Server 崩了之后，替它把「转发器」拉起来 —— 它自己不会回来。 */
+    public static boolean autoRevive(Context c) { return sp(c).getBoolean("auto_revive", true); }
+    public static void setAutoRevive(Context c, boolean v) { sp(c).edit().putBoolean("auto_revive", v).apply(); }
+
     /** 允许局域网访问（给电脑上的酒馆/其它客户端用）。默认关：开了等于把你的 key 转发给整个局域网。 */
     public static boolean lanAllowed(Context c) { return sp(c).getBoolean("lan", false); }
     public static void setLanAllowed(Context c, boolean v) { sp(c).edit().putBoolean("lan", v).apply(); }

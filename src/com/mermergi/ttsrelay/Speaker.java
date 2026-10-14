@@ -149,24 +149,45 @@ public final class Speaker {
     }
 
     // ───────────────────────── 合成 ─────────────────────────
+    /**
+     * TTS Server 连不上时的熔断：别一句一句猛敲。
+     * 它崩了是"整台机器"的事，敲再快也只是刷一屏 ConnectException，
+     * 还把句子一条条浪费掉 —— 这里改成退避重试，<b>失败的句子不丢</b>。
+     */
+    private volatile long nextTryAt = 0;
+    private volatile int failStreak = 0;
+
     private void synthLoop() {
+        String cur = null;
         while (running) {
-            String text;
-            try {
-                text = textQ.poll(400, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                return;
+            if (cur == null) {
+                try {
+                    cur = textQ.poll(400, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (cur == null) continue;
             }
-            if (text == null) continue;
             int my = gen;
-            if (Prefs.muted(ctx)) continue;
+            if (Prefs.muted(ctx)) { cur = null; continue; }
+            if (my != gen) { cur = null; continue; }   // 被打断了，这条不要了
+
+            long wait = nextTryAt - System.currentTimeMillis();
+            if (wait > 0) {
+                try {
+                    Thread.sleep(Math.min(wait, 1000));
+                } catch (InterruptedException ie) {
+                    return;
+                }
+                continue;                              // cur 还留着，等熔断结束重试
+            }
 
             byte[] data = null;
             String err = null;
             for (int attempt = 0; attempt < 2; attempt++) {
                 if (!running || my != gen) break;
                 try {
-                    data = TtsClient.synth(ctx, text);
+                    data = TtsClient.synth(ctx, text_safe(cur));
                     break;
                 } catch (Throwable t) {
                     err = t.getClass().getSimpleName() + ": " + t.getMessage();
@@ -181,21 +202,48 @@ public final class Speaker {
             }
             if (data == null) {
                 if (err != null && my == gen) {
+                    boolean conn = isConnErr(err);
                     failed.incrementAndGet();
-                    LogBus.error("合成失败：" + err + "   ← 文本：" + head(text, 20));
+                    LogBus.error("合成失败：" + err + "   ← 文本：" + head(cur, 20));
+                    if (conn) {
+                        failStreak++;
+                        long back = Math.min(30000L, 2000L << Math.min(failStreak - 1, 4));
+                        nextTryAt = System.currentTimeMillis() + back;
+                        LogBus.add("⏸ 熔断 " + (back / 1000) + " 秒（连续 " + failStreak
+                                + " 次连不上，这一句留着不丢）");
+                        TtsReviver.tryRevive(ctx);
+                    } else {
+                        failStreak = 0;
+                        cur = null;                    // 不是连不上，这句救不回来了
+                    }
                     ttsDownHint(err);
+                } else {
+                    cur = null;
                 }
-                continue;
+                continue;                                  // cur 在熔断分支里被保留
             }
-            if (my != gen) continue;
+            failStreak = 0;
+            nextTryAt = 0;
+            TtsReviver.noteOk();
+            if (my != gen) { cur = null; continue; }
             try {
                 while (running && my == gen) {
-                    if (audioQ.offer(new Clip(text, data, my), 200, TimeUnit.MILLISECONDS)) break;
+                    if (audioQ.offer(new Clip(cur, data, my), 200, TimeUnit.MILLISECONDS)) break;
                 }
             } catch (InterruptedException e) {
                 return;
             }
+            cur = null;
         }
+    }
+
+    private static String text_safe(String t) { return t == null ? "" : t; }
+
+    private static boolean isConnErr(String err) {
+        if (err == null) return false;
+        return err.contains("Failed to connect") || err.contains("ECONNREFUSED")
+                || err.contains("Connection refused") || err.contains("ConnectException")
+                || err.contains("SocketTimeout") || err.contains("timeout");
     }
 
     private void ttsDownHint(String err) {
@@ -206,8 +254,15 @@ public final class Speaker {
         long now = System.currentTimeMillis();
         if (now - lastTtsHint > 20000) {
             lastTtsHint = now;
-            LogBus.add("→ TTS Server 没在正常工作：打开 TTS Server，"
-                    + "「转发器」页确认服务已启动、监听端口 " + portOf(Prefs.ttsBase(ctx)));
+            String port = portOf(Prefs.ttsBase(ctx));
+            if (TtsReviver.crashedJustNow()) {
+                LogBus.add("→ TTS Server 刚刚崩了（上一句还念得好好的）。常见原因：某个音色合成失败，"
+                        + "它内部抛 Bad audio format 0 把整个进程带走 —— 换个音色试试。"
+                        + "已尝试自动拉起转发器，无效就手动点开 TTS Server 看端口 " + port);
+            } else {
+                LogBus.add("→ TTS Server 没在正常工作：打开 TTS Server，"
+                        + "「转发器」页确认服务已启动、监听端口 " + port);
+            }
         }
     }
 
