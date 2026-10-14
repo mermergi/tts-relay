@@ -21,7 +21,9 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -39,6 +41,15 @@ public final class HttpServer {
      * 联网搜索的结果长这样 {"title":…,"link":…,"snippet":…}，
      * 扫整包必然命中 "title"，于是搜索结果之后那条正牌回复被整段静音。
      */
+    /** 干跑断句用的示例文本：短句、长句、列表、代码块都塞一点。 */
+    private static final String SPLIT_DEMO =
+            "先说结论。这个问题分三步：\n"
+            + "1. 先把 API 地址指过来；\n"
+            + "2. 再选一个音色；\n"
+            + "3. 剩下的事交给它自己。\n"
+            + "```\nprint('这行不该被念')\n```\n"
+            + "对了，遇到那种一口气能说六十个字不带标点的长句子的时候，就只能靠字数硬切了，切在哪儿全看退让规则。完了。";
+
     private static final String[] SKIP_MARKERS = {"标题", "title", "摘要", "summar", "命名"};
 
     /** 一次"念不念"的判定结果 + 理由，出问题看日志就知道是谁把嘴捂上的。 */
@@ -210,6 +221,8 @@ public final class HttpServer {
                 o.put("engine", Prefs.engine(ctx));
                 o.put("voice", Prefs.voice(ctx));
                 o.put("tts", Prefs.ttsBase(ctx));
+                o.put("splitMode", Prefs.splitMode(ctx));
+                o.put("splitModeName", Splitter.modeName(Prefs.splitMode(ctx)));
             } catch (Throwable ignored) { }
             json(out, 200, o.toString());
             return;
@@ -228,6 +241,44 @@ public final class HttpServer {
             json(out, 200, "{\"ok\":true,\"voice\":\"" + esc(Prefs.voice(ctx)) + "\"}");
             return;
         }
+        if ("/_split".equals(path)) {
+            // 干跑断句：同一段文字，不同方案切出来什么鬼样子，一看就明白。
+            // 按 3 字一段喂进去，模拟真实 SSE 的碎块 —— 增量逻辑也一并验了。
+            String t = qs.get("text");
+            if (t == null || t.length() == 0) t = SPLIT_DEMO;
+            int mode = Prefs.splitMode(ctx);
+            String mv = qs.get("mode");
+            if (mv != null && mv.length() > 0) {
+                try { mode = Integer.parseInt(mv.trim()); } catch (Throwable ignored) { }
+            }
+            mode = Splitter.clampMode(mode);
+            int chunk = Prefs.maxChunk(ctx);
+            String cv = qs.get("chunk");
+            if (cv != null && cv.length() > 0) {
+                try { chunk = Integer.parseInt(cv.trim()); } catch (Throwable ignored) { }
+            }
+            Splitter sp = new Splitter(chunk, 4, mode);
+            JSONArray parts = new JSONArray();
+            try {
+                for (int i = 0; i < t.length(); i += 3) {
+                    for (String s : sp.feed(t.substring(i, Math.min(t.length(), i + 3)))) {
+                        parts.put(s);
+                    }
+                }
+                for (String s : sp.flush()) parts.put(s);
+                JSONObject o = new JSONObject();
+                o.put("mode", mode);
+                o.put("modeName", Splitter.modeName(mode));
+                o.put("modeDesc", Splitter.modeDesc(mode));
+                o.put("maxChunk", Math.max(20, chunk));
+                o.put("parts", parts);
+                o.put("count", parts.length());
+                json(out, 200, o.toString());
+            } catch (Throwable t2) {
+                json(out, 500, "{\"error\":\"" + esc(t2.getMessage()) + "\"}");
+            }
+            return;
+        }
         if ("/_say".equals(path)) {
             String t = qs.get("text");
             if (t == null || t.length() == 0) t = "测试一下，能听见吗？";
@@ -236,15 +287,21 @@ public final class HttpServer {
             return;
         }
         if ("/_selftest".equals(path)) {
-            Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4);
+            Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
             String fake = "哥哥，这是自检。"
                     + "\n```python\nprint('这段代码不该被念出来')\n```\n"
                     + "如果你听到了这句话，说明断句、跳过代码块、合成、播放整条链路都通了。";
+            List<String> parts = new ArrayList<String>();
             for (int i = 0; i < fake.length(); i++) {
-                for (String s : sp.feed(String.valueOf(fake.charAt(i)))) speaker.feed(s);
+                parts.addAll(sp.feed(String.valueOf(fake.charAt(i))));
             }
-            for (String s : sp.flush()) speaker.feed(s);
-            json(out, 200, "{\"ok\":true,\"msg\":\"自检音频已排队\"}");
+            parts.addAll(sp.flush());
+            for (String s : parts) speaker.feed(s);
+            LogBus.add("自检 · 断句方案「" + Splitter.modeName(Prefs.splitMode(ctx))
+                    + "」切成 " + parts.size() + " 块：");
+            for (String s : parts) LogBus.add("   ▸ " + s);
+            json(out, 200, "{\"ok\":true,\"msg\":\"自检音频已排队\",\"modeName\":\""
+                    + esc(Splitter.modeName(Prefs.splitMode(ctx))) + "\",\"count\":" + parts.size() + "}");
             return;
         }
         if ("/_stop".equals(path)) {
@@ -357,7 +414,7 @@ public final class HttpServer {
                         if (msg != null) {
                             Object c = msg.opt("content");
                             if (c instanceof String) {
-                                Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4);
+                                Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
                                 int[] sent = new int[]{0};
                                 emit(sp.feed((String) c), turnStarted, sent, dec.cut);
                                 emit(sp.flush(), turnStarted, sent, dec.cut);
@@ -384,7 +441,7 @@ public final class HttpServer {
         writeHead(out, code, headers, -1, true);
 
         InputStream in = conn.getInputStream();
-        Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4);
+        Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
         CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPLACE)
                 .onUnmappableCharacter(CodingErrorAction.REPLACE);

@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
     private Button toggleBtn;
     private Switch muteSwitch;
     private Switch lanSwitch;
+    private Button splitBtn;
     private final Handler tick = new Handler();
     private int logLen = 0;
 
@@ -238,6 +239,13 @@ public class MainActivity extends Activity {
         final EditText fChunk = field("maxchunk", String.valueOf(Prefs.MAXCHUNK_DEF), InputType.TYPE_CLASS_NUMBER);
         fChunk.setTag("maxchunk");
         sc.addView(fChunk);
+        sc.addView(label("断句方案"));
+        splitBtn = btn("", new View.OnClickListener() {
+            public void onClick(View v) { pickSplitMode(); }
+        });
+        splitBtn.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        sc.addView(splitBtn);
+        sc.addView(hintLine("点一下换方案。五种只在\"哪里断、超长往哪退、要不要攒\"上不同；换完立刻生效，不用重启。"));
         muteSwitch = new Switch(this);
         muteSwitch.setText("静音（不朗读，只当中转用）");
         muteSwitch.setTextColor(0xFFD5DAE8);
@@ -421,6 +429,9 @@ public class MainActivity extends Activity {
         }
         String v = Prefs.voice(this);
         voiceView.setText("当前：" + v.replaceAll("_\\d+$", ""));
+        if (splitBtn != null) {
+            splitBtn.setText("当前：" + Splitter.modeName(Prefs.splitMode(this)) + "  ▸");
+        }
 
         if (spk != null && up && (System.currentTimeMillis() % 5000) < 1000) {
             RelayService svc = RelayService.instance();
@@ -481,8 +492,47 @@ public class MainActivity extends Activity {
         Speaker spk = RelayService.speakerOrNull();
         if (spk == null) { toast("先启动中转"); return; }
         saveInputs();
-        spk.feed(Prefs.tryText(this));
-        toast("已排队播放");
+        // 试听也走真正的断句方案：听不出来差别就多写几句、把标点铺开
+        String text = Prefs.tryText(this);
+        Splitter sp = new Splitter(Prefs.maxChunk(this), 4, Prefs.splitMode(this));
+        List<String> parts = new ArrayList<String>();
+        for (int i = 0; i < text.length(); i++) parts.addAll(sp.feed(String.valueOf(text.charAt(i))));
+        parts.addAll(sp.flush());
+        for (String s : parts) spk.feed(s);
+        LogBus.add("试听 · 断句方案「" + Splitter.modeName(Prefs.splitMode(this))
+                + "」切成 " + parts.size() + " 块：");
+        for (String x : parts) LogBus.add("   ▸ " + x);
+        toast("已排队（" + parts.size() + " 块，方案：" + Splitter.modeName(Prefs.splitMode(this)) + "）");
+    }
+
+    /** 换断句方案：列出五种 + 一句话说明，选完即存、即生效。 */
+    private void pickSplitMode() {
+        final String[] items = new String[Splitter.MODE_COUNT];
+        for (int i = 0; i < Splitter.MODE_COUNT; i++) {
+            items[i] = Splitter.modeName(i) + "\n" + Splitter.modeDesc(i);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("断句方案")
+                .setSingleChoiceItems(items, Prefs.splitMode(this),
+                        new android.content.DialogInterface.OnClickListener() {
+                            public void onClick(android.content.DialogInterface d, int which) {
+                                Prefs.setSplitMode(MainActivity.this, which);
+                                refresh();
+                                toast("已切到「" + Splitter.modeName(which) + "」，立刻生效");
+                                d.dismiss();
+                            }
+                        })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private TextView hintLine(String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextColor(0xFF6E7386);
+        t.setTextSize(11);
+        t.setPadding(0, dp(6), 0, dp(4));
+        return t;
     }
 
     private void selfTest() {

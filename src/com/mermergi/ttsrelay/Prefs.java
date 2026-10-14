@@ -50,6 +50,12 @@ public final class Prefs {
     public static int maxChunk(Context c) { return sp(c).getInt("maxchunk", MAXCHUNK_DEF); }
     public static void setMaxChunk(Context c, int v) { sp(c).edit().putInt("maxchunk", v).apply(); }
 
+    /** 断句方案（Splitter.MODE_*）。 */
+    public static int splitMode(Context c) {
+        return Splitter.clampMode(sp(c).getInt("split_mode", Splitter.MODE_NATURAL));
+    }
+    public static void setSplitMode(Context c, int v) { sp(c).edit().putInt("split_mode", v).apply(); }
+
     public static boolean muted(Context c) { return sp(c).getBoolean("muted", false); }
     public static void setMuted(Context c, boolean v) { sp(c).edit().putBoolean("muted", v).apply(); }
 
