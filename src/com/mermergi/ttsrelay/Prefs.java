@@ -8,6 +8,7 @@ public final class Prefs {
     public static final String UPSTREAM_DEF = "https://api.deepseek.com";
     public static final String TTS_BASE_DEF = "http://127.0.0.1:1221";
     public static final String ENGINE_DEF = "com.github.jing332.tts_server_android";
+    /** 默认不指定音色：留空就交给 TTS Server 用它自己的默认音色，本 App 不预设任何具体音色。 */
     public static final String VOICE_DEF = "";
     public static final int PORT_DEF = 8788;
     public static final int MAXCHUNK_DEF = 90;

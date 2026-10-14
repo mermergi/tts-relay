@@ -428,7 +428,8 @@ public class MainActivity extends Activity {
             muteSwitch.setChecked(Prefs.muted(this));
         }
         String v = Prefs.voice(this);
-        voiceView.setText("当前：" + v.replaceAll("_\\d+$", ""));
+        voiceView.setText(v.length() == 0 ? "当前：（未选）用 TTS Server 自己的默认音色"
+                : "当前：" + v.replaceAll("_\\d+$", ""));
         if (splitBtn != null) {
             splitBtn.setText("当前：" + Splitter.modeName(Prefs.splitMode(this)) + "  ▸");
         }
