@@ -225,6 +225,9 @@ public final class HttpServer {
                 o.put("splitModeName", Splitter.modeName(Prefs.splitMode(ctx)));
                 o.put("ttsCrashedRecently", TtsReviver.crashedJustNow());
                 o.put("autoRevive", Prefs.autoRevive(ctx));
+                o.put("ttsInflight", TtsClient.inflight());
+                o.put("ttsInflightMax", TtsClient.inflightMax());
+                o.put("ttsPaceMs", speaker.pace());
             } catch (Throwable ignored) { }
             json(out, 200, o.toString());
             return;

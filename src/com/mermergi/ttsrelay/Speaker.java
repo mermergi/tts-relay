@@ -157,6 +157,17 @@ public final class Speaker {
     private volatile long nextTryAt = 0;
     private volatile int failStreak = 0;
 
+    /**
+     * 自适应节奏（毫秒）：给上游留的最小请求间隔。
+     * 反代/网页版引擎被短时间连击容易触发风控，但健康时又不该白白加延迟 ——
+     * 所以平时是 0；一旦出现"限流样"的失败就自动翻倍放慢，连续成功再自动收回。
+     */
+    private volatile long paceMs = 0;
+    private volatile long lastSynthAt = 0;
+    private int curTries = 0;
+
+    public long pace() { return paceMs; }
+
     private void synthLoop() {
         String cur = null;
         while (running) {
@@ -167,6 +178,7 @@ public final class Speaker {
                     return;
                 }
                 if (cur == null) continue;
+                curTries = 0;
             }
             int my = gen;
             if (Prefs.muted(ctx)) { cur = null; continue; }
@@ -182,39 +194,58 @@ public final class Speaker {
                 continue;                              // cur 还留着，等熔断结束重试
             }
 
+            long need = paceMs - (System.currentTimeMillis() - lastSynthAt);
+            if (need > 0) {
+                try {
+                    Thread.sleep(Math.min(need, 3000));
+                } catch (InterruptedException ie) {
+                    return;
+                }
+                continue;                              // cur 留着，等节奏
+            }
+
+            // 只发一发。
+            // 原来失败后 400ms 立刻补一发 —— 对"网页版反代"这类引擎是毒药：
+            // 它自己内部已经在重试好几轮，我们再补刀只会更快触发风控。
+            // 失败由外层统一处理：留着这一句 + 退避重试。
             byte[] data = null;
             String err = null;
-            for (int attempt = 0; attempt < 2; attempt++) {
-                if (!running || my != gen) break;
-                try {
-                    data = TtsClient.synth(ctx, text_safe(cur));
-                    break;
-                } catch (Throwable t) {
-                    err = t.getClass().getSimpleName() + ": " + t.getMessage();
-                    if (attempt == 0) {
-                        try {
-                            Thread.sleep(400);
-                        } catch (InterruptedException ie) {
-                            return;
-                        }
-                    }
-                }
+            try {
+                lastSynthAt = System.currentTimeMillis();
+                data = TtsClient.synth(ctx, text_safe(cur));
+            } catch (Throwable t) {
+                err = t.getClass().getSimpleName() + ": " + t.getMessage();
             }
             if (data == null) {
                 if (err != null && my == gen) {
                     boolean conn = isConnErr(err);
+                    boolean busy = isTimeout(err);   // 超时：它多半还在忙上一条
                     failed.incrementAndGet();
                     LogBus.error("合成失败：" + err + "   ← 文本：" + head(cur, 20));
-                    if (conn) {
+                    boolean throttle = isThrottle(err);
+                    if (conn || busy) {
                         failStreak++;
-                        long back = Math.min(30000L, 2000L << Math.min(failStreak - 1, 4));
+                        long back = Math.min(30000L, (busy ? 10000L : 2000L)
+                                << Math.min(failStreak - 1, busy ? 1 : 4));
                         nextTryAt = System.currentTimeMillis() + back;
-                        LogBus.add("⏸ 熔断 " + (back / 1000) + " 秒（连续 " + failStreak
-                                + " 次连不上，这一句留着不丢）");
-                        TtsReviver.tryRevive(ctx);
+                        LogBus.add("⏸ 退避 " + (back / 1000) + " 秒（"
+                                + (busy ? "上一发还没返回，别再往上堆了" : "连续 " + failStreak + " 次连不上")
+                                + "，这一句留着不丢）");
+                        if (!busy) TtsReviver.tryRevive(ctx);
+                    } else if (throttle && curTries < 3) {
+                        // 引擎回了但不是音频（反代被风控/限流的典型样子）：放慢 + 留着重试
+                        curTries++;
+                        failStreak = 0;
+                        paceMs = Math.min(3000L, paceMs == 0 ? 500L : paceMs * 2);
+                        long back = Math.min(30000L, 5000L << Math.min(curTries - 1, 2));
+                        nextTryAt = System.currentTimeMillis() + back;
+                        LogBus.add("⏸ 退避 " + (back / 1000) + " 秒（引擎回的不是音频，"
+                                + "像是被限流/风控了；节奏放到 " + paceMs + "ms，第 " + curTries
+                                + " 次重试，这一句留着）");
                     } else {
                         failStreak = 0;
-                        cur = null;                    // 不是连不上，这句救不回来了
+                        cur = null;                    // 救不回来了
+                        curTries = 0;
                     }
                     ttsDownHint(err);
                 } else {
@@ -224,6 +255,11 @@ public final class Speaker {
             }
             failStreak = 0;
             nextTryAt = 0;
+            curTries = 0;
+            if (paceMs > 0) {                          // 连续成功 → 把节奏收回去
+                paceMs = paceMs / 2;
+                if (paceMs < 200) paceMs = 0;
+            }
             TtsReviver.noteOk();
             if (my != gen) { cur = null; continue; }
             try {
@@ -239,11 +275,25 @@ public final class Speaker {
 
     private static String text_safe(String t) { return t == null ? "" : t; }
 
+    /** 回了、但回的不是音频 / 直接 4xx-5xx —— 反代被限流、风控、会话过期都长这样。 */
+    private static boolean isThrottle(String err) {
+        if (err == null) return false;
+        return err.contains("不是音频") || err.contains("TTS HTTP 429")
+                || err.contains("TTS HTTP 403") || err.contains("TTS HTTP 5")
+                || err.contains("TTS HTTP 400");
+    }
+
+    /** 超时（而不是连不上）：说明请求已经送达、对方还在忙 —— 这时再发就是纯堆积。 */
+    private static boolean isTimeout(String err) {
+        if (err == null) return false;
+        return err.contains("SocketTimeout") || err.contains("timeout")
+                || err.contains("Timeout") || err.contains("timed out");
+    }
+
     private static boolean isConnErr(String err) {
         if (err == null) return false;
         return err.contains("Failed to connect") || err.contains("ECONNREFUSED")
-                || err.contains("Connection refused") || err.contains("ConnectException")
-                || err.contains("SocketTimeout") || err.contains("timeout");
+                || err.contains("Connection refused") || err.contains("ConnectException");
     }
 
     private void ttsDownHint(String err) {

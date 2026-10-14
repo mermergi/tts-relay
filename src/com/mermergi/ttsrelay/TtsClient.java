@@ -12,6 +12,23 @@ import java.net.URLEncoder;
 /** 跟 TTS Server 的「转发器」说话：要音频、要音色列表。 */
 public final class TtsClient {
 
+    /**
+     * 上游同时只允许有 <b>1</b> 发在途。
+     *
+     * 我们是单线程合成，本来就是 1 发；加这道闸是为了让它变成<b>结构性保证</b>——
+     * 以后谁再往这里加调用方，也不可能同时轰两发上去。
+     * 另外把"在途峰值"记下来，让它<b>可以被观测</b>：/_status 里看 ttsInflightMax，
+     * 永远是 1 就说明这个 App 从来没有并发压过 TTS Server。
+     */
+    private static final java.util.concurrent.Semaphore GATE =
+            new java.util.concurrent.Semaphore(1, true);
+    private static final java.util.concurrent.atomic.AtomicInteger INFLIGHT =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static volatile int inflightMax = 0;
+
+    public static int inflight() { return INFLIGHT.get(); }
+    public static int inflightMax() { return inflightMax; }
+
     private static String q(String s) {
         try {
             return URLEncoder.encode(s == null ? "" : s, "UTF-8");
@@ -21,6 +38,24 @@ public final class TtsClient {
     }
 
     public static byte[] synth(Context c, String text) throws IOException {
+        boolean locked;
+        try {
+            locked = GATE.tryAcquire(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            throw new IOException("等待合成闸门被中断");
+        }
+        if (!locked) throw new IOException("等合成闸门超时（前面那发还没完）");
+        int now = INFLIGHT.incrementAndGet();
+        if (now > inflightMax) inflightMax = now;
+        try {
+            return synthLocked(c, text);
+        } finally {
+            INFLIGHT.decrementAndGet();
+            GATE.release();
+        }
+    }
+
+    private static byte[] synthLocked(Context c, String text) throws IOException {
         String url = Prefs.ttsBase(c).replaceAll("/+$", "")
                 + "/api/tts?text=" + q(text)
                 + "&engine=" + q(Prefs.engine(c))
