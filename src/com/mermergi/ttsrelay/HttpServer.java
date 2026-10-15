@@ -64,12 +64,20 @@ public final class HttpServer {
     }
 
     /** 一次"念不念"的判定结果 + 理由，出问题看日志就知道是谁把嘴捂上的。 */
-    private static final class Decision {
+    static final class Decision {
         final boolean speak;
-        /** 要不要打断正在念的上一段。false = 接在它后面排队（同一个回合的工具续写）。 */
+        /** 要不要打断正在念的上一段。false = 接在它后面排队（同一个回合的后续）。 */
         final boolean cut;
         final String why;
-        Decision(boolean s, boolean c, String w) { speak = s; cut = c; why = w; }
+        /** 这一发是谁在说。群聊的提醒里直接写着名字，比从正文里猜靠谱。空 = 照旧从正文认。 */
+        final String speaker;
+        Decision(boolean s, boolean c, String w) { this(s, c, w, ""); }
+        Decision(boolean s, boolean c, String w, String who) {
+            speak = s;
+            cut = c;
+            why = w;
+            speaker = who == null ? "" : who;
+        }
     }
 
     private final Context ctx;
@@ -200,6 +208,7 @@ public final class HttpServer {
                 o.put("speak", d.speak);
                 o.put("cut", d.cut);
                 o.put("why", d.why);
+                o.put("speaker", d.speaker);
             } catch (Throwable ignored) { }
             json(out, 200, o.toString());
             return;
@@ -391,6 +400,9 @@ public final class HttpServer {
             boolean wantRoles = "1".equals(qs.get("roles")) || "true".equals(qs.get("roles"));
             Splitter sp = new Splitter(chunk, 4, mode);
             MultiVoice mvo = new MultiVoice(chunk, 4, mode, true, Prefs.parseMode(ctx));
+            // as=名字 → 假装群聊提醒说"这一发是他"，用来验"没打标签的行归谁"
+            String as = qs.get("as");
+            if (as != null && as.trim().length() > 0) mvo.setTurnName(as.trim());
             JSONArray parts = new JSONArray();
             try {
                 for (int i = 0; i < t.length(); i += 3) {
@@ -426,7 +438,7 @@ public final class HttpServer {
             boolean roles = "1".equals(qs.get("roles")) || "true".equals(qs.get("roles"));
             if (roles) {
                 // 走完整的多语音链路：分段 → 查音色表 → 合成
-                MultiVoice mvo = newMultiVoice();
+                MultiVoice mvo = newMultiVoice(qs.get("as") == null ? "" : qs.get("as").trim());
                 boolean[] started = new boolean[]{false};
                 int[] sent = new int[]{0};
                 emit(mvo.feed(t), started, sent, true);
@@ -587,7 +599,7 @@ public final class HttpServer {
             if (ct != null) outHeaders.put("Content-Type", ct);
 
             if (ct != null && ct.contains("text/event-stream")) {
-                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut);
+                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut, dec.speaker);
                 return;
             }
 
@@ -606,7 +618,7 @@ public final class HttpServer {
                         if (msg != null) {
                             Object c = msg.opt("content");
                             if (c instanceof String) {
-                                MultiVoice mv = newMultiVoice();
+                                MultiVoice mv = newMultiVoice(dec.speaker);
                                 int[] sent = new int[]{0};
                                 emit(mv.feed((String) c), turnStarted, sent, dec.cut);
                                 emit(mv.flush(), turnStarted, sent, dec.cut);
@@ -629,11 +641,11 @@ public final class HttpServer {
     /** 边转发边解析，客户端拿到的字节和上游一模一样。 */
     private void streamSse(OutputStream out, HttpURLConnection conn, int code,
                            Map<String, String> headers, boolean speak, boolean[] started,
-                           boolean cut) throws IOException {
+                           boolean cut, String who) throws IOException {
         writeHead(out, code, headers, -1, true);
 
         InputStream in = conn.getInputStream();
-        MultiVoice mv = newMultiVoice();
+        MultiVoice mv = newMultiVoice(who);
         CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPLACE)
                 .onUnmappableCharacter(CodingErrorAction.REPLACE);
@@ -667,9 +679,14 @@ public final class HttpServer {
     }
 
     /** 断句器：多语音开着就按角色切，关着就跟以前一模一样。 */
-    private MultiVoice newMultiVoice() {
-        return new MultiVoice(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx),
+    private MultiVoice newMultiVoice() { return newMultiVoice(""); }
+
+    /** who 非空 = 请求里已经写明这一发是谁在说（群聊提醒），不用再从正文猜。 */
+    private MultiVoice newMultiVoice(String who) {
+        MultiVoice mv = new MultiVoice(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx),
                 Prefs.mvEnabled(ctx), Prefs.parseMode(ctx));
+        mv.setTurnName(who);
+        return mv;
     }
 
     /**
@@ -782,53 +799,132 @@ public final class HttpServer {
      */
     private Decision decide(byte[] body) {
         if (Prefs.muted(ctx)) return new Decision(false, true, "已静音");
-        if (!Prefs.skipSmall(ctx)) return new Decision(true, true, "跳过规则已关");
         try {
             JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
-
-            int small = Prefs.smallTokenLimit(ctx);
-            int mt = o.optInt("max_tokens", -1);
-            if (mt > 0 && mt < small) return new Decision(false, true, "max_tokens=" + mt + "，后台小活");
-            int mct = o.optInt("max_completion_tokens", -1);
-            if (mct > 0 && mct < small) {
-                return new Decision(false, true, "max_completion_tokens=" + mct + "，后台小活");
-            }
-
-            JSONArray m = o.optJSONArray("messages");
-            StringBuilder sys = new StringBuilder();
-            String lastRole = "";
-            boolean lastToolCalls = false;
-            if (m != null) {
-                for (int i = 0; i < m.length(); i++) {
-                    JSONObject msg = m.optJSONObject(i);
-                    if (msg == null) continue;
-                    String role = msg.optString("role", "");
-                    if ("system".equals(role) || "developer".equals(role)) {
-                        sys.append(String.valueOf(msg.opt("content"))).append('\n');
-                    }
-                    if (i == m.length() - 1) {
-                        lastRole = role;
-                        lastToolCalls = msg.opt("tool_calls") instanceof JSONArray;
-                    }
-                }
-            }
-            // 工具轮的续写：这一发是"搜索结果回来之后"的正文
-            boolean continuation = "tool".equals(lastRole) || "function".equals(lastRole)
-                    || lastToolCalls;
-            if (continuation) {
-                return new Decision(true, false, "工具轮续写：接在上一段后面念，不打断");
-            }
-
-            // 关键词只在"客户端没设输出额度"时才算起标题证据：设了额度(≥200)的请求是正经回复，
-            // 酒馆角色卡/世界书里带个「标题」字不能把整条哑掉。
-            if (mt <= 0 && mct <= 0) {
-                String s = sys.toString().toLowerCase(Locale.US);
-                for (String mk : skipMarkers(ctx)) {
-                    if (s.contains(mk)) return new Decision(false, true, "system 提示词含「" + mk + "」，后台小活");
-                }
-            }
+            // 「跳过后台小活」只管"念不念"，不该顺手把"打断不打断"也锁死 ——
+            // 之前它一关就直接 cut=true，群聊里每个人一开口就把上一个人腰斩。
+            return decideShape(shapeOf(o), Prefs.skipSmall(ctx),
+                    Prefs.smallTokenLimit(ctx), skipMarkers(ctx));
         } catch (Throwable ignored) { }
         return new Decision(true, true, "正常对话：这一段会打断上一段");
+    }
+
+    /** 判定只看这几个字段。抽出来是为了能脱开 Android 的 org.json 离线验。 */
+    static final class Shape {
+        int mt = -1;
+        int mct = -1;
+        String lastRole = "";
+        String prevRole = "";
+        String lastText = "";
+        String sysText = "";
+        boolean lastToolCalls;
+    }
+
+    static Shape shapeOf(JSONObject o) {
+        Shape sh = new Shape();
+        sh.mt = o.optInt("max_tokens", -1);
+        sh.mct = o.optInt("max_completion_tokens", -1);
+        StringBuilder sys = new StringBuilder();
+        JSONArray m = o.optJSONArray("messages");
+        if (m != null) {
+            for (int i = 0; i < m.length(); i++) {
+                JSONObject msg = m.optJSONObject(i);
+                if (msg == null) continue;
+                String role = msg.optString("role", "");
+                if ("system".equals(role) || "developer".equals(role)) {
+                    sys.append(String.valueOf(msg.opt("content"))).append('\n');
+                }
+                if (i == m.length() - 1) {
+                    sh.lastRole = role;
+                    sh.lastText = String.valueOf(msg.opt("content"));
+                    sh.lastToolCalls = msg.opt("tool_calls") instanceof JSONArray;
+                } else if (i == m.length() - 2) {
+                    sh.prevRole = role;
+                }
+            }
+        }
+        sh.sysText = sys.toString();
+        return sh;
+    }
+
+    /**
+     * 判定本体：纯函数，不碰 Context，所以能离线拿真请求形状一条条验。
+     *
+     *   ① 额度特别小的请求 = 客户端在后台起标题/写摘要，不念（{@code applySkip} 关掉时不管这条）；
+     *   ② 末条是 tool 结果 / 带 tool_calls 的 assistant = 工具轮的续写，必须念、排队不打断；
+     *   ③ 酒馆群聊「自动回复」是一人一发：每发前面插一条 system 提醒（nudge）让下一个人说话。
+     *      末条是这条提醒 = 同一轮换个人接着说 → 排队不打断，名字直接从提醒里拿；
+     *      但提醒前面是用户刚发的话，那就是新的一轮 → 该打断；
+     *   ④ 末条是 assistant = 酒馆的「继续」/ 没插提醒的续写 → 排队不打断；
+     *   ⑤ "起标题"关键词只扫 system 提示词、且仅当客户端没设输出额度时生效。
+     */
+    static Decision decideShape(Shape sh, boolean applySkip, int small, String[] markers) {
+        if (applySkip) {
+            if (sh.mt > 0 && sh.mt < small) {
+                return new Decision(false, true, "max_tokens=" + sh.mt + "，后台小活");
+            }
+            if (sh.mct > 0 && sh.mct < small) {
+                return new Decision(false, true, "max_completion_tokens=" + sh.mct + "，后台小活");
+            }
+        }
+
+        if ("tool".equals(sh.lastRole) || "function".equals(sh.lastRole) || sh.lastToolCalls) {
+            return new Decision(true, false, "工具轮续写：接在上一段后面念，不打断");
+        }
+
+        boolean sameTurn = "assistant".equals(sh.prevRole) || "tool".equals(sh.prevRole)
+                || "function".equals(sh.prevRole);
+        if ("system".equals(sh.lastRole) || "developer".equals(sh.lastRole)) {
+            String who = speakerFromNudge(sh.lastText);
+            if (who.length() > 0) {
+                return new Decision(true, !sameTurn,
+                        "群聊：" + (sameTurn ? "下一个人接着说" : "你刚发了新话，开头这一发")
+                                + "，这一发是「" + who + "」"
+                                + (sameTurn ? " → 接在后面念，不打断" : " → 打断上一段"),
+                        who);
+            }
+            if (sameTurn) {
+                return new Decision(true, false,
+                        "末条是 system 提醒、前一条是回复：同一轮的后续，接在后面念");
+            }
+        }
+
+        if ("assistant".equals(sh.lastRole)) {
+            return new Decision(true, false, "末条是上一条回复：接着往后写，接在后面念，不打断");
+        }
+
+        if (applySkip && sh.mt <= 0 && sh.mct <= 0) {
+            String sy = sh.sysText.toLowerCase(Locale.US);
+            for (String mk : markers) {
+                if (sy.contains(mk)) return new Decision(false, true, "system 提示词含「" + mk + "」，后台小活");
+            }
+        }
+        return new Decision(true, true, applySkip ? "正常对话：这一段会打断上一段"
+                : "正常对话：这一段会打断上一段（跳过规则已关，只判打断）");
+    }
+
+    /**
+     * 酒馆群聊的提醒长这样：{@code [Write the next reply only as 小明.]}
+     * （模板里的 {{char}} 会换成"这一发该谁说话"）。它等于直接告诉我们说话人是谁。
+     * 文案用户能改，认不出就返回空串，那会儿再退回正文里的「名字: 」前缀识别。
+     */
+    static String speakerFromNudge(String content) {
+        if (content == null) return "";
+        String low = content.toLowerCase(Locale.US);
+        int at = low.indexOf("reply only as");
+        if (at < 0) return "";
+        String tail = content.substring(at + "reply only as".length()).trim();
+        while (tail.length() > 0) {
+            char c = tail.charAt(tail.length() - 1);
+            if (c == ']' || c == '.' || c == '\u3002' || c == ' ' || c == '\t'
+                    || c == '\r' || c == '\n') {
+                tail = tail.substring(0, tail.length() - 1).trim();
+            } else {
+                break;
+            }
+        }
+        if (tail.length() == 0 || tail.length() > 40) return "";
+        return tail;
     }
 
     // ══════════════════════════ HTTP 读写 ══════════════════════════
