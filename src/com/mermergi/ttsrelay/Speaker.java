@@ -25,16 +25,28 @@ public final class Speaker {
         final String text;
         final byte[] data;
         final int gen;
+        final String voice;
 
-        Clip(String t, byte[] d, int g) { text = t; data = d; gen = g; }
+        Clip(String t, byte[] d, int g, String v) { text = t; data = d; gen = g; voice = v; }
+    }
+
+    /** 合成任务：一句话 + 它该用的音色（多语音时每句可能不同）。 */
+    private static final class Task {
+        final String text;
+        final String voice;
+
+        Task(String t, String v) { text = t; voice = v; }
     }
 
     private final Context ctx;
-    private final LinkedBlockingQueue<String> textQ = new LinkedBlockingQueue<String>();
+    private final LinkedBlockingQueue<Task> textQ = new LinkedBlockingQueue<Task>();
     private final ArrayBlockingQueue<Clip> audioQ = new ArrayBlockingQueue<Clip>(4);
 
     private volatile int gen = 0;
     private volatile boolean running = false;
+    /** 暂停只停"播" —— 合成照跑，继续时立刻有声，不用等下一句合出来。 */
+    private volatile boolean paused = false;
+    private volatile float volume = 1f;
 
     private HandlerThread synthT;
     private HandlerThread playT;
@@ -61,10 +73,84 @@ public final class Speaker {
     public int stuckCount() { return stuckCount; }
     public String lastText() { return last; }
     public int queued() { return textQ.size() + audioQ.size(); }
+    public boolean isPaused() { return paused; }
+    public float volume() { return volume; }
+
+    /** 音量 0~1：立刻作用于正在播的那句，并记住给后面每一句。 */
+    public void setVolume(float v) {
+        volume = Math.max(0f, Math.min(1f, v));
+        Handler h = playH;
+        if (h != null) {
+            h.post(new Runnable() {
+                public void run() {
+                    MediaPlayer p = mp;
+                    if (p == null) return;
+                    try { p.setVolume(volume, volume); } catch (Throwable ignored) { }
+                }
+            });
+        }
+    }
+
+    /** 暂停播放（合成继续排队，队列满了合成线程自然等）。 */
+    public void pause() {
+        if (!running || paused) return;
+        paused = true;
+        Handler h = playH;
+        if (h != null) {
+            h.post(new Runnable() {
+                public void run() {
+                    MediaPlayer p = mp;
+                    if (p == null) return;
+                    try { if (p.isPlaying()) p.pause(); } catch (Throwable ignored) { }
+                }
+            });
+        }
+        LogBus.add("⏸ 朗读已暂停");
+    }
+
+    public void resume() {
+        if (!running || !paused) return;
+        paused = false;
+        Handler h = playH;
+        if (h != null) {
+            h.post(new Runnable() {
+                public void run() {
+                    MediaPlayer p = mp;
+                    if (p == null) return;
+                    try { p.start(); } catch (Throwable ignored) { }
+                }
+            });
+        }
+        LogBus.add("▶ 朗读已继续");
+    }
+
+    /**
+     * 跳过当前这句，但**不清队列** —— 这是和 {@link #interrupt()} 的区别：
+     * interrupt 是"新的一轮来了，全清"；skip 是"这句不想听，后面的照听"。
+     */
+    public void skipCurrent() {
+        Handler h = playH;
+        if (h == null) return;
+        h.post(new Runnable() {
+            public void run() {
+                releasePlayer();
+                playStart = 0;
+                playDur = 0;
+                Handler hh = playH;
+                if (hh != null) {
+                    hh.removeCallbacks(playNext);
+                    hh.postDelayed(playNext, 30);
+                }
+            }
+        });
+        LogBus.add("⏭ 已跳过当前句");
+    }
 
     public void start() {
         if (running) return;
         running = true;
+        paused = false;
+        volume = Prefs.volume(ctx);
         cleanClips();
         synthT = new HandlerThread("tts-synth");
         synthT.start();
@@ -129,10 +215,13 @@ public final class Speaker {
         }
     }
 
-    public void feed(String text) {
+    public void feed(String text) { feed(text, null); }
+
+    /** @param voice 这一句单独用的音色（多语音）；null / 空 = 用全局音色。 */
+    public void feed(String text, String voice) {
         if (text == null || text.length() == 0) return;
         if (Prefs.muted(ctx)) return;
-        textQ.offer(text);
+        textQ.offer(new Task(text, voice));
     }
 
     private void cleanClips() {
@@ -165,11 +254,13 @@ public final class Speaker {
     private volatile long paceMs = 0;
     private volatile long lastSynthAt = 0;
     private int curTries = 0;
+    /** 这一句已经失败几次 —— 用来判断它是不是"毒句"。 */
+    private int curFails = 0;
 
     public long pace() { return paceMs; }
 
     private void synthLoop() {
-        String cur = null;
+        Task cur = null;
         while (running) {
             if (cur == null) {
                 try {
@@ -179,6 +270,7 @@ public final class Speaker {
                 }
                 if (cur == null) continue;
                 curTries = 0;
+                curFails = 0;
             }
             int my = gen;
             if (Prefs.muted(ctx)) { cur = null; continue; }
@@ -212,7 +304,7 @@ public final class Speaker {
             String err = null;
             try {
                 lastSynthAt = System.currentTimeMillis();
-                data = TtsClient.synth(ctx, text_safe(cur));
+                data = EngineStore.synthNow(ctx, text_safe(cur.text), cur.voice);
             } catch (Throwable t) {
                 err = t.getClass().getSimpleName() + ": " + t.getMessage();
             }
@@ -221,8 +313,23 @@ public final class Speaker {
                     boolean conn = isConnErr(err);
                     boolean busy = isTimeout(err);   // 超时：它多半还在忙上一条
                     failed.incrementAndGet();
-                    LogBus.error("合成失败：" + err + "   ← 文本：" + head(cur, 20));
+                    LogBus.error("合成失败：" + err + "   ← 文本：" + head(cur.text, 20));
                     boolean throttle = isThrottle(err);
+                    curFails++;
+                    // TTS Server 崩了之后，同一句反复重发就是反复把它打崩
+                    // （它的 SystemTtsService 一遇合成失败就抛 Bad audio format 0 把进程带走）。
+                    // 所以连不上超过 3 次，这句直接丢掉，别再喂它。
+                    if (conn && curFails >= 3) {
+                        LogBus.error("这句试了 " + curFails + " 次都把 TTS Server 打没了，跳过它："
+                                + head(cur.text, 24)
+                                + "（是 TTS Server 自己的 bug，不是这句的错）");
+                        cur = null;
+                        curFails = 0;
+                        curTries = 0;
+                        failStreak = 0;
+                        ttsDownHint(err);
+                        continue;
+                    }
                     if (conn || busy) {
                         failStreak++;
                         long back = Math.min(30000L, (busy ? 10000L : 2000L)
@@ -256,6 +363,7 @@ public final class Speaker {
             failStreak = 0;
             nextTryAt = 0;
             curTries = 0;
+            curFails = 0;
             if (paceMs > 0) {                          // 连续成功 → 把节奏收回去
                 paceMs = paceMs / 2;
                 if (paceMs < 200) paceMs = 0;
@@ -264,7 +372,7 @@ public final class Speaker {
             if (my != gen) { cur = null; continue; }
             try {
                 while (running && my == gen) {
-                    if (audioQ.offer(new Clip(cur, data, my), 200, TimeUnit.MILLISECONDS)) break;
+                    if (audioQ.offer(new Clip(cur.text, data, my, cur.voice), 200, TimeUnit.MILLISECONDS)) break;
                 }
             } catch (InterruptedException e) {
                 return;
@@ -368,6 +476,7 @@ public final class Speaker {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build());
             p.setDataSource(f.getAbsolutePath());
+            p.setVolume(volume, volume);
             p.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                 public void onCompletion(MediaPlayer m) {
                     // 关键：绝不在回调里直接 release —— 换一轮循环再收尾，躲开原生层自锁
@@ -398,7 +507,10 @@ public final class Speaker {
         spoken.incrementAndGet();
         chars.addAndGet(clip.text.length());
         last = clip.text;
-        LogBus.add("🔊 " + head(clip.text, 42) + "  (" + playDur + "ms)");
+        // 多语音时把音色也打出来 —— 一眼就能看出这句是谁在念
+        LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
+                ? "" : "【" + clip.voice.replaceAll("_\\d+$", "") + "】")
+                + head(clip.text, 42) + "  (" + playDur + "ms)");
     }
 
     /** 收尾统一走这里：先释放、再取下一条，全在播放线程上排队。 */
@@ -422,6 +534,12 @@ public final class Speaker {
     private final Runnable stuckCheck = new Runnable() {
         public void run() {
             try {
+                // 暂停中：既不判卡死，也不去踹播放循环 —— 否则一暂停就被当成"静默卡死"跳掉
+                if (paused) {
+                    Handler hp = playH;
+                    if (hp != null && running) hp.postDelayed(this, 1000);
+                    return;
+                }
                 MediaPlayer p = mp;
                 int dur = playDur;
                 if (p != null && dur > 0 && playStart > 0) {
