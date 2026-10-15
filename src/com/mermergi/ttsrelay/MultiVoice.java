@@ -275,6 +275,17 @@ public final class MultiVoice {
 
     public int mode() { return mode; }
 
+    /**
+     * 这一发是谁在说 —— 群聊的 system 提醒里直接写着（见 HttpServer.speakerFromNudge），
+     * 由外面喂进来，省得从正文里猜。只种 {@code turnName}、不动 {@code prefixState}：
+     * 模型要是照旧打了「名字: 」前缀，下面照样认得出来并且把前缀吃掉；不打，就按这个人算。
+     */
+    public void setTurnName(String n) {
+        if (n == null) return;
+        String s = clean(n);
+        if (s.length() > 0) turnName = s;
+    }
+
     // ───────────────────────── 入口 ─────────────────────────
 
     public List<Seg> feed(String delta) {
@@ -359,7 +370,11 @@ public final class MultiVoice {
             // state 1：冒号吃到了，等第一个实字确认这是不是「说话人」
             if (isSpace(c)) { prefixWs.append(c); return; }
             String n = clean(prefixBuf.toString());
-            if (isSpeakerName(n) && (isQuoteStart(c) || Character.isLetterOrDigit(c))) {
+            // 群聊已经把说话人告诉过我们了：名字对得上就一定是前缀，
+            // 哪怕后面跟的是「（动作）」这种括号开头，也得把它吃掉而不是念出来。
+            boolean known = turnName.length() > 0 && turnName.equals(n);
+            if ((isSpeakerName(n) || known)
+                    && (known || isQuoteStart(c) || Character.isLetterOrDigit(c))) {
                 turnName = n;
                 prefixBuf.setLength(0);
                 prefixWs.setLength(0);
