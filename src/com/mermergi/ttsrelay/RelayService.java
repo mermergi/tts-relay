@@ -16,6 +16,9 @@ public final class RelayService extends Service {
 
     public static final String ACTION_START = "com.mermergi.ttsrelay.START";
     public static final String ACTION_STOP = "com.mermergi.ttsrelay.STOP";
+    /** 通知栏快捷开关。 */
+    public static final String ACTION_PAUSE = "com.mermergi.ttsrelay.PAUSE";
+    public static final String ACTION_MUTE = "com.mermergi.ttsrelay.MUTE";
 
     private static final String CHANNEL = "relay";
     private static final int NID = 4141;
@@ -78,6 +81,20 @@ public final class RelayService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        if (ACTION_PAUSE.equals(a)) {
+            Speaker sp = speaker;
+            if (sp != null) { if (sp.isPaused()) sp.resume(); else sp.pause(); }
+            updateNotification();
+            return START_STICKY;
+        }
+        if (ACTION_MUTE.equals(a)) {
+            boolean m = !Prefs.muted(this);
+            Prefs.setMuted(this, m);
+            Speaker sp = speaker;
+            if (m && sp != null) sp.interrupt();
+            updateNotification();
+            return START_STICKY;
+        }
         startEverything();
         return START_STICKY;
     }
@@ -114,12 +131,16 @@ public final class RelayService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
         boolean up = server != null && server.isRunning();
-        String text = up
-                ? "127.0.0.1:" + server.port()
-                + " · 已念 " + (speaker == null ? 0 : speaker.spokenCount()) + " 句"
-                + (Prefs.muted(this) ? " · 已静音" : "")
-                : "未运行";
-        Notification n = buildNotification(text);
+        StringBuilder sb = new StringBuilder();
+        if (up) {
+            sb.append("127.0.0.1:").append(server.port())
+              .append(" · 已念 ").append(speaker == null ? 0 : speaker.spokenCount()).append(" 句");
+            if (speaker != null && speaker.isPaused()) sb.append(" · 已暂停");
+            if (Prefs.muted(this)) sb.append(" · 已静音");
+        } else {
+            sb.append("未运行");
+        }
+        Notification n = buildNotification(sb.toString());
         nm.notify(NID, n);
     }
 
@@ -133,21 +154,37 @@ public final class RelayService extends Service {
     }
 
     private Notification buildNotification(String text) {
+        int flags = Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0;
         PendingIntent pi = PendingIntent.getActivity(
-                this, 0, new Intent(this, MainActivity.class),
-                Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+                this, 0, new Intent(this, MainActivity.class), flags);
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26) {
             b = new Notification.Builder(this, CHANNEL);
         } else {
             b = new Notification.Builder(this);
         }
+        // 通知栏快捷开关：暂停/继续、静音、停止 —— 不必回 App 就能捂住嘴
+        boolean paused = speaker != null && speaker.isPaused();
+        PendingIntent pausePi = PendingIntent.getService(this, 1,
+                new Intent(this, RelayService.class).setAction(ACTION_PAUSE), flags);
+        PendingIntent mutePi = PendingIntent.getService(this, 2,
+                new Intent(this, RelayService.class).setAction(ACTION_MUTE), flags);
+        PendingIntent stopPi = PendingIntent.getService(this, 3,
+                new Intent(this, RelayService.class).setAction(ACTION_STOP), flags);
+        b.addAction(action(paused ? "继续" : "暂停", pausePi));
+        b.addAction(action(Prefs.muted(this) ? "取消静音" : "静音", mutePi));
+        b.addAction(action("停止", stopPi));
         return b.setContentTitle(getString(R.string.notif_title))
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
                 .setContentIntent(pi)
                 .setOngoing(true)
                 .build();
+    }
+
+    private static Notification.Action action(String title, PendingIntent pi) {
+        return new Notification.Action.Builder(
+                android.R.drawable.ic_media_play, title, pi).build();
     }
 
     private void createChannel() {
