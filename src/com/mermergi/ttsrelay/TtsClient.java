@@ -38,6 +38,13 @@ public final class TtsClient {
     }
 
     public static byte[] synth(Context c, String text) throws IOException {
+        return synth(c, text, null);
+    }
+
+    /**
+     * @param voiceOverride 这一句单独指定的音色（多语音用）；null / 空 = 用全局音色。
+     */
+    public static byte[] synth(Context c, String text, String voiceOverride) throws IOException {
         boolean locked;
         try {
             locked = GATE.tryAcquire(30, java.util.concurrent.TimeUnit.SECONDS);
@@ -48,20 +55,21 @@ public final class TtsClient {
         int now = INFLIGHT.incrementAndGet();
         if (now > inflightMax) inflightMax = now;
         try {
-            return synthLocked(c, text);
+            return synthLocked(c, text, voiceOverride);
         } finally {
             INFLIGHT.decrementAndGet();
             GATE.release();
         }
     }
 
-    private static byte[] synthLocked(Context c, String text) throws IOException {
+    private static byte[] synthLocked(Context c, String text, String voiceOverride) throws IOException {
         String url = Prefs.ttsBase(c).replaceAll("/+$", "")
                 + "/api/tts?text=" + q(text)
                 + "&engine=" + q(Prefs.engine(c))
                 + "&rate=" + q(Prefs.rate(c))
                 + "&pitch=" + q(Prefs.pitch(c));
-        String voice = Prefs.voice(c);
+        String voice = (voiceOverride != null && voiceOverride.length() > 0)
+                ? voiceOverride : Prefs.voice(c);
         if (voice != null && voice.length() > 0) url += "&voice=" + q(voice);
         HttpURLConnection conn = open(url);
         try {

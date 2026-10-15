@@ -50,7 +50,18 @@ public final class HttpServer {
             + "```\nprint('这行不该被念')\n```\n"
             + "对了，遇到那种一口气能说六十个字不带标点的长句子的时候，就只能靠字数硬切了，切在哪儿全看退让规则。完了。";
 
-    private static final String[] SKIP_MARKERS = {"标题", "title", "摘要", "summar", "命名"};
+    /** 关键词与阈值现在都能在设置页改，这里只留一份兜底默认。 */
+    private static String[] skipMarkers(Context c) {
+        String raw = Prefs.skipKeywords(c);
+        if (raw == null) return new String[0];
+        String[] parts = raw.split(",");
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        for (String s : parts) {
+            String k = s.trim().toLowerCase(Locale.US);
+            if (k.length() > 0) out.add(k);
+        }
+        return out.toArray(new String[0]);
+    }
 
     /** 一次"念不念"的判定结果 + 理由，出问题看日志就知道是谁把嘴捂上的。 */
     private static final class Decision {
@@ -223,6 +234,9 @@ public final class HttpServer {
                 o.put("tts", Prefs.ttsBase(ctx));
                 o.put("splitMode", Prefs.splitMode(ctx));
                 o.put("splitModeName", Splitter.modeName(Prefs.splitMode(ctx)));
+                EngineStore.Item ae = EngineStore.get(ctx, EngineStore.activeId(ctx));
+                o.put("ttsEngine", ae == null ? "?" : ae.label);
+                o.put("ttsEngineId", EngineStore.activeId(ctx));
                 o.put("ttsCrashedRecently", TtsReviver.crashedJustNow());
                 o.put("autoRevive", Prefs.autoRevive(ctx));
                 o.put("ttsInflight", TtsClient.inflight());
@@ -232,9 +246,120 @@ public final class HttpServer {
             json(out, 200, o.toString());
             return;
         }
-        if ("/_voices".equals(path)) {
+        if ("/_import".equals(path)) {
+            // 本地调试/命令行导入。?text=<urlencoded JSON>，或者 POST 正文直接丢 JSON
             try {
-                json(out, 200, TtsClient.voices(ctx));
+                String text = qs.get("text");
+                if (text == null || text.trim().length() == 0) {
+                    text = new String(body == null ? new byte[0] : body, java.nio.charset.StandardCharsets.UTF_8);
+                }
+                java.util.List<EngineStore.Item> list = EngineImport.parse(text);
+                JSONArray arr = new JSONArray();
+                for (EngineStore.Item it : list) {
+                    EngineStore.put(ctx, it);
+                    arr.put(it.label + "  [" + it.kind + "]");
+                }
+                json(out, 200, "{\"imported\":" + list.size() + ",\"engines\":" + arr + "}");
+            } catch (Throwable t) {
+                json(out, 400, "{\"error\":\"" + esc(String.valueOf(t.getMessage())) + "\"}");
+            }
+            return;
+        }
+        if ("/_export".equals(path)) {
+            String fmt = qs.get("fmt");
+            String txt = "legado".equals(fmt)
+                    ? EngineImport.exportLegado(EngineStore.all(ctx))
+                    : EngineImport.exportOurs(EngineStore.all(ctx));
+            try {
+                out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+                        + "Content-Length: " + txt.getBytes("UTF-8").length + "\r\n"
+                        + "Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n")
+                        .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+                out.write(txt.getBytes("UTF-8"));
+                out.flush();
+            } catch (Throwable ignored) { }
+            return;
+        }
+        if ("/_engine".equals(path)) {
+            // 本地调试：切引擎 / 改某个引擎的配置项。?id=xxx 切过去；?k=键&v=值 改配置
+            String del = qs.get("del");
+            if (del != null && del.trim().length() > 0) {
+                EngineStore.remove(ctx, del.trim());
+                json(out, 200, "{\"deleted\":\"" + esc(del.trim()) + "\"}");
+                return;
+            }
+            String id = qs.get("id");
+            if (id != null && id.trim().length() > 0) EngineStore.setActive(ctx, id.trim());
+            String k = qs.get("k");
+            String v = qs.get("v");
+            if (k != null && v != null) {
+                EngineStore.Item it = EngineStore.get(ctx, EngineStore.activeId(ctx));
+                if (it != null) {
+                    if ("timeout".equals(k) || "sample_rate".equals(k)) {
+                        try { it.put(k, Integer.parseInt(v.trim())); } catch (Throwable ignored) { }
+                    } else {
+                        it.put(k, v);
+                    }
+                    EngineStore.put(ctx, it);
+                }
+            }
+            EngineStore.Item cur = EngineStore.get(ctx, EngineStore.activeId(ctx));
+            json(out, 200, "{\"active\":\"" + EngineStore.activeId(ctx) + "\",\"label\":\""
+                    + esc(cur == null ? "?" : cur.label) + "\"}");
+            return;
+        }
+        if ("/_engines".equals(path)) {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("active", EngineStore.activeId(ctx));
+                JSONArray arr = new JSONArray();
+                for (EngineStore.Item e : EngineStore.all(ctx)) {
+                    JSONObject x = new JSONObject();
+                    x.put("id", e.id);
+                    x.put("label", e.label);
+                    x.put("kind", e.kind);
+                    String prob = EngineStore.build(e).problem(ctx);
+                    x.put("problem", prob == null ? JSONObject.NULL : prob);
+                    arr.put(x);
+                }
+                o.put("engines", arr);
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
+            return;
+        }
+        if ("/_voices".equals(path)) {
+            // 当前引擎的音色目录（手工 + voices_url + 引擎自带，三路合并）；?id=xxx 看指定引擎
+            try {
+                String id = qs.get("id");
+                EngineStore.Item it = id == null || id.length() == 0
+                        ? EngineStore.get(ctx, EngineStore.activeId(ctx))
+                        : EngineStore.get(ctx, id);
+                JSONArray arr = new JSONArray();
+                boolean grouped = "1".equals(qs.get("grouped"));
+                for (String v : EngineStore.fetchVoices(ctx, it)) {
+                    if (!grouped) { arr.put(v); continue; }
+                    // grouped=1：把标签拆出来，验证「按男女分组」用的就是这份数据
+                    JSONObject o = new JSONObject();
+                    String raw = v;
+                    int sp = raw.indexOf(EngineStore.SEP);
+                    String idPart = sp > 0 ? raw.substring(sp + 1) : "";
+                    String disp = (sp > 0 ? raw.substring(0, sp) : raw).replaceAll("_\\d+$", "").trim();
+                    String name = disp, tags = "";
+                    int ls = disp.lastIndexOf(' ');
+                    if (ls > 0 && disp.substring(ls + 1).contains("|")) {
+                        name = disp.substring(0, ls);
+                        tags = disp.substring(ls + 1);
+                    }
+                    String gender = "未标注";
+                    if ("女".equals(tags.split("\\|")[0]) || tags.contains("女|") || tags.startsWith("女")) gender = "女声";
+                    else if (tags.startsWith("男")) gender = "男声";
+                    o.put("name", name);
+                    o.put("tags", tags);
+                    o.put("gender", gender);
+                    o.put("id", idPart);
+                    arr.put(o);
+                }
+                json(out, 200, arr.toString());
             } catch (Throwable t) {
                 json(out, 502, "{\"error\":\"" + esc(t.getMessage()) + "\"}");
             }
@@ -262,20 +387,31 @@ public final class HttpServer {
             if (cv != null && cv.length() > 0) {
                 try { chunk = Integer.parseInt(cv.trim()); } catch (Throwable ignored) { }
             }
+            // roles=1 → 按角色切，顺带把多语音规则验一遍
+            boolean wantRoles = "1".equals(qs.get("roles")) || "true".equals(qs.get("roles"));
             Splitter sp = new Splitter(chunk, 4, mode);
+            MultiVoice mvo = new MultiVoice(chunk, 4, mode, true, Prefs.parseMode(ctx));
             JSONArray parts = new JSONArray();
             try {
                 for (int i = 0; i < t.length(); i += 3) {
-                    for (String s : sp.feed(t.substring(i, Math.min(t.length(), i + 3)))) {
-                        parts.put(s);
+                    String piece = t.substring(i, Math.min(t.length(), i + 3));
+                    if (wantRoles) {
+                        for (MultiVoice.Seg g : mvo.feed(piece)) parts.put(tag(g) + "\t" + g.text);
+                    } else {
+                        for (String s : sp.feed(piece)) parts.put(s);
                     }
                 }
-                for (String s : sp.flush()) parts.put(s);
+                if (wantRoles) {
+                    for (MultiVoice.Seg g : mvo.flush()) parts.put(tag(g) + "\t" + g.text);
+                } else {
+                    for (String s : sp.flush()) parts.put(s);
+                }
                 JSONObject o = new JSONObject();
                 o.put("mode", mode);
                 o.put("modeName", Splitter.modeName(mode));
                 o.put("modeDesc", Splitter.modeDesc(mode));
                 o.put("maxChunk", Math.max(20, chunk));
+                o.put("roles", wantRoles);
                 o.put("parts", parts);
                 o.put("count", parts.length());
                 json(out, 200, o.toString());
@@ -287,8 +423,54 @@ public final class HttpServer {
         if ("/_say".equals(path)) {
             String t = qs.get("text");
             if (t == null || t.length() == 0) t = "测试一下，能听见吗？";
-            speaker.feed(t);
-            json(out, 200, "{\"ok\":true}");
+            boolean roles = "1".equals(qs.get("roles")) || "true".equals(qs.get("roles"));
+            if (roles) {
+                // 走完整的多语音链路：分段 → 查音色表 → 合成
+                MultiVoice mvo = newMultiVoice();
+                boolean[] started = new boolean[]{false};
+                int[] sent = new int[]{0};
+                emit(mvo.feed(t), started, sent, true);
+                emit(mvo.flush(), started, sent, true);
+                json(out, 200, "{\"ok\":true,\"parts\":" + sent[0] + "}");
+            } else {
+                speaker.feed(t);
+                json(out, 200, "{\"ok\":true}");
+            }
+            return;
+        }
+        if ("/_mv".equals(path)) {
+            // 本地调试：读写角色音色表。音色传 "-" = 不念，传空 = 跟随全局
+            String on = qs.get("on");
+            if (on != null) Prefs.setMvEnabled(ctx, "1".equals(on) || "true".equals(on));
+            String md = qs.get("mode");
+            if (md != null) {
+                try { Prefs.setParseMode(ctx, MultiVoice.clampMode(Integer.parseInt(md.trim()))); }
+                catch (Throwable ignored) { }
+            }
+            String key = qs.get("k");
+            String val = qs.get("v");
+            if (key != null && key.trim().length() > 0) {
+                if (val == null) Prefs.removeVoice(ctx, key.trim());
+                else Prefs.putVoice(ctx, key.trim(), "-".equals(val) ? MultiVoice.SKIP : val);
+            }
+            String del = qs.get("del");
+            if (del != null) Prefs.removeVoice(ctx, del.trim());
+
+            JSONObject o = new JSONObject();
+            try {
+                o.put("enabled", Prefs.mvEnabled(ctx));
+                o.put("mode", Prefs.parseMode(ctx));
+                o.put("modeName", MultiVoice.MODE_NAMES[Prefs.parseMode(ctx)]);
+                JSONObject tab = new JSONObject();
+                for (java.util.Map.Entry<String, String> e : Prefs.voiceTableMap(ctx).entrySet()) {
+                    String v = e.getValue();
+                    tab.put(e.getKey(), MultiVoice.SKIP.equals(v) ? "-skip-"
+                            : (v.length() == 0 ? "-global-" : v));
+                }
+                o.put("table", tab);
+                o.put("global", Prefs.voice(ctx).length() == 0 ? "-default-" : Prefs.voice(ctx));
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
             return;
         }
         if ("/_selftest".equals(path)) {
@@ -424,10 +606,10 @@ public final class HttpServer {
                         if (msg != null) {
                             Object c = msg.opt("content");
                             if (c instanceof String) {
-                                Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
+                                MultiVoice mv = newMultiVoice();
                                 int[] sent = new int[]{0};
-                                emit(sp.feed((String) c), turnStarted, sent, dec.cut);
-                                emit(sp.flush(), turnStarted, sent, dec.cut);
+                                emit(mv.feed((String) c), turnStarted, sent, dec.cut);
+                                emit(mv.flush(), turnStarted, sent, dec.cut);
                                 if (sent[0] > 0) LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
                             }
                         }
@@ -451,7 +633,7 @@ public final class HttpServer {
         writeHead(out, code, headers, -1, true);
 
         InputStream in = conn.getInputStream();
-        Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
+        MultiVoice mv = newMultiVoice();
         CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPLACE)
                 .onUnmappableCharacter(CodingErrorAction.REPLACE);
@@ -472,39 +654,50 @@ public final class HttpServer {
             while ((nl = lineBuf.indexOf("\n")) >= 0) {
                 String l = lineBuf.substring(0, nl);
                 lineBuf.delete(0, nl + 1);
-                sseLine(l, sp, started, sent, cut);
+                sseLine(l, mv, started, sent, cut);
             }
         }
         if (speak) {
-            if (lineBuf.length() > 0) sseLine(lineBuf.toString(), sp, started, sent, cut);
-            emit(sp.flush(), started, sent, cut);
+            if (lineBuf.length() > 0) sseLine(lineBuf.toString(), mv, started, sent, cut);
+            emit(mv.flush(), started, sent, cut);
             // 这条请求到底吐了几句正文？—— 和请求日志对起来就知道是哪一发在发声
             LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
         }
         endChunks(out);
     }
 
-    /** 真的凑出可念的句子了，才去打断上一段 —— 这是"没声音"那个坑的正解。 */
-    private void emit(java.util.List<String> sentences, boolean[] started, int[] sent,
+    /** 断句器：多语音开着就按角色切，关着就跟以前一模一样。 */
+    private MultiVoice newMultiVoice() {
+        return new MultiVoice(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx),
+                Prefs.mvEnabled(ctx), Prefs.parseMode(ctx));
+    }
+
+    /**
+     * 真的凑出可念的句子了，才去打断上一段 —— 这是"没声音"那个坑的正解。
+     * 多语音时逐段查音色表：设成「不念」的角色直接丢掉（连打断都不算）。
+     */
+    private void emit(java.util.List<MultiVoice.Seg> segs, boolean[] started, int[] sent,
                       boolean cut) {
-        if (sentences == null || sentences.isEmpty()) return;
-        if (!started[0]) {
-            started[0] = true;
-            // 同一个回合的工具续写：接在后面念，不腰斩正在播的那一句
-            if (cut) speaker.interrupt();
-        }
-        for (String s : sentences) {
-            speaker.feed(s);
+        if (segs == null || segs.isEmpty()) return;
+        for (MultiVoice.Seg seg : segs) {
+            String voice = MultiVoice.voiceFor(ctx, seg);
+            if (voice == null) continue;              // 这个角色设成了「不念」
+            if (!started[0]) {
+                started[0] = true;
+                // 同一个回合的工具续写：接在后面念，不腰斩正在播的那一句
+                if (cut) speaker.interrupt();
+            }
+            speaker.feed(seg.text, voice);
             sent[0]++;
         }
     }
 
-    private void sseLine(String line, Splitter sp, boolean[] started, int[] sent, boolean cut) {
+    private void sseLine(String line, MultiVoice mv, boolean[] started, int[] sent, boolean cut) {
         line = line.trim();
         if (!line.startsWith("data:")) return;
         String payload = line.substring(5).trim();
         if (payload.length() == 0 || "[DONE]".equals(payload)) {
-            emit(sp.flush(), started, sent, cut);
+            emit(mv.flush(), started, sent, cut);
             return;
         }
         try {
@@ -517,15 +710,19 @@ public final class HttpServer {
                 JSONObject d = c.optJSONObject("delta");
                 if (d != null) {
                     Object v = d.opt("content");
-                    if (v instanceof String) emit(sp.feed((String) v), started, sent, cut);
+                    if (v instanceof String) emit(mv.feed((String) v), started, sent, cut);
                 }
                 JSONObject m = c.optJSONObject("message");
                 if (m != null) {
                     Object v = m.opt("content");
-                    if (v instanceof String) emit(sp.feed((String) v), started, sent, cut);
+                    if (v instanceof String) emit(mv.feed((String) v), started, sent, cut);
                 }
             }
         } catch (Throwable ignored) { }
+    }
+
+    private static String tag(MultiVoice.Seg g) {
+        return g.name.length() == 0 ? g.role : g.role + ":" + g.name;
     }
 
     /** 每个转发请求都记一笔 —— 出问题时看一眼日志就知道 Chatbox 到底发了几发、发的什么。 */
@@ -580,7 +777,8 @@ public final class HttpServer {
      *   ② 末条是 tool 结果 / 带 tool_calls 的 assistant = 工具轮的续写，
      *      联网搜索回灌后的那一条正是最终答复 —— 必须念（老版本这里被误杀），
      *      而且要**接在上一段后面排队**、不许打断，因为它是同一个回合的后半截；
-     *   ③ "起标题"关键词只在 system 提示词里找，绝不碰用户和工具正文。
+     *   ③ "起标题"关键词只在 system 提示词里找、且仅当客户端没设输出额度时生效，
+     *      绝不碰用户和工具正文 —— 设了额度的正经回复不会被「标题」这类词误杀。
      */
     private Decision decide(byte[] body) {
         if (Prefs.muted(ctx)) return new Decision(false, true, "已静音");
@@ -588,10 +786,11 @@ public final class HttpServer {
         try {
             JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
 
+            int small = Prefs.smallTokenLimit(ctx);
             int mt = o.optInt("max_tokens", -1);
-            if (mt > 0 && mt < 200) return new Decision(false, true, "max_tokens=" + mt + "，后台小活");
+            if (mt > 0 && mt < small) return new Decision(false, true, "max_tokens=" + mt + "，后台小活");
             int mct = o.optInt("max_completion_tokens", -1);
-            if (mct > 0 && mct < 200) {
+            if (mct > 0 && mct < small) {
                 return new Decision(false, true, "max_completion_tokens=" + mct + "，后台小活");
             }
 
@@ -620,9 +819,13 @@ public final class HttpServer {
                 return new Decision(true, false, "工具轮续写：接在上一段后面念，不打断");
             }
 
-            String s = sys.toString().toLowerCase(Locale.US);
-            for (String mk : SKIP_MARKERS) {
-                if (s.contains(mk)) return new Decision(false, true, "system 提示词含「" + mk + "」，后台小活");
+            // 关键词只在"客户端没设输出额度"时才算起标题证据：设了额度(≥200)的请求是正经回复，
+            // 酒馆角色卡/世界书里带个「标题」字不能把整条哑掉。
+            if (mt <= 0 && mct <= 0) {
+                String s = sys.toString().toLowerCase(Locale.US);
+                for (String mk : skipMarkers(ctx)) {
+                    if (s.contains(mk)) return new Decision(false, true, "system 提示词含「" + mk + "」，后台小活");
+                }
             }
         } catch (Throwable ignored) { }
         return new Decision(true, true, "正常对话：这一段会打断上一段");

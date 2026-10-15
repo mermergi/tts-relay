@@ -49,8 +49,6 @@ aapt2 link \
     --java "$gen" \
     --min-sdk-version 26 \
     --target-sdk-version 34 \
-    --version-code 8 \
-    --version-name 1.7 \
     "$out/res.zip"
 
 echo "==> javac"
