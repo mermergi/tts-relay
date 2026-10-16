@@ -922,7 +922,7 @@ public class MainActivity extends Activity {
             EngineStore.Item it = EngineStore.get(this, pendingLoginEngineId);
             if (it == null) { toast("找不到那个引擎了"); return; }
             String val = v.trim();
-            it.put("cred", val);
+            it.put(loginTarget(it), val);
             EngineStore.put(this, it);
             renderEngines();
             LogBus.add("已保存登录状态（" + it.label + "）：" + SessionPick.summary(val));
@@ -959,6 +959,7 @@ public class MainActivity extends Activity {
 
     private static String kindName(String kind) {
         if (EngineStore.KIND_HTTP.equals(kind)) return "HTTP 接口";
+        if (EngineStore.KIND_JS.equals(kind)) return "JS 插件";
         return "系统语音";
     }
 
@@ -1024,7 +1025,8 @@ public class MainActivity extends Activity {
     private void addEngine() {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("添加引擎")
-                .setItems(new String[]{"系统语音（本地、离线）", "HTTP 接口（任意云服务）"},
+                .setItems(new String[]{"系统语音（本地、离线）", "HTTP 接口（任意云服务）",
+                                "TTS Server 的 JS 插件"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 EngineStore.Item it = new EngineStore.Item();
@@ -1042,6 +1044,13 @@ public class MainActivity extends Activity {
                                     it.put("body", "");
                                     it.put("timeout", 60000);
                                     it.put("json_key", "");
+                                    it.put("voices", "");
+                                } else {
+                                    it.kind = EngineStore.KIND_JS;
+                                    it.label = "JS 插件";
+                                    it.put("src", "");
+                                    it.put("lang", "zh-CN");
+                                    it.put("headers", "");
                                     it.put("voices", "");
                                 }
                                 it.id = EngineStore.newId(it.kind);
@@ -1115,6 +1124,29 @@ public class MainActivity extends Activity {
             spec.add(new String[]{"binding", "保存哪一项：session / session.名字 / local.键 / store.键",
                     it.s("binding", "session"), "single"});
             spec.add(new String[]{"ua", "登录页 UA：mobile / pc / 自定义", it.s("ua", "mobile"), "single"});
+        } else if (EngineStore.KIND_JS.equals(it.kind)) {
+            spec.add(new String[]{"src", "插件源码（TTS Server 那个 .js，整份贴进来）",
+                    it.s("src", ""), "multi"});
+            spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
+            java.util.Set<String> shown = new java.util.HashSet<String>();
+            try {                                   // 插件自己声明的变量，显示名用它给的
+                org.json.JSONObject lb = new org.json.JSONObject(it.s("var_labels", ""));
+                for (java.util.Iterator<String> ki = lb.keys(); ki.hasNext(); ) {
+                    String k = ki.next();
+                    if (shown.add(k)) spec.add(new String[]{k, lb.optString(k, k), it.s(k, ""), "single"});
+                }
+            } catch (Throwable ignored) { }
+            for (java.util.Iterator<String> ki = it.cfg.keys(); ki.hasNext(); ) {
+                String k = ki.next();
+                if (k.equals("src") || k.equals("lang") || k.equals("var_labels")
+                        || k.equals("login_key") || k.equals("headers")
+                        || k.equals("voices") || k.equals("voices_url") || k.equals("voices_path")
+                        || k.equals("voices_name") || k.equals("voices_id")
+                        || k.equals("login_url") || k.equals("binding") || k.equals("ua")) continue;
+                if (shown.add(k)) spec.add(new String[]{k, "插件变量：" + k, it.s(k, ""), "single"});
+            }
+            spec.add(new String[]{"headers", "插件只给地址时，我们取音频带上的请求头",
+                    it.s("headers", ""), "multi"});
         } else {
             spec.add(new String[]{"pkg", "系统引擎包名（留空=手机默认那个）", it.s("pkg", ""), "single"});
             spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
@@ -1143,14 +1175,16 @@ public class MainActivity extends Activity {
         final List<Fld> flds = buildForm(box, spec.toArray(new String[0][]));
 
         // 登录状态单独一块：凭据动辄上千字符，塞进表单里没法看，所以只显示状态
-        if (EngineStore.KIND_HTTP.equals(it.kind) || it.cfg.has("cred")) {
+        final String loginKey = loginTarget(it);
+        if (EngineStore.KIND_HTTP.equals(it.kind) || EngineStore.KIND_JS.equals(it.kind)
+                || it.cfg.has(loginKey)) {
             LinearLayout ck = ui.card();
             ck.addView(ui.sectionTitle("登录状态"));
             final TextView st = ui.value("");
             // 状态跟着数据走：保存完、改完、清完都当场刷，不用关框重进
             final Runnable refresh = new Runnable() {
                 public void run() {
-                    String cur = it.s("cred", "");
+                    String cur = it.s(loginKey, "");
                     st.setText(cur.length() == 0
                             ? "未保存 —— 点「💾 一键保存」，或「手动填」自己粘一条"
                             : SessionPick.summary(cur));
@@ -1184,7 +1218,7 @@ public class MainActivity extends Activity {
             }), ui.weightGap(1f, 8));
             ckRow.addView(ui.btn("清空", false, new View.OnClickListener() {
                 public void onClick(View v) {
-                    it.put("cred", "");
+                    it.put(loginKey, "");
                     EngineStore.put(MainActivity.this, it);
                     refresh.run();
                     renderEngines();
@@ -1246,12 +1280,19 @@ public class MainActivity extends Activity {
      * 只有一个「粘贴」按钮 —— 粘的是裸串就原样收，是 cURL / 请求头就自己摘出来，
      * 所以没必要让用户先自己选"智能提取"还是"原样粘贴"。保存时再整理一次兜底。
      */
+    /** 登录抓回来的值写进哪个配置键：JS 插件写它自己声明的那个变量，别的引擎写 cred。 */
+    private static String loginTarget(EngineStore.Item it) {
+        String k = it.s("login_key", "");
+        return k.length() > 0 ? k : "cred";
+    }
+
     private void editSession(final EngineStore.Item it, final Runnable onChange) {
+        final String key = loginTarget(it);
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(4));
         box.addView(ui.label("登录凭据（多长都行，框里能滚）"));
         final EditText e = ui.area("");
-        e.setText(it.s("cred", ""));
+        e.setText(it.s(key, ""));
         e.setMinLines(5);
         e.setMaxLines(9);
         box.addView(e);
@@ -1279,7 +1320,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton("保存", new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
                         String v = SessionPick.tidy(e.getText().toString());
-                        it.put("cred", v);
+                        it.put(key, v);
                         EngineStore.put(MainActivity.this, it);
                         renderEngines();
                         if (onChange != null) onChange.run();   // 上面那块状态当场刷新

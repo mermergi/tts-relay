@@ -1,0 +1,162 @@
+package com.mermergi.ttsrelay;
+
+import android.content.Context;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 引擎类型：<b>TTS Server 的 JS 插件</b>。
+ *
+ * 直接把插件源码存进配置，用 {@link JsHost}（Rhino）跑起来 —— 不是猜它想干什么，
+ * 是真的按它的 {@code getAudio} 去要音频：
+ * <ul>
+ *   <li>插件返回一个 http 链接 → 我们自己去取（绝大多数插件都是这种）</li>
+ *   <li>插件自己发完请求、返回字节流 → 直接用</li>
+ *   <li>音色表问 {@code EditorJS.getVoices()}，采样率问 {@code getAudioSampleRate()}</li>
+ * </ul>
+ *
+ * 所以插件里那些算法（倍速怎么映射、SSML 怎么拼、参数怎么拼 URL）都是<b>原样执行</b>的，
+ * 不存在"搬不过来"。
+ */
+public final class JsTtsEngine implements TtsEngine {
+
+    private final EngineStore.Item it;
+
+    public JsTtsEngine(EngineStore.Item it) { this.it = it; }
+
+    @Override public String kind() { return EngineStore.KIND_JS; }
+
+    @Override public String label() {
+        return it != null && it.label.length() > 0 ? it.label : "JS 插件";
+    }
+
+    /** 每次跑都重新加载插件 —— Rhino 的作用域不能给多个线程共用，反正加载很便宜。 */
+    private JsHost host() {
+        Map<String, String> vars = new LinkedHashMap<String, String>();
+        if (it != null) {
+            for (java.util.Iterator<String> k = it.cfg.keys(); k.hasNext(); ) {
+                String key = k.next();
+                if ("src".equals(key) || "var_labels".equals(key) || "login_key".equals(key)) continue;
+                vars.put(key, it.s(key, ""));
+            }
+        }
+        String src = it == null ? "" : it.s("src", "");
+        return JsHost.load(src, vars);
+    }
+
+    private String locale() {
+        String l = it == null ? "" : it.s("lang", "");
+        return l.length() == 0 ? "zh-CN" : l;
+    }
+
+    @Override public String problem(Context c) {
+        if (it == null || it.s("src", "").trim().length() == 0) return "还没导入插件源码";
+        try {
+            JsHost h = host();
+            if (h.hasFunction("getAudio")) return null;
+            if (h.hasFunction("getAudioV2")) {
+                return "这个插件只给了 getAudioV2（WebSocket 流式），本 App 只跑 getAudio 那种";
+            }
+            return "插件里没找到 getAudio";
+        } catch (Throwable t) {
+            return "插件跑不起来：" + t.getMessage();
+        }
+    }
+
+    // ───────────────────────── 合成 ─────────────────────────
+
+    @Override
+    public byte[] synth(Context c, String text, Say say) throws Exception {
+        String bad = problem(c);
+        if (bad != null) throw new IllegalStateException(bad);
+        Say s = say == null ? new Say() : say;
+
+        JsHost h = host();
+        // 插件那两个参数的档位是 0-100（50 正常），我们是 1.0 正常
+        int rate = Math.round(s.rate * JsHost.NEUTRAL);
+        int volume = Math.round(s.volume * JsHost.NEUTRAL);
+        int pitch = Math.round(s.pitch * JsHost.NEUTRAL);
+
+        Object r = h.getAudio(text, locale(), TtsEngine.shortVoice(s.voice), rate, volume, pitch);
+        Object v = org.mozilla.javascript.Context.jsToJava(r, Object.class);
+        if (v == null) throw new IllegalStateException("插件没给出音频");
+
+        if (v instanceof CharSequence) {
+            String url = v.toString().trim();
+            if (url.length() == 0) throw new IllegalStateException("插件给了个空地址");
+            return fetch(url);
+        }
+        if (v instanceof byte[]) return (byte[]) v;
+        if (v instanceof InputStream) return readAll((InputStream) v);
+        throw new IllegalStateException("插件返回的东西认不出来：" + v.getClass().getSimpleName());
+    }
+
+    /** 插件只给了地址 → 我们替它把音频取回来。 */
+    private byte[] fetch(String url) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(Math.max(5000, it == null ? 120000 : it.i("timeout", 120000)));
+            conn.setUseCaches(false);
+            conn.setRequestProperty("User-Agent", "tts-relay/2.7");
+            if (it != null) {
+                for (String line : it.s("headers", "").split("\n")) {
+                    String x = line.trim();
+                    int i = x.indexOf(':');
+                    if (i <= 0) continue;
+                    try { conn.setRequestProperty(x.substring(0, i).trim(), x.substring(i + 1).trim()); }
+                    catch (Throwable ignored) { }
+                }
+                String cred = it.s("cred", "").trim();
+                if (cred.length() > 0) conn.setRequestProperty("Cookie", cred);
+            }
+            int code = conn.getResponseCode();
+            if (code != 200) {
+                throw new IllegalStateException("插件给的地址回了 HTTP " + code);
+            }
+            InputStream in = conn.getInputStream();
+            if (in == null) throw new IllegalStateException("插件给的地址没有内容");
+            return readAll(in);
+        } finally {
+            try { conn.disconnect(); } catch (Throwable ignored) { }
+        }
+    }
+
+    private static byte[] readAll(InputStream in) throws Exception {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(64 * 1024);
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        in.close();
+        return bos.toByteArray();
+    }
+
+    // ───────────────────────── 音色 ─────────────────────────
+
+    @Override
+    public List<String> voices(Context c) {
+        List<String> out = new ArrayList<String>();
+        try {
+            JsHost h = host();
+            if (!h.hasEditor()) return out;
+            for (String[] v : h.voices(locale())) {
+                String name = v[0];
+                String id = v[1];
+                if (name.length() == 0 && id.length() == 0) continue;
+                out.add(id.length() == 0 || id.equals(name)
+                        ? name : name + EngineStore.SEP + id);
+            }
+        } catch (Throwable t) {
+            LogBus.error("跑插件的音色表失败：" + t.getMessage());
+        }
+        return out;
+    }
+}
