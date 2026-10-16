@@ -963,6 +963,36 @@ public class MainActivity extends Activity {
         return "系统语音";
     }
 
+    private boolean metaSyncing = false;
+
+    /**
+     * 老引擎（导入时还没读懂 vars 的）后台补一次插件元数据 —— 补完重画列表，
+     * 「请设置变量」和变量输入框就自己出来了。照它那样：列表上直接能看到该填什么。
+     */
+    private void syncJsMetaInBackground() {
+        if (metaSyncing) return;
+        final java.util.List<EngineStore.Item> todo = new java.util.ArrayList<EngineStore.Item>();
+        for (EngineStore.Item it : EngineStore.all(this)) {
+            if (!EngineStore.KIND_JS.equals(it.kind)) continue;
+            if (it.s("def_vars", "").trim().length() > 0) continue;      // 已经读过了
+            if (it.s("src", "").trim().length() == 0) continue;          // 没源码，没啥可读
+            todo.add(it);
+        }
+        if (todo.isEmpty()) return;
+        metaSyncing = true;
+        new Thread(new Runnable() {
+            public void run() {
+                for (EngineStore.Item it : todo) {
+                    try { EngineStore.syncJsMeta(MainActivity.this, it); }
+                    catch (Throwable ignored) { }
+                }
+                runOnUiThread(new Runnable() {
+                    public void run() { metaSyncing = false; renderEngines(); }
+                });
+            }
+        }).start();
+    }
+
     private void renderEngines() {
         if (engineBox == null) return;
         engineBox.removeAllViews();
@@ -1023,6 +1053,7 @@ public class MainActivity extends Activity {
             lp.topMargin = ui.dp(8);
             engineBox.addView(row, lp);
         }
+        syncJsMetaInBackground();
         if (engineNow != null) {
             EngineStore.Item it = EngineStore.get(this, active);
             TtsEngine e = EngineStore.activeEngine(this);

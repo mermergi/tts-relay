@@ -137,6 +137,21 @@ public final class PluginEditorActivity extends Activity {
         } catch (Throwable t) {
             LogBus.error("编辑器主题/语法没装上：" + t.getMessage());
         }
+        // 兜底：不管 TextMate 成没成，关键颜色都按我们的深色主题再压一遍，
+        // 免得主题没加载时字和底色一个色 → 看着像白板
+        try {
+            io.github.rosemoe.sora.widget.schemes.EditorColorScheme sc = code.getColorScheme();
+            if (sc == null) {
+                sc = new io.github.rosemoe.sora.widget.schemes.EditorColorScheme();
+                code.setColorScheme(sc);
+            }
+            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.WHOLE_BACKGROUND, p.card);
+            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.TEXT_NORMAL, p.textPrimary);
+            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.LINE_NUMBER, p.textMuted);
+            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.LINE_NUMBER_BACKGROUND, p.card);
+            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.CURRENT_LINE, p.cardHi);
+            code.setColorScheme(sc);
+        } catch (Throwable ignored) { }
         LinearLayout.LayoutParams wp = ui.weight(1f);
         wp.topMargin = ui.dp(6);
         code.setBackground(ui.round(p.card, p.border, 12));

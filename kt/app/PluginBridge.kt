@@ -18,19 +18,19 @@ class PluginBridge(
     val context: Context,
     engineId: String,
     code: String,
-    userVars: Map<String, String> = emptyMap(),
-    ttsData: Map<String, String> = emptyMap(),
+    userVars: Map<String, String>? = null,
+    ttsData: Map<String, String>? = null,
     locale: String = "zh-CN",
     voice: String = "",
 ) {
     /** 它自己的插件实体：脚本 + 用户填的变量。 */
     val plugin: Plugin = Plugin(code = code, pluginId = engineId, name = engineId).apply {
-        this.userVars = LinkedHashMap(userVars)
+        this.userVars = LinkedHashMap(userVars ?: emptyMap())
     }
 
     /** 它自己的"这一路音色的源"：参数 + 插件自己塞的持久数据（`ttsrv.tts.data`）。 */
     var source: PluginTtsSource = PluginTtsSource(
-        locale = locale, voice = voice, pluginId = engineId, data = LinkedHashMap(ttsData)
+        locale = locale, voice = voice, pluginId = engineId, data = LinkedHashMap(ttsData ?: emptyMap())
     )
 
     /** 它自己的引擎：eval / getAudio / getVoices / getLocales / getSampleRate 全在里头。 */
