@@ -74,13 +74,31 @@ echo "==> d8"
 mapfile -t classes < <(find "$obj" -name '*.class')
 d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libs[@]:-}"
 
+echo "==> 依赖 jar 里的资源"
+# d8 只吃 .class，jar 里的资源（Rhino 的 Messages.properties 这类）会被丢掉，
+# 于是运行时 ResourceBundle 找不到、抛 MissingResourceException。所以手动捞进 APK。
+resdir="$out/jarres"
+mkdir -p "$resdir"
+for j in "${libs[@]:-}"; do
+    [ -n "$j" ] || continue
+    unzip -o -q "$j" -x 'META-INF/*' -d "$resdir" || true
+done
+find "$resdir" -name '*.class' -delete 2>/dev/null || true
+find "$resdir" -type d -empty -delete 2>/dev/null || true
+echo "    $(find "$resdir" -type f 2>/dev/null | wc -l) 个资源文件"
+
 echo "==> package"
 cp "$out/base.apk" "$out/ttsrelay-unsigned.apk"
-python3 - "$out/ttsrelay-unsigned.apk" "$dex/classes.dex" <<'PY'
-import sys, zipfile
-apk, dex = sys.argv[1], sys.argv[2]
+python3 - "$out/ttsrelay-unsigned.apk" "$dex/classes.dex" "$resdir" <<'PY'
+import sys, zipfile, os
+apk, dex, resdir = sys.argv[1], sys.argv[2], sys.argv[3]
 with zipfile.ZipFile(apk, 'a', zipfile.ZIP_DEFLATED) as z:
     z.write(dex, 'classes.dex')
+    if os.path.isdir(resdir):
+        for root, dirs, files in os.walk(resdir):
+            for f in files:
+                p = os.path.join(root, f)
+                z.write(p, os.path.relpath(p, resdir))
 PY
 
 echo "==> sign"
