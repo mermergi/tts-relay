@@ -5,6 +5,9 @@
 跑在安卓上的本地 API 中继：不改客户端、不要 root、不用 Xposed。
 **自带嗓子**——不装别的东西，开箱就能念。
 
+> **当前版本 2.8.2**（versionCode 25）。安装包在 [Releases](https://github.com/mermergi/tts-relay/releases)；
+> 自己编：`bash tools/build.sh`（依赖用 `bash tools/fetch-deps.sh` 拉，出处见 `tools/lib/SOURCES.md`）。
+
 ---
 
 ## 为什么会有这东西
@@ -78,6 +81,9 @@ http://127.0.0.1:8788/v1
 ---
 
 ## 引擎：就是一张键值表
+
+三种引擎：**手机系统语音**、**任意 HTTP 接口**（模板 + 音色目录）、
+以及 **TTS Server 的 JS 插件**（`.js` 文件原样跑，不翻译）。
 
 设计上照 [TTS Server](https://github.com/jing332/tts-server-android) 那套思路 —— **引擎是个通用容器，不是一堆写死的类型**：
 
