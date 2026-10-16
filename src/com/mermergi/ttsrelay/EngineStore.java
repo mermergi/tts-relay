@@ -315,6 +315,110 @@ public final class EngineStore {
         return new ArrayList<String>(out);
     }
 
+    /**
+     * 从插件源码里读它自己声明的变量（TTS Server 引擎文件的 {@code vars}），写回：
+     * {@code def_vars}（声明）/ {@code var_labels}（界面显示名）/ 缺的 cfg 键 / {@code login_*}。
+     *
+     * 打开 JS 引擎的编辑框、以及导入插件时都会走这儿 —— 所以老引擎不用重新导入，
+     * 它声明的「API密钥」这类变量会自己冒出来。
+     */
+    public static void syncJsMeta(Context c, Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return;
+        String src = it.s("src", "");
+        if (src.trim().length() == 0) return;
+        com.mermergi.ttsrelay.js.PluginBridge h = null;
+        try {
+            h = new com.mermergi.ttsrelay.js.PluginBridge(c,
+                    it.id.length() == 0 ? "plugin" : it.id, src, null, null,
+                    it.s("lang", "zh-CN"), "");
+            JSONObject labels = new JSONObject();
+            JSONObject defs = new JSONObject();
+            String loginKey = "";
+            for (java.util.Map.Entry<String, java.util.Map<String, String>> e : h.defVars().entrySet()) {
+                String key = e.getKey();
+                java.util.Map<String, String> def = e.getValue();
+                if (!it.cfg.has(key)) it.put(key, "");
+
+                String label = def == null ? "" : nn(def.get("name"));
+                if (label.length() == 0) label = key;
+                String hint = def == null ? "" : nn(def.get("hint"));
+                if (hint.length() > 0) label = label + "（" + hint + "）";
+                try { labels.put(key, label); } catch (Throwable ignored) { }
+
+                JSONObject d = new JSONObject();
+                if (def != null) {
+                    for (java.util.Map.Entry<String, String> f : def.entrySet()) {
+                        try { d.put(f.getKey(), nn(f.getValue())); } catch (Throwable ignored) { }
+                    }
+                }
+                try { defs.put(key, d); } catch (Throwable ignored) { }
+
+                String loginUrl = def == null ? "" : nn(def.get("loginUrl"));
+                if (loginKey.length() == 0 && loginUrl.length() > 0) {
+                    loginKey = key;
+                    it.put("login_key", loginKey);
+                    it.put("login_url", loginUrl);
+                    String b = def == null ? "" : nn(def.get("binding"));
+                    it.put("binding", b.length() > 0 ? b : "session");
+                    it.put("ua", "mobile");
+                }
+            }
+            // 插件没声明"要登录"的变量 → 豆包那套 Cookie 登录键清干净，
+            // 否则 JS 引擎编辑框里会冒出一个 Cookie 框，让人把 API 密钥填错地方
+            if (loginKey.length() == 0) {
+                it.cfg.remove("login_key");
+                it.cfg.remove("login_url");
+                it.cfg.remove("binding");
+                it.cfg.remove("ua");
+            }
+            if (labels.length() > 0) it.put("var_labels", labels.toString());
+            if (defs.length() > 0) it.put("def_vars", defs.toString());
+            if (!it.cfg.has("user_vars")) it.put("user_vars", "{}");
+            if (!it.cfg.has("tts_data")) it.put("tts_data", "{}");
+            if (h.name().length() > 0 && (it.label == null || it.label.length() == 0
+                    || "JS 插件".equals(it.label))) {
+                it.label = h.name();
+            }
+            if (h.author().length() > 0) it.put("author", h.author());
+            if (h.version() >= 0) it.put("version", h.version());
+            if (h.iconUrl().length() > 0) it.put("icon", h.iconUrl());
+        } catch (Throwable t) {
+            LogBus.error("读插件声明的变量失败：" + t.getMessage());
+        } finally {
+            if (h != null) { try { h.destroy(); } catch (Throwable ignored) { } }
+        }
+    }
+
+    private static String nn(String v) { return v == null ? "" : v; }
+
+    /**
+     * 插件声明的变量 → {@code user_vars}：TTS Server 是"声明"和"用户填的值"分开存的，
+     * 插件读的是 {@code ttsrv.userVars['api_key']}，塞在 cfg 的散键里容易对不上。
+     */
+    public static void syncUserVars(Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return;
+        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<String>();
+        try {
+            JSONObject def = new JSONObject(it.s("def_vars", ""));
+            for (java.util.Iterator<String> k = def.keys(); k.hasNext(); ) keys.add(k.next());
+        } catch (Throwable ignored) { }
+        if (keys.isEmpty()) {
+            try {
+                JSONObject lb = new JSONObject(it.s("var_labels", ""));
+                for (java.util.Iterator<String> k = lb.keys(); k.hasNext(); ) keys.add(k.next());
+            } catch (Throwable ignored) { }
+        }
+        if (keys.isEmpty()) return;
+        try {
+            JSONObject o = new JSONObject();
+            for (String k : keys) {
+                String v = it.s(k, "");
+                if (v.length() > 0) o.put(k, v);
+            }
+            it.put("user_vars", o.toString());
+        } catch (Throwable ignored) { }
+    }
+
     private static List<String> fetchFromUrl(Item it, String url) throws Exception {
         HttpURLConnection conn = null;
         try {

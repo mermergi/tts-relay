@@ -968,19 +968,51 @@ public class MainActivity extends Activity {
         engineBox.removeAllViews();
         String active = EngineStore.activeId(this);
         for (final EngineStore.Item it : EngineStore.all(this)) {
-            boolean on = it.id.equals(active);
-            String prob = EngineStore.build(it).problem(this);
-            String line = (on ? "● " : "○ ") + it.label + "  ·  " + kindName(it.kind);
-            if (prob != null) line += "\n⚠ " + prob;
-            Button b = ui.btn(line, false, new View.OnClickListener() {
-                public void onClick(View v) { engineMenu(it); }
+            final boolean on = it.id.equals(active);
+            final String prob = EngineStore.build(it).problem(this);
+
+            // 一行 = 头像 + 名字/副标题 + 铅笔 + ⋮ —— 照 TTS Server 的插件列表那样
+            LinearLayout row = ui.row();
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(ui.dp(10), ui.dp(8), ui.dp(6), ui.dp(8));
+            row.setBackground(ui.round(on ? p.cardHi : p.card, on ? p.accent : p.border, 14));
+            row.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    EngineStore.setActive(MainActivity.this, it.id);
+                    renderEngines();
+                    toast("当前引擎：" + it.label);
+                }
             });
-            b.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            b.setTextColor(prob != null ? p.warn : (on ? p.accent : p.textPrimary));
+
+            TextView av = new TextView(this);
+            av.setText(avatarChar(it));
+            av.setGravity(Gravity.CENTER);
+            av.setTextSize(15);
+            av.setTextColor(p.onAccent);
+            av.setBackground(ui.round(avatarColor(it), ui.dp(19)));
+            row.addView(av, new LinearLayout.LayoutParams(ui.dp(38), ui.dp(38)));
+
+            LinearLayout col = ui.col();
+            col.setPadding(ui.dp(10), 0, ui.dp(6), 0);
+            TextView t = ui.value(it.label);
+            t.setTextColor(prob != null ? p.warn : (on ? p.accent : p.textPrimary));
+            col.addView(t);
+            String sub = subtitle(it);
+            if (sub.length() > 0) col.addView(ui.hint(sub));
+            if (prob != null) col.addView(ui.hint("⚠ " + prob));
+            row.addView(col, ui.weight(1f));
+
+            row.addView(ui.btn("✎", false, new View.OnClickListener() {
+                public void onClick(View v) { editEngine(it); }
+            }));
+            row.addView(ui.btn("⋮", false, new View.OnClickListener() {
+                public void onClick(View v) { engineMenu(it); }
+            }));
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = ui.dp(8);
-            engineBox.addView(b, lp);
+            engineBox.addView(row, lp);
         }
         if (engineNow != null) {
             EngineStore.Item it = EngineStore.get(this, active);
@@ -991,6 +1023,35 @@ public class MainActivity extends Activity {
                     + "\n" + (prob == null ? "就绪" : "⚠ " + prob));
             engineNow.setTextColor(prob == null ? p.ok : p.warn);
         }
+    }
+
+    /** 副标题：插件引擎写「作者 - v版本」，和它那边一样。 */
+    private String subtitle(EngineStore.Item it) {
+        String author = it.s("author", "");
+        int v = it.i("version", -1);
+        StringBuilder sb = new StringBuilder();
+        if (author.length() > 0) sb.append(author);
+        if (v >= 0) sb.append(sb.length() > 0 ? " - v" : "v").append(v);
+        if (sb.length() == 0) sb.append(kindName(it.kind));
+        else sb.append("  ·  ").append(kindName(it.kind));
+        return sb.toString();
+    }
+
+    /** 头像里那个字：插件用名字首字，系统引擎用「本」，HTTP 引擎用「H」。 */
+    private static String avatarChar(EngineStore.Item it) {
+        if (EngineStore.KIND_SYSTEM.equals(it.kind)) return "本";
+        if (EngineStore.KIND_JS.equals(it.kind)) {
+            String s = it.label == null ? "" : it.label.trim();
+            return s.length() == 0 ? "JS" : s.substring(0, 1);
+        }
+        return "H";
+    }
+
+    /** 头像底色：按 id 散开，别都一个色。 */
+    private int avatarColor(EngineStore.Item it) {
+        int[] cs = {p.accent, p.ok, p.warn, 0xFF7E57C2, 0xFF26A69A, 0xFFEF6C00, 0xFF5C6BC0};
+        int h = it.id == null ? 0 : it.id.hashCode();
+        return cs[Math.abs(h) % cs.length];
     }
 
     private void engineMenu(final EngineStore.Item it) {
@@ -1104,6 +1165,13 @@ public class MainActivity extends Activity {
     }
 
     private void editEngine(final EngineStore.Item it) {
+        // JS 插件走它自己的编辑器（整屏代码 + 变量 + 试听），不走这个通用表单
+        if (it != null && EngineStore.KIND_JS.equals(it.kind)) {
+            Intent pi = new Intent(this, PluginEditorActivity.class);
+            pi.putExtra(PluginEditorActivity.EXTRA_ID, it.id);
+            try { startActivity(pi); } catch (Throwable t) { toast("打不开插件编辑器：" + t.getMessage()); }
+            return;
+        }
         // 先关掉上一个，别叠罗汉 —— 关掉新框露出旧框，看起来就跟没保存一样
         if (engineDlg != null) {
             try { engineDlg.dismiss(); } catch (Throwable ignored) { }
@@ -1142,11 +1210,18 @@ public class MainActivity extends Activity {
             spec.add(new String[]{"sample_rate", "采样率（mp3 用 24000）",
                     String.valueOf(it.i("sample_rate", 24000)), "single"});
         } else if (EngineStore.KIND_JS.equals(it.kind)) {
+            // 打开编辑框就先从插件源码里把它的变量声明读回来 ——
+            // 老引擎（import 那会儿还没读懂 vars 的）也不用重新导入，它的「API密钥」会自己冒出来
+            EngineStore.syncJsMeta(this, it);
+
             spec.add(new String[]{"src", "插件源码（TTS Server 那个 .js，整份贴进来）",
                     it.s("src", ""), "multi"});
-            spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
+            spec.add(new String[]{"lang", "语言（插件 getLocales() 里的取值，比如 zh-CN）",
+                    it.s("lang", "zh-CN"), "single"});
+
+            // 插件自己声明的变量 —— 显示名用它引擎文件里的 name，提示用 hint
             java.util.Set<String> shown = new java.util.HashSet<String>();
-            try {                                   // 插件自己声明的变量，显示名用它给的
+            try {
                 org.json.JSONObject lb = new org.json.JSONObject(it.s("var_labels", ""));
                 for (java.util.Iterator<String> ki = lb.keys(); ki.hasNext(); ) {
                     String k = ki.next();
@@ -1155,20 +1230,17 @@ public class MainActivity extends Activity {
             } catch (Throwable ignored) { }
             for (java.util.Iterator<String> ki = it.cfg.keys(); ki.hasNext(); ) {
                 String k = ki.next();
-                if (k.equals("src") || k.equals("lang") || k.equals("var_labels")
-                        || k.equals("login_key") || k.equals("headers")
-                        || k.equals("voices") || k.equals("login_url")
-                        || k.equals("binding") || k.equals("ua")) continue;
+                if (JS_HIDE.contains(k)) continue;
                 if (shown.add(k)) spec.add(new String[]{k, "插件变量：" + k, it.s(k, ""), "single"});
             }
-            spec.add(new String[]{"headers", "插件只给地址时，我们取音频带上的请求头",
-                    it.s("headers", ""), "multi"});
+
         } else {
             spec.add(new String[]{"pkg", "系统引擎包名（留空=手机默认那个）", it.s("pkg", ""), "single"});
             spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
         }
 
-        // 音色目录 —— 所有引擎通用
+        // 音色目录（手工 + 远程 JSON）—— 这是给 HTTP 模板引擎用的；插件引擎的音色来自插件自己
+        if (!EngineStore.KIND_JS.equals(it.kind)) {
         spec.add(new String[]{"voices_url", "音色目录地址（GET 一个 JSON；留空=不拉）",
                 it.s("voices_url", ""), "multi"});
         spec.add(new String[]{"voices_path", "JSON 路径，如 data.list（留空=响应本身就是数组）",
@@ -1176,6 +1248,7 @@ public class MainActivity extends Activity {
         spec.add(new String[]{"voices_name", "显示名取哪个字段", it.s("voices_name", "name"), "single"});
         spec.add(new String[]{"voices_id", "取值取哪个字段（留空=同显示名）", it.s("voices_id", ""), "single"});
         spec.add(new String[]{"voices", "手工音色列表（每行一个）", it.s("voices", ""), "multi"});
+        }
 
         java.util.Set<String> used = new java.util.HashSet<String>();
         for (String[] r : spec) used.add(r[0]);
@@ -1183,6 +1256,7 @@ public class MainActivity extends Activity {
         for (java.util.Iterator<String> ki = it.cfg.keys(); ki.hasNext(); ) {
             String k = ki.next();
             if (used.contains(k) || "cookie".equals(k)) continue;
+            if (EngineStore.KIND_JS.equals(it.kind) && JS_HIDE.contains(k)) continue;
             extra.add(k);
             spec.add(new String[]{k, "自定义参数：" + k, it.s(k, ""), "single"});
         }
@@ -1192,8 +1266,9 @@ public class MainActivity extends Activity {
 
         // Cookie 单独一块：它动辄上千字符，塞进表单里没法看，所以只显示状态
         final String loginKey = loginTarget(it);
-        if (EngineStore.KIND_DOUBAO.equals(it.kind) || EngineStore.KIND_JS.equals(it.kind)
-                || it.cfg.has(loginKey)) {
+        // 插件引擎只有"真的声明了 loginUrl"才给登录框（豆包引擎本来就走 Cookie）
+        if (EngineStore.KIND_DOUBAO.equals(it.kind)
+                || (loginKey != null && loginKey.length() > 0 && it.cfg.has(loginKey))) {
             LinearLayout ck = ui.card();
             ck.addView(ui.sectionTitle("Cookie"));
             final TextView st = ui.value("");
@@ -1354,6 +1429,12 @@ public class MainActivity extends Activity {
     }
 
     /** 把编辑框里的东西写回引擎。保存和"抓完 Cookie"共用这一份。 */
+    /** JS 插件引擎用不上的那些键（HTTP 模板引擎的字段 + 我自己的内部键）—— 编辑框里别显示。 */
+    private static final java.util.Set<String> JS_HIDE = new java.util.HashSet<String>(
+            java.util.Arrays.asList("headers", "cred", "voices", "voices_url", "voices_path",
+                    "voices_name", "voices_id", "var_labels", "def_vars", "user_vars", "tts_data",
+                    "login_key", "login_url", "binding", "ua", "author", "icon"));
+
     private void applyEditor(EngineStore.Item it, EditText nameBox, List<Fld> flds,
                             List<String> extraKeys) {
         String nm = nameBox.getText().toString().trim();
@@ -1369,11 +1450,17 @@ public class MainActivity extends Activity {
                 it.put(f.key, v);
             }
         }
+        if (EngineStore.KIND_JS.equals(it.kind)) EngineStore.syncUserVars(it);
         EngineStore.put(this, it);
         if (EngineStore.KIND_DOUBAO.equals(it.kind)) DoubaoEngine.clearVoiceCache();
         renderEngines();
     }
 
+    /**
+     * 插件声明的变量（它引擎文件里 {@code vars} 那些键）单独存一份 {@code user_vars} ——
+     * TTS Server 就是"声明"和"用户填的值"分开存的：放进 cfg 的散键里，插件读
+     * {@code ttsrv.userVars['api_key']} 时容易对不上。
+     */
     private void addCfgKey(final EngineStore.Item it) {
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(4));

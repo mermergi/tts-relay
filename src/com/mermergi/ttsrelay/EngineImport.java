@@ -100,40 +100,13 @@ public final class EngineImport {
         it.put("binding", "session");
         it.put("ua", "mobile");
 
-        // 元数据不是猜的：把插件跑起来读它 PluginJS 上的 name/id/author/vars —— 照 TTS Server 的 eval()
-        String name = "";
-        try {
-            com.mermergi.ttsrelay.js.PluginHost h =
-                    new com.mermergi.ttsrelay.js.PluginHost(App.ctx(), it.id, src, null);
-            h.init();
-            com.mermergi.ttsrelay.js.PluginHost.Meta m = h.meta();
-            name = m.getName();
-            if (name.length() == 0) name = m.getId();
-            JSONObject labels = new JSONObject();
-            String loginKey = "";
-            for (com.mermergi.ttsrelay.js.PluginHost.VarDef v : m.getVars()) {
-                if (!it.cfg.has(v.getKey())) it.put(v.getKey(), "");
-                String lab = v.getLabel();
-                if (v.getHint().length() > 0) lab = lab + "（" + v.getHint() + "）";
-                try { labels.put(v.getKey(), lab); } catch (Throwable ignored) { }
-                if (loginKey.length() == 0 && v.getLoginUrl().length() > 0) {
-                    loginKey = v.getKey();
-                    it.put("login_key", loginKey);
-                    it.put("login_url", v.getLoginUrl());
-                    it.put("binding", v.getBinding().length() > 0 ? v.getBinding() : "session");
-                    it.put("ua", v.getUa().length() > 0 ? v.getUa() : "mobile");
-                }
-            }
-            if (labels.length() > 0) it.put("var_labels", labels.toString());
-            if (m.getAuthor().length() > 0) it.put("author", m.getAuthor());
-            if (m.getIconUrl().length() > 0) it.put("icon", m.getIconUrl());
-            h.destroy();
-        } catch (Throwable t) {
-            // 源码留着，跑不起来的理由由引擎的 problem() 说
-        }
-        it.label = name.length() > 0 ? name : "JS 插件";
+        // 元数据不是猜的：把插件跑起来读它自己的 PluginJS —— 和编辑框走的是同一条路（EngineStore.syncJsMeta）
+        EngineStore.syncJsMeta(App.ctx(), it);
+        if (it.label == null || it.label.length() == 0) it.label = "JS 插件";
         return it;
     }
+
+    private static String value(String v) { return v == null ? "" : v; }
 
     /** 是不是 TTS Server 的 JS 插件（一堆 ttsrv.userVars / getAudioV2）。 */
     public static boolean looksLikeJsPlugin(String t) {
