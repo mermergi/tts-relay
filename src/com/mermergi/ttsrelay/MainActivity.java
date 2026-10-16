@@ -537,12 +537,10 @@ public class MainActivity extends Activity {
         modeBtn.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
         mc.addView(modeBtn, topGap(12));
 
-        mc.addView(ui.label("谁用什么音色（先选音色，再填名字）"));
-        mc.addView(ui.hint("名字写角色卡里 [名字] 那个，多个用 | 分开：杨幂|刘亦菲。"
-                + "段类型也能当名字：旁白 / 对话 / 内心 / 动作。"));
+        mc.addView(ui.label("音色 → 名称"));
         roleBox = ui.col();
         mc.addView(roleBox, topGap(8));
-        mc.addView(ui.btn("＋ 选个音色，然后填名字", true, new View.OnClickListener() {
+        mc.addView(ui.btn("＋ 加一个音色", true, new View.OnClickListener() {
             public void onClick(View v) { pickForBind = true; fetchVoicesAnd(null); }
         }), topGap(8));
         renderVoiceTable();
@@ -2435,7 +2433,7 @@ public class MainActivity extends Activity {
         roleBox.removeAllViews();
         java.util.LinkedHashMap<String, String> m = Prefs.voiceNamesMap(this);
         if (m.isEmpty()) {
-            roleBox.addView(ui.hint("还没配。点下面那个按钮：先挑音色，再把名字填进去。"));
+            roleBox.addView(ui.hint("还没配"));
             return;
         }
         for (final java.util.Map.Entry<String, String> e : m.entrySet()) {
@@ -2495,15 +2493,9 @@ public class MainActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(title);
 
-        TextView sub = new TextView(this);
-        sub.setText("这个音色给哪些角色念");
-        sub.setTextColor(p.textMuted);
-        sub.setTextSize(11.5f);
-        sub.setPadding(0, ui.dp(3), 0, ui.dp(10));
-        box.addView(sub);
 
         final EditText names = new EditText(this);
-        names.setHint("名称：杨幂|刘亦菲（多个用 | 分开）");
+        names.setHint("名称：杨幂|刘亦菲");
         names.setText(cur == null ? "" : cur.replace("|", " | "));
         names.setTextSize(15);
         names.setTextColor(p.textPrimary);
@@ -2511,26 +2503,6 @@ public class MainActivity extends Activity {
         names.setBackground(ui.round(p.cardHi, p.border, 12));
         names.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12));
         box.addView(names);
-
-        LinearLayout quick = ui.row();
-        quick.setPadding(0, ui.dp(8), 0, 0);
-        for (final String[] presets : new String[][]{
-                {"旁白", "旁白"}, {"对话", "对话"}, {"内心", "内心"}, {"动作", "动作"}}) {
-            TextView c = ui.chip(presets[0], false, null);
-            c.setOnClickListener(new View.OnClickListener() {
-                public void onClick(View x) {
-                    String t = names.getText().toString().trim();
-                    java.util.List<String> have = MultiVoice.splitNames(t);
-                    if (!have.contains(presets[1])) have.add(presets[1]);
-                    StringBuilder sb = new StringBuilder();
-                    for (String n : have) { if (sb.length() > 0) sb.append('|'); sb.append(n); }
-                    names.setText(sb.toString());
-                    names.setSelection(names.getText().length());
-                }
-            });
-            quick.addView(c, ui.weightGap(1f, 6));
-        }
-        box.addView(quick);
 
         box.addView(auditionField(voice), ui.topGap(12));
 
