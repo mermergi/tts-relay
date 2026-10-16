@@ -136,6 +136,7 @@ public final class PluginEditorActivity extends Activity {
             com.mermergi.ttsrelay.js.EditorSetup.init(getAssets(), code);
         } catch (Throwable t) {
             LogBus.error("编辑器主题/语法没装上：" + t.getMessage());
+            android.util.Log.w("ttsrelay", "编辑器 TextMate 没装上", t);
         }
         // 兜底：不管 TextMate 成没成，关键颜色都按我们的深色主题再压一遍，
         // 免得主题没加载时字和底色一个色 → 看着像白板
@@ -151,8 +152,18 @@ public final class PluginEditorActivity extends Activity {
             sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.LINE_NUMBER_BACKGROUND, p.card);
             sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.CURRENT_LINE, p.cardHi);
             code.setColorScheme(sc);
-        } catch (Throwable ignored) { }
-        LinearLayout.LayoutParams wp = ui.weight(1f);
+            android.util.Log.i("ttsrelay", "编辑器自检：配色=" + sc.getClass().getSimpleName()
+                    + " 底色=" + Integer.toHexString(sc.getColor(
+                            io.github.rosemoe.sora.widget.schemes.EditorColorScheme.WHOLE_BACKGROUND))
+                    + " 字色=" + Integer.toHexString(sc.getColor(
+                            io.github.rosemoe.sora.widget.schemes.EditorColorScheme.TEXT_NORMAL)));
+        } catch (Throwable t) {
+            android.util.Log.w("ttsrelay", "编辑器配色压不上", t);
+        }
+        // 注意：ui.weight() 是给"横向"行用的（width=0 + weight）。
+        // root 是竖向的，用它会得到宽度 0 → 编辑器整块看不见（就是"代码区一片空"的真凶）。
+        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         wp.topMargin = ui.dp(6);
         code.setBackground(ui.round(p.card, p.border, 12));
         root.addView(code, wp);
@@ -232,6 +243,10 @@ public final class PluginEditorActivity extends Activity {
         nameBox.setText(it.label);
         code.setText(it.s("src", ""));
         loading = false;
+        android.util.Log.i("ttsrelay", "编辑器自检：语言=" + code.getEditorLanguage()
+                + " 字数=" + code.getText().length()
+                + " 行数=" + code.getText().getLineCount()
+                + " 字号px=" + code.getTextSizePx());
         history.clear();
         history.add(code.getText().toString());
         histPos = 0;

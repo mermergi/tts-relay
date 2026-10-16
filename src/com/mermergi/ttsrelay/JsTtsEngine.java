@@ -28,6 +28,17 @@ public final class JsTtsEngine implements TtsEngine {
 
     public JsTtsEngine(EngineStore.Item it) { this.it = it; }
 
+    /** 插件音色表缓存：键带上 src 的 hash，改了插件自动失效。 */
+    private static final java.util.Map<String, List<String>> VOICES_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<String, List<String>>();
+    /** 每个引擎最终用哪个音色（插件自己的取值）。 */
+    private static final java.util.Map<String, String> VOICE_PICK =
+            new java.util.concurrent.ConcurrentHashMap<String, String>();
+
+    private String cacheKey() {
+        return (it == null ? "?" : it.id) + "|" + (it == null ? 0 : it.s("src", "").hashCode());
+    }
+
     @Override public String kind() { return EngineStore.KIND_JS; }
 
     @Override public String label() {
@@ -124,9 +135,11 @@ public final class JsTtsEngine implements TtsEngine {
         PluginBridge h = open(c);
         try {
             // 照他们的 PluginTtsSource：这一路的参数要先塞进 ttsrv.tts，插件会读
-            h.setSource(locale(), TtsEngine.shortVoice(s.voice), s.rate, s.volume, s.pitch);
+            // 插件要的是它自己音色表里的取值（豆包那个 ICL 音色它不认识）
+            String v = pickVoice(c, s.voice);
+            h.setSource(locale(), v, s.rate, s.volume, s.pitch);
             // 换音色时它会（他们的界面会调）—— 插件常在这儿初始化/记下选中的音色
-            h.onVoiceChanged(locale(), TtsEngine.shortVoice(s.voice));
+            h.onVoiceChanged(locale(), v);
             // 档位换算（1.0 → 50）在它自己的 getAudio 里
             byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch);
             if (out == null || out.length == 0) throw new IllegalStateException("插件这次没给回音频");
@@ -134,6 +147,65 @@ public final class JsTtsEngine implements TtsEngine {
         } finally {
             saveData(c, h);
             try { h.destroy(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 音色表里那一行（`名字‖取值`）的取值部分。 */
+    private static String idOf(String entry) {
+        if (entry == null) return "";
+        int i = entry.indexOf(EngineStore.SEP);
+        return (i > 0 ? entry.substring(i + 1) : entry).trim();
+    }
+
+    private static String nameOf(String entry) {
+        if (entry == null) return "";
+        int i = entry.indexOf(EngineStore.SEP);
+        return (i > 0 ? entry.substring(0, i) : entry).trim();
+    }
+
+    /**
+     * 插件引擎该用哪个音色 —— 照它那边的语义（音色是插件自己的取值，不是全局那个）：
+     * ① 调用方给的对得上就用它；② 引擎配置里存的；③ 插件音色表的第一个（并记住）。
+     */
+    private String pickVoice(Context c, String want) {
+        String wantId = idOf(want);
+        String wantName = nameOf(want);
+        List<String> vs = voices(c);
+        if (vs.isEmpty()) return wantId;
+
+        for (String v : vs) {
+            if (eq(idOf(v), wantId) || eq(nameOf(v), wantId) || eq(nameOf(v), wantName)
+                    || eq(idOf(v), wantName)) {
+                remember(c, idOf(v));
+                return idOf(v);
+            }
+        }
+        String saved = it == null ? "" : it.s("voice", "");
+        if (saved.length() > 0) {
+            for (String v : vs) {
+                if (eq(idOf(v), saved) || eq(nameOf(v), saved)) {
+                    remember(c, idOf(v));
+                    return idOf(v);
+                }
+            }
+        }
+        String first = idOf(vs.get(0));
+        remember(c, first);
+        return first;
+    }
+
+    private static boolean eq(String a, String b) {
+        return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
+    }
+
+    private void remember(Context c, String v) {
+        if (it == null || v.length() == 0) return;
+        String key = cacheKey();
+        if (v.equals(VOICE_PICK.get(key))) return;
+        VOICE_PICK.put(key, v);
+        if (!v.equals(it.s("voice", ""))) {
+            it.put("voice", v);
+            try { EngineStore.put(c, it); } catch (Throwable ignored) { }
         }
     }
 
@@ -151,6 +223,14 @@ public final class JsTtsEngine implements TtsEngine {
      */
     @Override
     public List<String> voices(Context c) {
+        List<String> cached = VOICES_CACHE.get(cacheKey());
+        if (cached != null) return cached;
+        List<String> out = fetchVoices(c);
+        if (!out.isEmpty()) VOICES_CACHE.put(cacheKey(), out);
+        return out;
+    }
+
+    private List<String> fetchVoices(Context c) {
         List<String> out = new ArrayList<String>();
         if (it == null || it.s("src", "").trim().length() == 0) return out;
         PluginBridge h = null;

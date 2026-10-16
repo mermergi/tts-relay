@@ -213,6 +213,50 @@ public final class HttpServer {
             json(out, 200, o.toString());
             return;
         }
+        if ("/_editortest".equals(path)) {
+            // 本地自检：在主线程真建一个 sora 编辑器，跑和插件编辑器同一条初始化，
+            // 把「语言/配色/字号/字数/TextMate 有没有起来」吐成 JSON —— 不用人肉点界面
+            final org.json.JSONObject o = new org.json.JSONObject();
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                public void run() {
+                    try {
+                        io.github.rosemoe.sora.widget.CodeEditor ed =
+                                new io.github.rosemoe.sora.widget.CodeEditor(ctx);
+                        o.put("ctor", "ok");
+                        try {
+                            com.mermergi.ttsrelay.js.EditorSetup.init(ctx.getAssets(), ed);
+                            o.put("textmate", "ok");
+                        } catch (Throwable t) {
+                            o.put("textmate", t.getClass().getSimpleName() + ": " + t.getMessage());
+                        }
+                        ed.setText("let a = 1;\nfunction f(){ return 2; }\n// 测试\n");
+                        o.put("chars", ed.getText().length());
+                        o.put("lines", ed.getText().getLineCount());
+                        o.put("lang", String.valueOf(ed.getEditorLanguage()));
+                        o.put("sizePx", ed.getTextSizePx());
+                        io.github.rosemoe.sora.widget.schemes.EditorColorScheme sc = ed.getColorScheme();
+                        o.put("scheme", sc == null ? "null" : sc.getClass().getSimpleName());
+                        if (sc != null) {
+                            o.put("bg", Integer.toHexString(sc.getColor(
+                                    io.github.rosemoe.sora.widget.schemes.EditorColorScheme.WHOLE_BACKGROUND)));
+                            o.put("fg", Integer.toHexString(sc.getColor(
+                                    io.github.rosemoe.sora.widget.schemes.EditorColorScheme.TEXT_NORMAL)));
+                        }
+                    } catch (Throwable t) {
+                        try { o.put("error", t.toString()); } catch (Throwable ignored) { }
+                    }
+                    latch.countDown();
+                }
+            });
+            try {
+                latch.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            json(out, 200, o.toString());
+            return;
+        }
         if ("/_log".equals(path)) {
             byte[] b = LogBus.dump().getBytes(StandardCharsets.UTF_8);
             Map<String, String> h = new LinkedHashMap<String, String>();
