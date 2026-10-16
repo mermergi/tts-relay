@@ -17,8 +17,10 @@ import javax.net.ssl.SSLSocketFactory;
  * 一个刚刚够用的 WebSocket 客户端（RFC6455）。
  *
  * 为什么自己写：这个 App 是 aapt2 + javac + d8 手工编的，没有依赖管理，
- * 塞不进 okhttp，而 Android 框架里也没有 WS 客户端。插件那条管子是 wss，
+ * 塞不进 okhttp，而 Android 框架里也没有 WS 客户端。要连的是 wss，
  * 所以握手、掩码、分片、ping/pong 都得自己来 —— 一共就这几百行。
+ *
+ * 现在两处在用：JS 插件那套 {@code Websocket} 宿主，以及自带的引擎。
  */
 public final class MiniWs {
 
@@ -54,7 +56,7 @@ public final class MiniWs {
             SSLSocket ss = (SSLSocket) f.createSocket();
             ss.connect(new InetSocketAddress(host, port), timeoutMs);
             ss.setSoTimeout(timeoutMs);
-            // SNI：没有它，插件那边会直接掐
+            // SNI：不带它，很多站点会直接掐握手
             try {
                 javax.net.ssl.SSLParameters sp = ss.getSSLParameters();
                 sp.setServerNames(java.util.Collections.singletonList(

@@ -147,6 +147,23 @@ App 会拆出性别/年龄/风格，**选音色时按男声/女声/未标注分�
 
 不想走登录页也行：点 **「手动填」** 直接粘。**粘什么进去都认** —— 整段复制出来的请求、一段请求头、或者裸的 `名字=值; 名字=值`；带标记的会自动把值摘出来，摘不出就原样收着，绝不截断。保存下来的值会跟着请求一起发出去（手工填的请求头优先）。
 
+### TTS Server 的 JS 插件
+
+本 App 里装的是和 **TTS Server 同一个 JS 引擎（Mozilla Rhino）**，所以 `.js` 插件是**真跑**，不是"翻译"：
+
+- 直接导入插件文件，或者「引擎 → 添加 → TTS Server 的 JS 插件」把源码整份贴进去
+- 它声明的变量会变成引擎的配置键，显示名用插件自己写的 label / hint
+- **两种取音频的方式都支持**：
+  - `getAudio` —— 插件返回一个链接（我们替它取），或者自己发完请求返回字节流
+  - `getAudioV2` —— 插件自己开 WebSocket，把音频一段段 `callback.write()` 写回来
+- 宿主环境照着 TTS Server 来：`ttsrv.userVars` / `httpGetString` / `httpPost` / `httpPostMultipart`、
+  `http`、`fs`、`logger`、`console`、`Websocket`
+- 音色列表问插件的 `EditorJS.getVoices()`，采样率问 `getAudioSampleRate()`
+- 声明了 `loginUrl` / `binding` / `ua` 的那个变量：编辑框里会多一个「💾 一键保存」，
+  登一次就把值写进**那个变量**（和 TTS Server 的行为一致）
+
+> 代价是包体：Rhino 约 1.4MB（MPL-2.0），编进 APK 里。
+
 ### 导入 / 导出
 
 两种格式，别人发的能收，自己导的能还原：
@@ -342,6 +359,7 @@ export ANDROID_JAR=/path/to/android.jar   # 从任意 Android SDK 的 platforms/
 
 ## 参考
 
+- [Mozilla Rhino](https://github.com/mozilla/rhino)（MPL-2.0）—— 跑 JS 插件的引擎，和 TTS Server 用的是同一个
 - [jing332/tts-server-android](https://github.com/jing332/tts-server-android)（MIT）—— 引擎系统的设计思路来源，也是个现成可挂的 HTTP 引擎
 - [Thirteen-Moons/ST-indexTTS2-X-Player](https://github.com/Thirteen-Moons/ST-indexTTS2-X-Player)（AGPL-3.0）—— 多语音的 `[角色][情感][场景]「台词」` 标签写法照着它来，好让模型按那套格式输出；
   解析代码是本项目独立实现的（没搬它的代码，所以本项目仍是 MIT）
