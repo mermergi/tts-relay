@@ -173,33 +173,37 @@ public final class JsTtsEngine implements TtsEngine {
         Say s = say == null ? new Say() : say;
 
         PluginBridge h = hostFor(c, locale(), TtsEngine.shortVoice(s.voice));
-        try {
-            // 照他们的 PluginTtsSource：这一路的参数要先塞进 ttsrv.tts，插件会读
-            // 插件要的是它自己音色表里的取值（豆包那个 ICL 音色它不认识）
+
+        // 关键：宿主是复用的，**必须串起来**。
+        // 它那边（TtsManager + TtsPluginEngineV2 的 stream mutex）就是这么干的：
+        // 同一个插件运行时同时被两个合成碰，就会互相把会话搅烂 → No data written。
+        synchronized (h) {
             String v = pickVoice(c, s.voice);
             h.setSource(locale(), v, s.rate, s.volume, s.pitch);
-            // 换音色时它会（他们的界面会调）—— 插件常在这儿初始化/记下选中的音色
             h.onVoiceChanged(locale(), v);
-            // 档位换算（1.0 → 50）在它自己的 getAudio 里
-            try {
-                byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch);
-                if (out == null || out.length == 0) throw new IllegalStateException("插件这次没给回音频");
-                return out;
-            } catch (Throwable first) {
-                // 换音色后的第一次很容易空手而归：插件要先异步拉一遍音色表
-                // （它日志里那句「音色列表已加载: 445 个」），第一次请求就撞在这中间。
-                // 第二次一定好，所以重试一次；宿主留着（缓存过）重试很快。
-                LogBus.error("插件第一次没给音频（" + first.getMessage() + "），重试一次");
-                try { Thread.sleep(300); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+
+            Throwable first = null;
+            for (int attempt = 0; attempt < 3; attempt++) {
+                try {
+                    byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch);
+                    if (out != null && out.length > 0) return out;
+                    first = new IllegalStateException("插件这次没给回音频");
+                } catch (Throwable t) {
+                    first = t;
+                }
+                // 第一次常撞在"插件正异步拉音色表/上一句刚结束"上；后面两次是给突发留的余地
+                LogBus.error("插件第 " + (attempt + 1) + " 次没给音频（" + first.getMessage() + "），等一下再试");
+                try {
+                    Thread.sleep(400L + 600L * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
                 h.onVoiceChanged(locale(), v);
-                byte[] out2 = h.audioBytes(text, s.rate, s.volume, s.pitch);
-                if (out2 == null || out2.length == 0) throw first;
-                return out2;
             }
-        } finally {
             saveData(c, h);
-            try { h.destroy(); } catch (Throwable ignored) { }
+            throw new IllegalStateException(first == null ? "插件没给音频" : first.getMessage());
         }
     }
 
@@ -214,6 +218,10 @@ public final class JsTtsEngine implements TtsEngine {
         if (entry == null) return "";
         int i = entry.indexOf(EngineStore.SEP);
         return (i > 0 ? entry.substring(0, i) : entry).trim();
+    }
+
+    private static boolean eq(String a, String b) {
+        return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
     }
 
     /**
@@ -245,10 +253,6 @@ public final class JsTtsEngine implements TtsEngine {
         String first = idOf(vs.get(0));
         remember(c, first);
         return first;
-    }
-
-    private static boolean eq(String a, String b) {
-        return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
     }
 
     private void remember(Context c, String v) {
