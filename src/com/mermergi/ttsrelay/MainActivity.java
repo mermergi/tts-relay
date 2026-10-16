@@ -966,6 +966,48 @@ public class MainActivity extends Activity {
     private boolean metaSyncing = false;
 
     /**
+     * 引擎"有没有毛病"的缓存 —— <b>绝不能</b>在 UI 线程上问：
+     * JS 引擎的 problem() 要起一个 Rhino 真跑一遍插件源码（indexTTS2 1124 行），
+     * 在列表里同步跑就是几百毫秒到几秒的卡顿，点击全被丢掉。
+     * 这儿只读缓存；没算过的先在后台算，算完刷一次列表。空串 = 没问题。
+     */
+    private final java.util.Map<String, String> probCache = new java.util.HashMap<String, String>();
+    private boolean probChecking = false;
+
+    private String probKey(EngineStore.Item it) {
+        return it.id + "|" + it.kind + "|" + it.s("src", "").hashCode()
+                + "|" + it.s("url", "").hashCode() + "|" + it.s("tpl", "").hashCode()
+                + "|" + it.s("pkg", "").hashCode();
+    }
+
+    private void checkProblemsAsync() {
+        if (probChecking) return;
+        final java.util.List<EngineStore.Item> todo = new java.util.ArrayList<EngineStore.Item>();
+        for (EngineStore.Item it : EngineStore.all(this)) {
+            if (!probCache.containsKey(probKey(it))) todo.add(it);
+        }
+        if (todo.isEmpty()) return;
+        probChecking = true;
+        final Context ctx = this;
+        new Thread(new Runnable() {
+            public void run() {
+                for (EngineStore.Item it : todo) {
+                    String p;
+                    try {
+                        p = EngineStore.build(it).problem(ctx);
+                    } catch (Throwable t) {
+                        p = String.valueOf(t.getMessage());
+                    }
+                    probCache.put(probKey(it), p == null ? "" : p);
+                }
+                runOnUiThread(new Runnable() {
+                    public void run() { probChecking = false; renderEngines(); }
+                });
+            }
+        }).start();
+    }
+
+    /**
      * 老引擎（导入时还没读懂 vars 的）后台补一次插件元数据 —— 补完重画列表，
      * 「请设置变量」和变量输入框就自己出来了。照它那样：列表上直接能看到该填什么。
      */
@@ -982,12 +1024,17 @@ public class MainActivity extends Activity {
         metaSyncing = true;
         new Thread(new Runnable() {
             public void run() {
+                boolean changed = false;
                 for (EngineStore.Item it : todo) {
-                    try { EngineStore.syncJsMeta(MainActivity.this, it); }
+                    try { if (EngineStore.syncJsMeta(MainActivity.this, it)) changed = true; }
                     catch (Throwable ignored) { }
                 }
+                final boolean c = changed;
                 runOnUiThread(new Runnable() {
-                    public void run() { metaSyncing = false; renderEngines(); }
+                    public void run() {
+                        metaSyncing = false;
+                        if (c) { probCache.clear(); renderEngines(); }
+                    }
                 });
             }
         }).start();
@@ -999,7 +1046,8 @@ public class MainActivity extends Activity {
         String active = EngineStore.activeId(this);
         for (final EngineStore.Item it : EngineStore.all(this)) {
             final boolean on = it.id.equals(active);
-            final String prob = EngineStore.build(it).problem(this);
+            String cached = probCache.get(probKey(it));
+            final String prob = cached == null ? "（检查中…）" : (cached.length() == 0 ? null : cached);
 
             // 一行 = 头像 + 名字/副标题 + 铅笔 + ⋮ —— 照 TTS Server 的插件列表那样
             LinearLayout row = ui.row();
@@ -1054,10 +1102,12 @@ public class MainActivity extends Activity {
             engineBox.addView(row, lp);
         }
         syncJsMetaInBackground();
+        checkProblemsAsync();
         if (engineNow != null) {
             EngineStore.Item it = EngineStore.get(this, active);
-            TtsEngine e = EngineStore.activeEngine(this);
-            String prob = e == null ? "引擎起不来" : e.problem(this);
+            String pc = it == null ? null : probCache.get(probKey(it));
+            String prob = it == null ? "没有引擎"
+                    : (pc == null ? "检查中…" : (pc.length() == 0 ? null : pc));
             engineNow.setText((it == null ? "（没有）" : it.label)
                     + (it == null ? "" : "  ·  " + kindName(it.kind))
                     + "\n" + (prob == null ? "就绪" : "⚠ " + prob));

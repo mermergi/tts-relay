@@ -322,10 +322,11 @@ public final class EngineStore {
      * 打开 JS 引擎的编辑框、以及导入插件时都会走这儿 —— 所以老引擎不用重新导入，
      * 它声明的「API密钥」这类变量会自己冒出来。
      */
-    public static void syncJsMeta(Context c, Item it) {
-        if (it == null || !KIND_JS.equals(it.kind)) return;
+    public static boolean syncJsMeta(Context c, Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return false;
         String src = it.s("src", "");
-        if (src.trim().length() == 0) return;
+        if (src.trim().length() == 0) return false;
+        String before = it.s("def_vars", "") + "|" + it.s("author", "") + "|" + it.s("version", "");
         com.mermergi.ttsrelay.js.PluginBridge h = null;
         try {
             h = new com.mermergi.ttsrelay.js.PluginBridge(c,
@@ -387,6 +388,7 @@ public final class EngineStore {
         } finally {
             if (h != null) { try { h.destroy(); } catch (Throwable ignored) { } }
         }
+        return !before.equals(it.s("def_vars", "") + "|" + it.s("author", "") + "|" + it.s("version", ""));
     }
 
     private static String nn(String v) { return v == null ? "" : v; }
