@@ -82,6 +82,9 @@ public final class HttpServer {
 
     private final Context ctx;
     private final Speaker speaker;
+    /** 当前监听端口 —— LiveAudio 拼流地址要用（MediaPlayer 只能按 URL 播）。 */
+    public static volatile int PORT = com.mermergi.ttsrelay.Prefs.PORT_DEF;
+
     private volatile ServerSocket server;
     private volatile boolean running;
     private Thread acceptThread;
@@ -98,6 +101,7 @@ public final class HttpServer {
     public void start(int p) throws IOException {
         if (running) return;
         port = p;
+        PORT = p;
         boolean lan = Prefs.lanAllowed(ctx);
         String bindIp = lan ? "0.0.0.0" : "127.0.0.1";
         server = new ServerSocket(p, 32, InetAddress.getByName(bindIp));
@@ -277,6 +281,7 @@ public final class HttpServer {
                 o.put("spoken", speaker.spokenCount());
                 o.put("failed", speaker.failedCount());
                 o.put("stuck", speaker.stuckCount());
+                o.put("live", LiveAudio.ids());
                 o.put("error", LogBus.lastError());
                 o.put("chars", speaker.charCount());
                 o.put("queue", speaker.queued());
@@ -494,6 +499,34 @@ public final class HttpServer {
             } else {
                 speaker.feed(t);
                 json(out, 200, "{\"ok\":true}");
+            }
+            return;
+        }
+        if (path.startsWith("/_live/")) {
+            // 边下边播：插件还在吐字节，这里就把已经拿到的部分推给 MediaPlayer。
+            // chunked + 不写 Content-Length = progressive 流，读到哪放到哪。
+            final LiveAudio live = LiveAudio.get(path.substring("/_live/".length()).trim());
+            if (live == null) {
+                json(out, 404, "{\"error\":\"没有这条流（已经播完了？）\"}");
+                return;
+            }
+            try {
+                Map<String, String> h = new LinkedHashMap<String, String>();
+                h.put("Content-Type", live.contentType(8000));   // 等第一批字节，好认出 mp3/wav
+                h.put("Cache-Control", "no-store");
+                h.put("icy-name", "tts-relay");
+                writeHeadStream(out, 200, h);
+                live.pump(new LiveAudio.Sink() {
+                    public void chunk(byte[] d, int o, int l) throws IOException {
+                        out.write(d, o, l);
+                        out.flush();
+                    }
+                });
+                out.flush();
+            } catch (Throwable t) {
+                // 播放器提前断开是常事（切下一句），别当错误刷日志
+            } finally {
+                LiveAudio.drop(live);
             }
             return;
         }
@@ -1027,6 +1060,26 @@ public final class HttpServer {
         sb.append("Access-Control-Allow-Headers: *\r\n");
         sb.append("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS\r\n");
         sb.append("Access-Control-Max-Age: 86400\r\n\r\n");
+        out.write(sb.toString().getBytes(StandardCharsets.ISO_8859_1));
+        out.flush();
+    }
+
+    /**
+     * 流式响应的头部：<b>不写</b> Content-Length，也<b>不用</b> chunked ——
+     * 就用"连接关掉 = 数据完了"这种最老的写法。MediaPlayer 对 chunked 会报
+     * MEDIA_ERROR_UNKNOWN，网络电台那一套（ICY）都是这个形式，它才认。
+     */
+    private static void writeHeadStream(OutputStream out, int code, Map<String, String> headers)
+            throws IOException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 ").append(code).append(' ').append(reason(code)).append("\r\n");
+        for (Map.Entry<String, String> e : headers.entrySet()) {
+            String lk = e.getKey().toLowerCase(Locale.US);
+            if (lk.equals("content-length") || lk.equals("transfer-encoding")
+                    || lk.equals("connection")) continue;
+            sb.append(e.getKey()).append(": ").append(e.getValue()).append("\r\n");
+        }
+        sb.append("Connection: close\r\n\r\n");
         out.write(sb.toString().getBytes(StandardCharsets.ISO_8859_1));
         out.flush();
     }
