@@ -89,6 +89,14 @@ public final class Ui {
     }
 
     /** 带右边距的等分格。 */
+    /** 满宽 + 上边距（弹窗里一坨一坨按钮之间用）。 */
+    public LinearLayout.LayoutParams topGap(int topDp) {
+        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        l.topMargin = dp(topDp);
+        return l;
+    }
+
     public LinearLayout.LayoutParams weightGap(float w, int gapDp) {
         LinearLayout.LayoutParams l = weight(w);
         l.rightMargin = dp(gapDp);

@@ -5,6 +5,7 @@ import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -15,9 +16,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 两条线程的流水线：
- *   合成线程：文本 → TTS Server → 音频，塞进 audioQ（失败会重试一次）
+ *   合成线程：文本 → 引擎 → 音频，塞进 audioQ（失败会重试）
  *   播放线程：从 audioQ 取音频，MediaPlayer 播完自动接下一句
  * 合成第 N+1 句时第 N 句正在播 —— 句与句之间不留空档。
+ *
+ * <p><b>第三条线程：看门狗（tts-watch）。</b>2026-10 真机事故：念三句之后
+ * 彻底没声，日志一个字没有。原因是播放线程卡在 MediaPlayer 的原生调用里
+ * （prepare/release 这类），而**看门狗原来跑在播放线程自己身上** ——
+ * 线程一卡，看门狗跟着一起死，谁也发现不了。
+ *
+ * <p>现在：看门狗是**独立线程**，只认"心跳"。哪一段不跳了就写日志 + 换新线程，
+ * 卡住的那条连同它抱着的原生对象一起丢掉（换不回就当弃线程）。
+ * 合成那段另外再加一层硬超时（{@link HardCall}），插件吊死也只是丢一句。
  */
 public final class Speaker {
 
@@ -48,22 +58,37 @@ public final class Speaker {
     private volatile boolean paused = false;
     private volatile float volume = 1f;
 
-    private HandlerThread synthT;
+    // ── 播放那一段 ──
     private HandlerThread playT;
     private Handler playH;
     private MediaPlayer mp;
     private int seq = 0;
+    /** 播放线程的心跳：每跑一次 playNext 就更新。卡住 = 心跳停了。 */
+    private volatile long playBeat = 0;
+    private volatile String playStage = "未启动";
+    private volatile long playStart = 0;
+    private volatile int playDur = 0;
+    private volatile int stuckCount = 0;
+
+    // ── 合成那一段 ──
+    private volatile Thread synthThread;
+    /** 合成线程的"代"：换线程时 +1，老线程回来一看代不对就自己退场。 */
+    private volatile int synthEpoch = 0;
+    private volatile boolean synthBusy = false;
+    private volatile long synthBeat = 0;
+    private volatile String synthStage = "未启动";
+    /** 当前这一句最多等多久（硬超时用），看门狗按它判断合成是不是真吊住了。 */
+    private volatile long synthWait = 30000;
+
+    // ── 看门狗 ──
+    private volatile Thread watchThread;
+    private volatile boolean watching = false;
 
     private final AtomicInteger spoken = new AtomicInteger();
     private final AtomicInteger chars = new AtomicInteger();
     private final AtomicInteger failed = new AtomicInteger();
     private volatile String last = "";
     private volatile long lastTtsHint = 0;
-
-    /** 播放看门狗用：这一句什么时候开始播的、音频本身多长。 */
-    private volatile long playStart = 0;
-    private volatile int playDur = 0;
-    private volatile int stuckCount = 0;
 
     public Speaker(Context c) { ctx = c.getApplicationContext(); }
 
@@ -79,7 +104,7 @@ public final class Speaker {
     /** 音量 0~1：立刻作用于正在播的那句，并记住给后面每一句。 */
     public void setVolume(float v) {
         volume = Math.max(0f, Math.min(1f, v));
-        Handler h = playH;
+        final Handler h = playH;
         if (h != null) {
             h.post(new Runnable() {
                 public void run() {
@@ -99,6 +124,7 @@ public final class Speaker {
         if (h != null) {
             h.post(new Runnable() {
                 public void run() {
+                    beat("已暂停");
                     MediaPlayer p = mp;
                     if (p == null) return;
                     try { if (p.isPlaying()) p.pause(); } catch (Throwable ignored) { }
@@ -115,6 +141,7 @@ public final class Speaker {
         if (h != null) {
             h.post(new Runnable() {
                 public void run() {
+                    beat("继续");
                     MediaPlayer p = mp;
                     if (p == null) return;
                     try { p.start(); } catch (Throwable ignored) { }
@@ -129,7 +156,7 @@ public final class Speaker {
      * interrupt 是"新的一轮来了，全清"；skip 是"这句不想听，后面的照听"。
      */
     public void skipCurrent() {
-        Handler h = playH;
+        final Handler h = playH;
         if (h == null) return;
         h.post(new Runnable() {
             public void run() {
@@ -152,16 +179,22 @@ public final class Speaker {
         paused = false;
         volume = Prefs.volume(ctx);
         cleanClips();
-        synthT = new HandlerThread("tts-synth");
-        synthT.start();
+        gen++;                       // 新会话：上一代的残留音频一律作废
         playT = new HandlerThread("tts-play");
         playT.start();
         playH = new Handler(playT.getLooper());
-        new Thread(new Runnable() {
-            public void run() { synthLoop(); }
-        }, "tts-synth-worker").start();
+        playBeat = SystemClock.uptimeMillis();
+        playStage = "起播";
+        tickOn = false;
         playH.post(playNext);
-        playH.postDelayed(stuckCheck, 1500);
+        startSynthWorker();
+        watching = true;
+        Thread w = new Thread(new Runnable() {
+            public void run() { watchLoop(); }
+        }, "tts-watch");
+        w.setDaemon(true);
+        watchThread = w;
+        w.start();
         logVolume();
         LogBus.add("发声器已就绪（音色：" + Prefs.voice(ctx).replaceAll("_\\d+$", "") + "）");
     }
@@ -183,19 +216,28 @@ public final class Speaker {
 
     public void stop() {
         running = false;
+        watching = false;
+        Thread w = watchThread;
+        watchThread = null;
+        if (w != null) w.interrupt();
         interrupt();
-        if (synthT != null) synthT.quitSafely();
         if (playT != null) playT.quitSafely();
-        synthT = null;
         playT = null;
+        Thread s = synthThread;
+        if (s != null) s.interrupt();
+        synthThread = null;
         LogBus.add("发声器已停止");
     }
 
     /** 新的一轮来了 / 用户点了闭嘴：掐掉没念完的。 */
     public void interrupt() {
         gen++;
+        int dropped = textQ.size() + audioQ.size();
         textQ.clear();
         audioQ.clear();
+        // 打断会把"上一段还没念的"直接丢掉 —— 这是设计。但要看得出丢了几句，
+        // 否则"队列里还剩三句却不念了"就分不清是打断丢的、还是工作线程卡住了。
+        if (dropped > 0) LogBus.add("⏭ 被打断，丢掉上一段没念的 " + dropped + " 句（队列清空）");
         Handler h = playH;
         if (h != null) {
             h.post(new Runnable() {
@@ -208,6 +250,7 @@ public final class Speaker {
                     Handler hh = playH;
                     if (hh != null) {
                         hh.removeCallbacks(playNext);
+                        beat("打断后续播");
                         hh.postDelayed(playNext, 50);
                     }
                 }
@@ -237,9 +280,87 @@ public final class Speaker {
         } catch (Throwable ignored) { }
     }
 
+    // ───────────────────────── 心跳 / 看门狗 ─────────────────────────
+
+    /** 播放线程：我还活着，现在在干这个。 */
+    private void beat(String stage) {
+        playStage = stage;
+        playBeat = SystemClock.uptimeMillis();
+    }
+
+    /** 合成线程：我还活着，现在在干这个。 */
+    private void synthBeat(String stage) {
+        synthStage = stage;
+        synthBeat = SystemClock.uptimeMillis();
+    }
+
+    /**
+     * 独立看门狗：**不跑在播放线程上** —— 这正是这次事故的关键。
+     * 谁的心跳停了就写清楚"卡在哪一步"，然后把那一段换成新线程。
+     */
+    private void watchLoop() {
+        while (watching && running) {
+            try {
+                Thread.sleep(700);
+            } catch (InterruptedException e) {
+                return;
+            }
+            if (!watching || !running) return;
+            long now = SystemClock.uptimeMillis();
+
+            if (synthBusy && now - synthBeat > synthWait + 15000L) {
+                LogBus.error("🩺 合成线程 " + ((now - synthBeat) / 1000) + " 秒没动"
+                        + "（卡在" + synthStage + "，这句最多该等 " + (synthWait / 1000) + " 秒），"
+                        + "换新合成线程，这一句丢掉");
+                startSynthWorker();
+            }
+
+            if (now - playBeat > 6000L) {
+                LogBus.error("🩺 播放线程 " + ((now - playBeat) / 1000) + " 秒没动"
+                        + "（卡在" + playStage + " —— 十有八九是 MediaPlayer 的原生调用没返回），"
+                        + "已换一条新播放线程接着念");
+                rebuildPlayThread();
+            }
+        }
+    }
+
+    /** 播放线程卡住时换一条 —— 卡住的那条（和它抱着的 MediaPlayer）一起丢掉。 */
+    private void rebuildPlayThread() {
+        HandlerThread old = playT;
+        HandlerThread nt = new HandlerThread("tts-play-re");
+        nt.start();
+        Handler nh = new Handler(nt.getLooper());
+        playT = nt;
+        playH = nh;
+        // 卡住的那个播放器对象不能再碰：碰它的调用会继续卡在原生层里。
+        mp = null;
+        playStart = 0;
+        playDur = 0;
+        tickOn = false;          // 旧那条看护链跟着旧 looper 一起没了
+        stuckCount++;
+        playBeat = SystemClock.uptimeMillis();
+        playStage = "换新线程";
+        if (old != null) {
+            try { old.quitSafely(); } catch (Throwable ignored) { }
+        }
+        nh.post(playNext);
+    }
+
+    private void startSynthWorker() {
+        final int ep = ++synthEpoch;
+        synthBusy = false;
+        synthBeat("等句子");
+        Thread t = new Thread(new Runnable() {
+            public void run() { synthLoop(ep); }
+        }, "tts-synth-worker");
+        t.setDaemon(true);
+        synthThread = t;
+        t.start();
+    }
+
     // ───────────────────────── 合成 ─────────────────────────
     /**
-     * TTS Server 连不上时的熔断：别一句一句猛敲。
+     * 引擎连不上时的熔断：别一句一句猛敲。
      * 它崩了是"整台机器"的事，敲再快也只是刷一屏 ConnectException，
      * 还把句子一条条浪费掉 —— 这里改成退避重试，<b>失败的句子不丢</b>。
      */
@@ -256,13 +377,16 @@ public final class Speaker {
     private int curTries = 0;
     /** 这一句已经失败几次 —— 用来判断它是不是"毒句"。 */
     private int curFails = 0;
+    /** 这一句因为"引擎吊住"被硬超时过几次（第一次是换宿主重试，第二次才算真失败）。 */
+    private int curTimeouts = 0;
 
     public long pace() { return paceMs; }
 
-    private void synthLoop() {
+    private void synthLoop(final int ep) {
         Task cur = null;
-        while (running) {
+        while (running && ep == synthEpoch) {
             if (cur == null) {
+                synthBeat("等句子");
                 try {
                     cur = textQ.poll(400, TimeUnit.MILLISECONDS);
                 } catch (InterruptedException e) {
@@ -271,6 +395,7 @@ public final class Speaker {
                 if (cur == null) continue;
                 curTries = 0;
                 curFails = 0;
+                curTimeouts = 0;
             }
             int my = gen;
             if (Prefs.muted(ctx)) { cur = null; continue; }
@@ -278,6 +403,7 @@ public final class Speaker {
 
             long wait = nextTryAt - System.currentTimeMillis();
             if (wait > 0) {
+                synthBeat("熔断退避 " + (wait / 1000) + " 秒");
                 try {
                     Thread.sleep(Math.min(wait, 1000));
                 } catch (InterruptedException ie) {
@@ -288,6 +414,7 @@ public final class Speaker {
 
             long need = paceMs - (System.currentTimeMillis() - lastSynthAt);
             if (need > 0) {
+                synthBeat("等节奏 " + need + "ms");
                 try {
                     Thread.sleep(Math.min(need, 3000));
                 } catch (InterruptedException ie) {
@@ -302,13 +429,54 @@ public final class Speaker {
             // 失败由外层统一处理：留着这一句 + 退避重试。
             byte[] data = null;
             String err = null;
+            boolean timedOut = false;
+            final Task job = cur;
+            synthWait = EngineStore.synthDeadlineMs(ctx, cur.voice);
+            synthBusy = true;
+            synthBeat("引擎合成 " + head(cur.text, 12) + "（最多等 " + (synthWait / 1000) + " 秒）");
+            long t0 = System.currentTimeMillis();
             try {
                 lastSynthAt = System.currentTimeMillis();
-                data = EngineStore.synthNow(ctx, text_safe(cur.text), cur.voice);
+                // 硬超时：插件要是吊死不回调（它是阻塞在 PipedInputStream 上读的，
+                // 协程超时救不了），到点就把那条线程丢掉，别把整条流水线拖死。
+                data = HardCall.run("合成", synthWait, new HardCall.Job<byte[]>() {
+                    public byte[] run() throws Throwable {
+                        return EngineStore.synthNow(ctx, text_safe(job.text), job.voice);
+                    }
+                });
+            } catch (HardCall.TimedOut te) {
+                timedOut = true;
+                err = te.getMessage();
             } catch (Throwable t) {
                 err = t.getClass().getSimpleName() + ": " + t.getMessage();
+            } finally {
+                synthBusy = false;
+            }
+            if (data != null && data.length > 0) {
+                EngineStore.noteSynthOk(cur.voice, System.currentTimeMillis() - t0);
             }
             if (data == null) {
+                if (timedOut) {
+                    // 这不是"慢"，是"吊住了"（宿主里的 WebSocket 会话废了）。
+                    // 丢掉那个宿主，立刻用新宿主重试同一句 —— 既不用等第二次超时，
+                    // 也不至于平白少念一句。
+                    EngineStore.abandonPluginHosts();
+                    if (curTimeouts == 0) {
+                        curTimeouts++;
+                        LogBus.error("⏱ " + err + " —— 丢掉它、换新宿主重试这一句：「"
+                                + head(cur.text, 16) + "」");
+                        continue;                          // cur 留着
+                    }
+                    failed.incrementAndGet();
+                    LogBus.error("⏱ " + err + " —— 换过宿主还是不行，跳过这句：「"
+                            + head(cur.text, 16) + "」");
+                    cur = null;
+                    curTimeouts = 0;
+                    curFails = 0;
+                    curTries = 0;
+                    failStreak = 0;
+                    continue;
+                }
                 if (err != null && my == gen) {
                     boolean conn = isConnErr(err);
                     boolean busy = isTimeout(err);   // 超时：它多半还在忙上一条
@@ -316,13 +484,13 @@ public final class Speaker {
                     LogBus.error("合成失败：" + err + "   ← 文本：" + head(cur.text, 20));
                     boolean throttle = isThrottle(err);
                     curFails++;
-                    // TTS Server 崩了之后，同一句反复重发就是反复把它打崩
-                    // （它的 SystemTtsService 一遇合成失败就抛 Bad audio format 0 把进程带走）。
+                    // 引擎崩了之后，同一句反复重发就是反复把它打崩
+                    // （TTS Server 的 SystemTtsService 一遇合成失败就抛 Bad audio format 0 把进程带走）。
                     // 所以连不上超过 3 次，这句直接丢掉，别再喂它。
                     if (conn && curFails >= 3) {
-                        LogBus.error("这句试了 " + curFails + " 次都把 TTS Server 打没了，跳过它："
+                        LogBus.error("这句试了 " + curFails + " 次都把引擎打没了，跳过它："
                                 + head(cur.text, 24)
-                                + "（是 TTS Server 自己的 bug，不是这句的错）");
+                                + "（是引擎自己的 bug，不是这句的错）");
                         cur = null;
                         curFails = 0;
                         curTries = 0;
@@ -370,13 +538,15 @@ public final class Speaker {
             }
             TtsReviver.noteOk();
             if (my != gen) { cur = null; continue; }
+            synthBeat("塞进播放队列");
             try {
-                while (running && my == gen) {
+                while (running && my == gen && ep == synthEpoch) {
                     if (audioQ.offer(new Clip(cur.text, data, my, cur.voice), 200, TimeUnit.MILLISECONDS)) break;
                 }
             } catch (InterruptedException e) {
                 return;
             }
+            if (ep != synthEpoch) return;              // 这条工作线程已经被换掉了
             cur = null;
         }
     }
@@ -414,12 +584,11 @@ public final class Speaker {
             lastTtsHint = now;
             String port = portOf(Prefs.ttsBase(ctx));
             if (TtsReviver.crashedJustNow()) {
-                LogBus.add("→ TTS Server 刚刚崩了（上一句还念得好好的）。常见原因：某个音色合成失败，"
+                LogBus.add("→ 引擎刚刚崩了（上一句还念得好好的）。常见原因：某个音色合成失败，"
                         + "它内部抛 Bad audio format 0 把整个进程带走 —— 换个音色试试。"
-                        + "已尝试自动拉起转发器，无效就手动点开 TTS Server 看端口 " + port);
+                        + "已尝试自动拉起转发器，无效就手动点开看端口 " + port);
             } else {
-                LogBus.add("→ TTS Server 没在正常工作：打开 TTS Server，"
-                        + "「转发器」页确认服务已启动、监听端口 " + port);
+                LogBus.add("→ 引擎没在正常工作：确认转发器已启动、监听端口 " + port);
             }
         }
     }
@@ -434,11 +603,24 @@ public final class Speaker {
     }
 
     // ───────────────────────── 播放 ─────────────────────────
+    /**
+     * 推进：有音频就播下一句，没有就等。
+     * 只在三种情况下被叫醒：上句播完（postAfter）、被打断/跳过、以及自己的空转轮询。
+     */
     private final Runnable playNext = new Runnable() {
         public void run() {
             if (!running) return;
+            beat("轮询队列");
             // 上一句还没播完，谁也别想插队 —— 保证一句是一句，绝不腰斩
-            if (mp != null) return;
+            if (mp != null) {
+                scheduleTick();
+                return;
+            }
+            // 暂停：整条队列停在这儿，别偷偷把后面的念了
+            if (paused) {
+                playH.postDelayed(this, 200);
+                return;
+            }
             Clip clip = audioQ.poll();
             if (clip == null) {
                 playH.postDelayed(this, 70);
@@ -450,6 +632,7 @@ public final class Speaker {
             }
             try {
                 playOne(clip);
+                scheduleTick();
             } catch (Throwable t) {
                 failed.incrementAndGet();
                 LogBus.error("播放失败：" + t.getClass().getSimpleName() + " " + t.getMessage());
@@ -459,9 +642,54 @@ public final class Speaker {
         }
     };
 
+    /** 看护当前这一句：每秒回来看一眼它是不是播完了/被静默暂停了。只留一条链。 */
+    private volatile boolean tickOn = false;
+
+    private final Runnable playTick = new Runnable() {
+        public void run() {
+            tickOn = false;
+            if (!running) return;
+            beat("看护当前句");
+            if (paused) {
+                scheduleTick();
+                return;
+            }
+            MediaPlayer p = mp;
+            if (p == null) return;                 // 已经不播了：交给 playNext 那条链
+            long el = SystemClock.uptimeMillis() - playStart;
+            boolean over = playStart > 0 && playDur > 0 && el > playDur + 3000L;
+            boolean silent = false;
+            if (playStart > 0 && el > 2500L) {
+                try {
+                    // 音频焦点被抢会静默暂停，onCompletion 永远不来 —— 最阴的一种卡死
+                    silent = !p.isPlaying();
+                } catch (Throwable ignored) { }
+            }
+            if (over || silent) {
+                stuckCount++;
+                LogBus.error("播放卡死（" + (silent ? "被静默暂停" : "超时")
+                        + "，已挂 " + el + "ms，音频只有 " + playDur + "ms），强制跳到下一句");
+                releasePlayer();
+                playStart = 0;
+                playDur = 0;
+                playNext.run();
+                return;
+            }
+            scheduleTick();
+        }
+    };
+
+    private void scheduleTick() {
+        Handler h = playH;
+        if (h == null || tickOn) return;
+        tickOn = true;
+        h.postDelayed(playTick, 1000);
+    }
+
     private void playOne(final Clip clip) throws Exception {
         final File f = new File(ctx.getCacheDir(), "clip_" + System.nanoTime() + ".wav");
         releasePlayer();                       // 先放掉上一个，再落盘，避免互相踩
+        beat("写音频文件");
         FileOutputStream fos = new FileOutputStream(f);
         try {
             fos.write(clip.data);
@@ -475,6 +703,7 @@ public final class Speaker {
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build());
+            beat("setDataSource");
             p.setDataSource(f.getAbsolutePath());
             p.setVolume(volume, volume);
             p.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
@@ -489,11 +718,12 @@ public final class Speaker {
                     return true;
                 }
             });
+            beat("prepare（原生，可能卡这儿）");
             p.prepare();
             int dur = p.getDuration();
             if (dur <= 0) throw new IllegalStateException("音频时长为 " + dur + "ms（文件是坏的）");
             playDur = dur;
-            playStart = System.currentTimeMillis();
+            beat("start");
             p.start();
         } catch (Throwable t) {
             try { p.reset(); } catch (Throwable ignored) { }
@@ -503,14 +733,20 @@ public final class Speaker {
             throw new IllegalStateException("MediaPlayer 起播失败：" + t.getClass().getSimpleName()
                     + " " + t.getMessage() + "（音频 " + clip.data.length + " 字节）");
         }
+        playStart = SystemClock.uptimeMillis();
+        playStage = "播放中 " + playDur + "ms";
         mp = p;
         spoken.incrementAndGet();
         chars.addAndGet(clip.text.length());
         last = clip.text;
         // 多语音时把音色也打出来 —— 一眼就能看出这句是谁在念
+        // 音频字节/码率也打出来 —— 有些引擎会把超长句子截断，听感是"没念完就自己停了"，
+        // 这时候一眼能看出是音频本身短，而不是播放被打断
         LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
                 ? "" : "【" + clip.voice.replaceAll("_\\d+$", "") + "】")
-                + head(clip.text, 42) + "  (" + playDur + "ms)");
+                + head(clip.text, 42) + "  (" + playDur + "ms"
+                + " · 文本 " + clip.text.length() + " 字 · 音频 " + (clip.data == null ? 0 : clip.data.length) + " 字节"
+                + (clip.data == null || playDur <= 0 ? "" : " · " + (clip.data.length * 8L / playDur) + " kbps") + ")");
     }
 
     /** 收尾统一走这里：先释放、再取下一条，全在播放线程上排队。 */
@@ -525,51 +761,11 @@ public final class Speaker {
                 f.delete();
                 playStart = 0;
                 playDur = 0;
+                beat("上一句播完");
                 playNext.run();
             }
         });
     }
-
-    /** 看门狗：音频早该播完了却还挂着 —— 判定卡死，强行推进。 */
-    private final Runnable stuckCheck = new Runnable() {
-        public void run() {
-            try {
-                // 暂停中：既不判卡死，也不去踹播放循环 —— 否则一暂停就被当成"静默卡死"跳掉
-                if (paused) {
-                    Handler hp = playH;
-                    if (hp != null && running) hp.postDelayed(this, 1000);
-                    return;
-                }
-                MediaPlayer p = mp;
-                int dur = playDur;
-                if (p != null && dur > 0 && playStart > 0) {
-                    long el = System.currentTimeMillis() - playStart;
-                    boolean overrun = el > dur + 3000L;
-                    boolean silentPause = false;
-                    try {
-                        // 音频焦点被抢会静默暂停，onCompletion 永远不来 —— 最阴的一种卡死
-                        silentPause = el > 2500L && !p.isPlaying();
-                    } catch (Throwable ignored) { }
-                    if (overrun || silentPause) {
-                        stuckCount++;
-                        LogBus.error("播放卡死（" + (silentPause ? "被静默暂停" : "超时")
-                                + "，已挂 " + el + "ms，音频只有 " + dur + "ms），强制跳到下一句");
-                        releasePlayer();
-                        playStart = 0;
-                        playDur = 0;
-                        playNext.run();
-                    }
-                } else if (p == null && !audioQ.isEmpty()) {
-                    // 队列里有音频却没人播 = 播放循环掉了，踹一脚
-                    stuckCount++;
-                    LogBus.error("播放循环停了（队列还剩 " + audioQ.size() + " 条），已重新拉起");
-                    playNext.run();
-                }
-            } catch (Throwable ignored) { }
-            Handler h = playH;
-            if (h != null && running) h.postDelayed(this, 1000);
-        }
-    };
 
     private static String head(String s, int n) {
         return s.length() > n ? s.substring(0, n) + "…" : s;
@@ -579,6 +775,7 @@ public final class Speaker {
         MediaPlayer p = mp;
         mp = null;
         if (p == null) return;
+        beat("release（原生，可能卡这儿）");
         try { if (p.isPlaying()) p.stop(); } catch (Throwable ignored) { }
         try { p.reset(); } catch (Throwable ignored) { }
         try { p.release(); } catch (Throwable ignored) { }

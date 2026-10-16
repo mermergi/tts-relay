@@ -21,18 +21,18 @@ import java.util.concurrent.TimeUnit;
 /**
  * 内置网页登录，登完把值绑回配置。
  *
- * 这套 binding 写法对齐 TTS Server 的 {@code PluginLoginActivity}（{@code loginUrl} +
+ * 逻辑照抄 TTS Server 的 {@code PluginLoginActivity}（插件里 {@code loginUrl} +
  * {@code binding} + {@code ua} 那三个字段就是喂给它的），一点没自创：
  *
  * <pre>
- *   binding = "session"            → 该地址下存着的整串
- *   binding = "session.xxx"        → 只要名为 xxx 的那一条
- *   binding = "local.xxx"          → localStorage.getItem('xxx')
- *   binding = "store.xxx"          → sessionStorage.getItem('xxx')
+ *   binding = "cookies"            → CookieManager.getCookie(loginUrl) 整串
+ *   binding = "cookies.xxx"        → 只要名为 xxx 的那条
+ *   binding = "locals.xxx"         → localStorage.getItem('xxx')
+ *   binding = "sessions.xxx"       → sessionStorage.getItem('xxx')
  * </pre>
  *
- * 注意：就取 <b>loginUrl 那一个地址</b>的值。不要去扫别的域、也不要合并 ——
- * 合并出来的头一乱，服务端就不认了。
+ * 注意：就取 <b>loginUrl 那一个地址</b>的 Cookie。不要去扫别的域、也不要合并 ——
+ * 合并出来的 Cookie 头域名一乱，服务端就不认了。
  *
  * UA：{@code pc} / 留空 = 桌面 UA；{@code mobile} / {@code android} = WebView 默认（设备手机 UA）；
  * 别的值 = 当成自定义 UA 直接用。
@@ -45,6 +45,9 @@ public final class LoginActivity extends Activity {
     public static final String EXTRA_UA = "ua";
     public static final String RESULT_VALUE = "value";
 
+    /** 老名字，早先版本用的是它 —— 留着免得旧调用方拿到空。 */
+    public static final String RESULT_COOKIE = RESULT_VALUE;
+
     private static final String UA_PC =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
@@ -54,7 +57,7 @@ public final class LoginActivity extends Activity {
     private Ui ui;
     private TextView status;
     private String loginUrl = "";
-    private String binding = "session";
+    private String binding = "cookies";
 
     @Override
     protected void onCreate(Bundle b) {
@@ -71,7 +74,7 @@ public final class LoginActivity extends Activity {
         }
         if (loginUrl.length() == 0) loginUrl = "about:blank";
         String title = in == null ? null : in.getStringExtra(EXTRA_TITLE);
-        if (title == null || title.length() == 0) title = "登录后点右上角「💾」保存";
+        if (title == null || title.length() == 0) title = "登录后点右边的按钮取回";
 
         String uaArg = in == null ? "" : in.getStringExtra(EXTRA_UA);
         String userAgent;
@@ -96,8 +99,8 @@ public final class LoginActivity extends Activity {
         t.setTextSize(12);
         t.setPadding(ui.dp(10), 0, ui.dp(10), 0);
         bar.addView(t, ui.weight(1f));
-        bar.addView(ui.btn("💾 保存", true, new View.OnClickListener() {
-            public void onClick(View v) { save(); }
+        bar.addView(ui.btn("取回", true, new View.OnClickListener() {
+            public void onClick(View v) { grab(); }
         }));
         root.addView(bar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -106,7 +109,7 @@ public final class LoginActivity extends Activity {
         status.setTextColor(p.textMuted);
         status.setTextSize(11);
         status.setPadding(ui.dp(12), ui.dp(6), ui.dp(12), ui.dp(6));
-        status.setText("保存到：" + binding + "  ·  " + loginUrl);
+        status.setText("绑定目标：" + binding + "  ·  " + loginUrl);
         root.addView(status, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -142,36 +145,35 @@ public final class LoginActivity extends Activity {
             int n = 0;
             if (ck != null) for (String x : ck.split(";")) if (x.trim().length() > 0) n++;
             status.setText(n > 0
-                    ? "保存到：" + binding + "  ·  已就绪（" + n + " 条）"
-                    : "保存到：" + binding + "  ·  还没登录 —— 登完再点「💾 保存」");
+                    ? "绑定：" + binding + "  ·  已就绪（" + n + " 条）"
+                    : "绑定：" + binding + "  ·  还没登录 —— 登完再点「取回」");
             status.setTextColor(n > 0 ? p.ok : p.textMuted);
         } catch (Throwable ignored) { }
     }
 
-    /** 按 binding 的写法取值：session[.名字] / local.键 / store.键。 */
+    /** 照抄 TTS Server 的 parseBinding。 */
     private String parseBinding() {
         String b = binding == null ? "" : binding.trim();
-        if (b.length() == 0) b = "session";
+        if (b.length() == 0) b = "cookies";
         String[] split = b.split("\\.");
         String start = split.length > 0 ? split[0] : "";
         String end = split.length > 1 ? split[1] : "";
         boolean all = end.length() == 0;
 
-        if ("session".equals(start)) {
-            String raw = "";
-            try { raw = CookieManager.getInstance().getCookie(loginUrl); }
+        if ("cookies".equals(start)) {
+            String cookies = "";
+            try { cookies = CookieManager.getInstance().getCookie(loginUrl); }
             catch (Throwable ignored) { }
-            if (raw == null) raw = "";
-            if (all) return raw;
-            return pickValue(raw, end);
+            if (cookies == null) cookies = "";
+            if (all) return cookies;
+            return cookieValue(cookies, end);
         }
-        if ("local".equals(start)) return jsGet("localStorage.getItem('" + end + "')");
-        if ("store".equals(start)) return jsGet("sessionStorage.getItem('" + end + "')");
+        if ("locals".equals(start)) return jsGet("localStorage.getItem('" + end + "')");
+        if ("sessions".equals(start)) return jsGet("sessionStorage.getItem('" + end + "')");
         return "";
     }
 
-    /** 从一段 "名字=值; 名字=值" 里取某一项。 */
-    private static String pickValue(String header, String name) {
+    private static String cookieValue(String header, String name) {
         if (header == null || header.length() == 0) return "";
         for (String part : header.split(";")) {
             String s = part.trim();
@@ -210,7 +212,7 @@ public final class LoginActivity extends Activity {
         return v;
     }
 
-    private void save() {
+    private void grab() {
         try { if (Build.VERSION.SDK_INT >= 21) CookieManager.getInstance().flush(); }
         catch (Throwable ignored) { }
         String v = parseBinding();
@@ -218,7 +220,7 @@ public final class LoginActivity extends Activity {
         v = v.trim();
         if (v.length() == 0) {
             peek();
-            status.setText("还没拿到 —— 先把账号登进去再点「💾 保存」");
+            status.setText("没取到 —— 先把账号登进去再点「取回」");
             status.setTextColor(p.warn);
             return;
         }

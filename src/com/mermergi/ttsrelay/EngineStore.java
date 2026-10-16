@@ -28,7 +28,7 @@ public final class EngineStore {
 
     public static final String KIND_SYSTEM = "system";
     public static final String KIND_HTTP = "http";
-    /** TTS Server 的 JS 插件 —— 源码存着，用 TTS Server 自己的运行时跑（见 kt/ + PluginHost）。 */
+    /** TTS Server 的 JS 插件 —— 源码存着，用 TTS Server 自己的运行时跑（见 kt/app/PluginBridge.kt）。 */
     public static final String KIND_JS = "js";
 
     public static final String ID_SYSTEM = "system";
@@ -41,7 +41,8 @@ public final class EngineStore {
     public static final String[] KNOWN_KEYS = {
             "url", "method", "headers", "body", "content_type", "timeout", "json_key",
             "voices_url", "voices_path", "voices_name", "voices_id", "voices",
-            "cred", "speaker", "format", "sample_rate", "src", "var_labels", "login_key",
+            "cookie", "appkey", "speaker", "format", "sample_rate",
+            "src", "var_labels", "login_key",
             "pkg", "lang",
     };
 
@@ -83,6 +84,23 @@ public final class EngineStore {
         sys.put("voices", "");
         list.add(sys);
 
+        Item srv = new Item();
+        srv.id = ID_HTTP; srv.kind = KIND_HTTP; srv.label = "TTS Server（旧的）";
+        srv.put("url", "http://127.0.0.1:1221/api/tts?text={{text}}"
+                + "&engine=com.github.jing332.tts_server_android"
+                + "&rate={{rate}}&pitch={{pitch}}&voice={{voice}}");
+        srv.put("method", "GET");
+        srv.put("headers", "");
+        srv.put("body", "");
+        srv.put("timeout", 60000);
+        srv.put("json_key", "");
+        srv.put("voices", "");
+        srv.put("voices_url", "http://127.0.0.1:1221/api/voices?engine=com.github.jing332.tts_server_android");
+        srv.put("voices_path", "");
+        srv.put("voices_name", "name");
+        srv.put("voices_id", "name");
+        list.add(srv);
+
         save(c, list);
         Prefs.setActiveEngine(c, ID_SYSTEM);
     }
@@ -91,14 +109,7 @@ public final class EngineStore {
     private static void migrate(Context c) {
         List<Item> list = rawList(c);
         boolean changed = false;
-        for (java.util.Iterator<Item> li = list.iterator(); li.hasNext(); ) {
-            Item it = li.next();
-            if (!KIND_HTTP.equals(it.kind) && !KIND_SYSTEM.equals(it.kind)
-                    && !KIND_JS.equals(it.kind)) {
-                li.remove();          // 早先版本留下、现在已经不认的引擎类型，别在列表里挂着
-                changed = true;
-                continue;
-            }
+        for (Item it : list) {
             if (KIND_HTTP.equals(it.kind)) {
                 if (!it.cfg.has("voices_url")) {
                     it.put("voices_url", deriveVoicesUrl(it.s("url", "")));
@@ -258,7 +269,7 @@ public final class EngineStore {
      * <ol>
      *   <li>手工填的 voices</li>
      *   <li>voices_url 拉的 JSON 目录（路径 / 字段名都是配置项）</li>
-     *   <li>引擎自己知道的（比如系统 TTS 这台机器上装了哪些语音）</li>
+     *   <li>引擎自己知道的（系统 TTS 的语音列表、插件自己报的推荐列表）</li>
      * </ol>
      */
     public static List<String> fetchVoices(Context c, Item it) {
@@ -287,7 +298,234 @@ public final class EngineStore {
         return new ArrayList<String>(out);
     }
 
+    /**
+     * 从插件源码里读它自己声明的变量（TTS Server 引擎文件的 {@code vars}），写回：
+     * {@code def_vars}（声明）/ {@code var_labels}（界面显示名）/ 缺的 cfg 键 / {@code login_*}。
+     *
+     * 打开 JS 引擎的编辑框、以及导入插件时都会走这儿 —— 所以老引擎不用重新导入，
+     * 它声明的「API密钥」这类变量会自己冒出来。
+     */
+    public static boolean syncJsMeta(Context c, Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return false;
+        String src = it.s("src", "");
+        if (src.trim().length() == 0) return false;
+        String before = it.s("def_vars", "") + "|" + it.s("author", "") + "|" + it.s("version", "");
+        com.mermergi.ttsrelay.js.PluginBridge h = null;
+        try {
+            h = new com.mermergi.ttsrelay.js.PluginBridge(c,
+                    it.id.length() == 0 ? "plugin" : it.id, src, null, null,
+                    it.s("lang", "zh-CN"), "");
+            JSONObject labels = new JSONObject();
+            JSONObject defs = new JSONObject();
+            String loginKey = "";
+            for (java.util.Map.Entry<String, java.util.Map<String, String>> e : h.defVars().entrySet()) {
+                String key = e.getKey();
+                java.util.Map<String, String> def = e.getValue();
+                if (!it.cfg.has(key)) it.put(key, "");
+
+                String label = def == null ? "" : nn(def.get("name"));
+                if (label.length() == 0) label = key;
+                String hint = def == null ? "" : nn(def.get("hint"));
+                if (hint.length() > 0) label = label + "（" + hint + "）";
+                try { labels.put(key, label); } catch (Throwable ignored) { }
+
+                JSONObject d = new JSONObject();
+                if (def != null) {
+                    for (java.util.Map.Entry<String, String> f : def.entrySet()) {
+                        try { d.put(f.getKey(), nn(f.getValue())); } catch (Throwable ignored) { }
+                    }
+                }
+                // 插件声明的默认值（vars 里的 value）—— TTS Server 会拿它预填。
+                // 不填的话插件读 userVars 拿到 undefined，请求就会缺字段（服务端就是这么拒的）。
+                String dv = def == null ? "" : nn(def.get("value"));
+                if (dv.length() > 0 && it.s(key, "").trim().length() == 0) it.put(key, dv);
+                try { defs.put(key, d); } catch (Throwable ignored) { }
+
+                String loginUrl = def == null ? "" : nn(def.get("loginUrl"));
+                if (loginKey.length() == 0 && loginUrl.length() > 0) {
+                    loginKey = key;
+                    it.put("login_key", loginKey);
+                    it.put("login_url", loginUrl);
+                    String b = def == null ? "" : nn(def.get("binding"));
+                    it.put("binding", b.length() > 0 ? b : "session");
+                    it.put("ua", "mobile");
+                }
+            }
+            // 插件没声明"要登录"的变量 → 原来那套 Cookie 登录键清干净，
+            // 否则 JS 引擎编辑框里会冒出一个 Cookie 框，让人把 API 密钥填错地方
+            if (loginKey.length() == 0) {
+                it.cfg.remove("login_key");
+                it.cfg.remove("login_url");
+                it.cfg.remove("binding");
+                it.cfg.remove("ua");
+            }
+            if (labels.length() > 0) it.put("var_labels", labels.toString());
+            if (defs.length() > 0) it.put("def_vars", defs.toString());
+            if (!it.cfg.has("user_vars")) it.put("user_vars", "{}");
+            if (!it.cfg.has("tts_data")) it.put("tts_data", "{}");
+            if (h.name().length() > 0 && (it.label == null || it.label.length() == 0
+                    || "JS 插件".equals(it.label))) {
+                it.label = h.name();
+            }
+            if (h.author().length() > 0) it.put("author", h.author());
+            if (h.version() >= 0) it.put("version", h.version());
+            if (h.iconUrl().length() > 0) it.put("icon", h.iconUrl());
+        } catch (Throwable t) {
+            LogBus.error("读插件声明的变量失败：" + t.getMessage());
+        } finally {
+            if (h != null) { try { h.destroy(); } catch (Throwable ignored) { } }
+        }
+        return !before.equals(it.s("def_vars", "") + "|" + it.s("author", "") + "|" + it.s("version", ""));
+    }
+
+    private static String nn(String v) { return v == null ? "" : v; }
+
+    /**
+     * 把「别处已经抓过的登录信息」搬到插件声明的变量上。
+     *
+     * 典型场景：以前用的是原生那套引擎（Cookie 存在 cfg 里），现在改用插件版 ——
+     * 插件声明的变量也叫 cookie，没必要让用户再登一次。任何一个引擎里存着的
+     * cookie / cred 都能当来源，谁先有值用谁。
+     */
+    public static void inheritLogin(Context c, Item js) {
+        if (js == null || !KIND_JS.equals(js.kind)) return;
+        java.util.Map<String, String> defs = new java.util.LinkedHashMap<String, String>();
+        try {
+            JSONObject d = new JSONObject(js.s("def_vars", ""));
+            for (java.util.Iterator<String> k = d.keys(); k.hasNext(); ) {
+                String key = k.next();
+                JSONObject one = d.optJSONObject(key);
+                String binding = one == null ? "" : one.optString("binding", "");
+                String loginUrl = one == null ? "" : one.optString("loginUrl", "");
+                boolean cookieish = key.toLowerCase().contains("cookie")
+                        || binding.toLowerCase().contains("cookie");
+                if (cookieish && (loginUrl.length() > 0 || binding.length() > 0 || true)) {
+                    defs.put(key, binding);
+                }
+            }
+        } catch (Throwable ignored) { }
+        if (defs.isEmpty()) return;
+
+        String src = "";
+        for (Item other : all(c)) {
+            if (other == js) continue;
+            String cv = other.s("cookie", "");
+            if (cv.length() == 0) cv = other.s("cred", "");
+            if (cv.length() > 0) { src = cv; break; }
+        }
+        if (src.length() == 0) return;
+
+        for (String key : defs.keySet()) {
+            if (js.s(key, "").length() == 0) {
+                js.put(key, src);
+                js.put("login_key", key);
+                LogBus.add("把已有的登录信息填进了插件的「" + key + "」变量（" + src.length() + " 字符）");
+            }
+        }
+        syncUserVars(js);
+    }
+
+    /** 插件声明了变量、但用户一个都没填 —— 它界面上会因此提示「请设置变量」。 */
+    public static boolean needsVars(Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return false;
+        int n = 0;
+        try { n = new JSONObject(it.s("def_vars", "")).length(); } catch (Throwable ignored) { }
+        if (n == 0) return false;
+        int filled = 0;
+        try {
+            JSONObject uv = new JSONObject(it.s("user_vars", ""));
+            for (java.util.Iterator<String> k = uv.keys(); k.hasNext(); ) {
+                if (uv.optString(k.next(), "").trim().length() > 0) filled++;
+            }
+        } catch (Throwable ignored) { }
+        return filled == 0;
+    }
+
+    /** 插件自己的缓存目录（它 `ttsrv.getFile()` 落的地方）。 */
+    public static java.io.File cacheDir(Context c, Item it) {
+        java.io.File base = c == null ? null : c.getExternalCacheDir();
+        if (base == null) return null;
+        return new java.io.File(base, it == null || it.id.length() == 0 ? "plugin" : it.id);
+    }
+
+    public static boolean hasCache(Context c, Item it) {
+        java.io.File d = cacheDir(c, it);
+        return d != null && d.isDirectory() && d.list() != null && d.list().length > 0;
+    }
+
+    public static void clearCache(Context c, Item it) {
+        java.io.File d = cacheDir(c, it);
+        if (d == null || !d.isDirectory()) return;
+        java.io.File[] fs = d.listFiles();
+        if (fs == null) return;
+        for (java.io.File f : fs) deleteTree(f);
+    }
+
+    private static void deleteTree(java.io.File f) {
+        if (f.isDirectory()) {
+            java.io.File[] fs = f.listFiles();
+            if (fs != null) for (java.io.File x : fs) deleteTree(x);
+        }
+        f.delete();
+    }
+
+    /**
+     * 插件声明的变量 → {@code user_vars}：TTS Server 是"声明"和"用户填的值"分开存的，
+     * 插件读的是 {@code ttsrv.userVars['api_key']}，塞在 cfg 的散键里容易对不上。
+     */
+    public static void syncUserVars(Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return;
+        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<String>();
+        try {
+            JSONObject def = new JSONObject(it.s("def_vars", ""));
+            for (java.util.Iterator<String> k = def.keys(); k.hasNext(); ) keys.add(k.next());
+        } catch (Throwable ignored) { }
+        if (keys.isEmpty()) {
+            try {
+                JSONObject lb = new JSONObject(it.s("var_labels", ""));
+                for (java.util.Iterator<String> k = lb.keys(); k.hasNext(); ) keys.add(k.next());
+            } catch (Throwable ignored) { }
+        }
+        if (keys.isEmpty()) return;
+        try {
+            JSONObject o = new JSONObject();
+            for (String k : keys) {
+                String v = it.s(k, "");
+                if (v.length() > 0) o.put(k, v);
+            }
+            it.put("user_vars", o.toString());
+        } catch (Throwable ignored) { }
+    }
+
+    /**
+     * voices_url 失败后的冷却（引擎 id + url → 失败时刻）。
+     *
+     * 为什么要有它：老引擎（比如指向已经关掉的 127.0.0.1:1221 那条）会**每次开界面、
+     * 每次刷音色表都去撞一堵死墙**，连不上还要等 8 秒，日志里反复刷同一行报错。
+     * 死地址就该记住"它是死的"，隔几分钟再试一次就够了。
+     */
+    private static final java.util.Map<String, Long> VOICES_FAIL =
+            new java.util.concurrent.ConcurrentHashMap<String, Long>();
+    private static final long VOICES_FAIL_COOL = 5 * 60 * 1000L;
+
+    /** 这个音色源现在是不是在冷却里（界面可以据此显示"上次失败，5 分钟内不再试"）。 */
+    public static boolean voicesUrlCooling(Item it) {
+        if (it == null) return false;
+        String k = it.id + "|" + it.s("voices_url", "").trim();
+        Long t = VOICES_FAIL.get(k);
+        return t != null && System.currentTimeMillis() - t < VOICES_FAIL_COOL;
+    }
+
+    /**
+     * 拉音色。失败**不抛**（返回空表），并且带冷却：
+     * 只在这一轮失败时打一行日志，之后 5 分钟内不再请求、也不再刷日志。
+     */
     private static List<String> fetchFromUrl(Item it, String url) throws Exception {
+        final String fk = it.id + "|" + url;
+        Long bad = VOICES_FAIL.get(fk);
+        if (bad != null && System.currentTimeMillis() - bad < VOICES_FAIL_COOL) {
+            return new ArrayList<String>();      // 冷却中：不请求、不报错
+        }
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(url).openConnection();
@@ -303,8 +541,8 @@ public final class EngineStore {
                 try { conn.setRequestProperty(s.substring(0, i).trim(), s.substring(i + 1).trim()); }
                 catch (Throwable ignored) { }
             }
-            String cred = it.s("cred", "").trim();
-            if (cred.length() > 0) conn.setRequestProperty("Cookie", cred);
+            String ck = it.s("cookie", "").trim();
+            if (ck.length() > 0) conn.setRequestProperty("Cookie", ck);
             if (conn.getResponseCode() != 200) {
                 throw new IllegalStateException("HTTP " + conn.getResponseCode());
             }
@@ -332,7 +570,18 @@ public final class EngineStore {
                 if (id.length() == 0) continue;
                 out.add(id.equals(name) ? name : name + SEP + id);
             }
+            VOICES_FAIL.remove(fk);
             return out;
+        } catch (Throwable t) {
+            long now = System.currentTimeMillis();
+            boolean first = bad == null || now - bad >= VOICES_FAIL_COOL;
+            VOICES_FAIL.put(fk, now);
+            if (first) {
+                LogBus.error("从 voices_url 拉音色失败：" + t.getMessage()
+                        + "（" + (VOICES_FAIL_COOL / 60000) + " 分钟内不再试；"
+                        + "要改成别的地址就在这条引擎的配置里改，或者删掉这条引擎）");
+            }
+            return new ArrayList<String>();
         } finally {
             if (conn != null) conn.disconnect();
         }
@@ -359,9 +608,228 @@ public final class EngineStore {
 
     // ───────────────────────── 合成 ─────────────────────────
 
-    /** 播放链只调这一个：拿当前引擎合成。 */
+    // ── 启用 / 音色反查 ──
+    //
+    // 引擎不再有"当前独占"这回事：导入/新建的引擎默认都是启用的，
+    // 朗读时<b>看选了哪个音色</b>，反查是哪个引擎提供它（照 TTS Server 的模型：
+    // 音源 + 音色决定用哪个引擎）。查不到才退回"当前引擎"。
+
+    /** 停用的引擎：cfg 里 `off=1`。不写就是启用（导入的引擎默认启用）。 */
+    public static boolean isEnabled(Item it) {
+        return it == null || it.i("off", 0) == 0;
+    }
+
+    public static void setEnabled(Context c, Item it, boolean on) {
+        if (it == null) return;
+        it.put("off", on ? 0 : 1);
+        put(c, it);
+    }
+
+    /** 音色表缓存（键带 src/url 的 hash，改了配置自动失效）——JS 引擎问一次很贵。 */
+    private static final java.util.Map<String, List<String>> VOICE_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<String, List<String>>();
+
+    private static String voiceKey(Item it) {
+        return it.id + "|" + it.s("src", "").hashCode() + "|" + it.s("url", "").hashCode()
+                + "|" + it.s("voices", "").hashCode();
+    }
+
+    /** 查（必要时算）一个引擎的音色表，带缓存。 */
+    public static List<String> voicesCached(Context c, Item it) {
+        String k = voiceKey(it);
+        List<String> hit = VOICE_CACHE.get(k);
+        if (hit != null) return hit;
+        List<String> out;
+        try {
+            out = fetchVoices(c, it);
+        } catch (Throwable t) {
+            out = new java.util.ArrayList<String>();
+        }
+        VOICE_CACHE.put(k, out);
+        return out;
+    }
+
+    public static void warmVoices(Context c) {
+        new Thread(new Runnable() {
+            public void run() {
+                for (Item it : all(c)) {
+                    if (!isEnabled(it)) continue;
+                    try { voicesCached(c, it); } catch (Throwable ignored) { }
+                }
+            }
+        }).start();
+    }
+
+    private static boolean sameVoice(String entry, String want) {
+        if (entry == null || want == null) return false;
+        String e = entry.trim(), w = want.trim();
+        if (e.equalsIgnoreCase(w)) return true;
+        int i = e.indexOf(SEP);
+        String en = i > 0 ? e.substring(0, i).trim() : e;
+        String ei = i > 0 ? e.substring(i + 1).trim() : e;
+        int j = w.indexOf(SEP);
+        String wn = j > 0 ? w.substring(0, j).trim() : w;
+        String wi = j > 0 ? w.substring(j + 1).trim() : w;
+        return en.equalsIgnoreCase(wn) || en.equalsIgnoreCase(wi)
+                || ei.equalsIgnoreCase(wn) || ei.equalsIgnoreCase(wi);
+    }
+
+    /** 音色 → 引擎（内存版，列表/音色表一算出来就填）。 */
+    private static final java.util.Map<String, String> VOICE_OWNER =
+            new java.util.concurrent.ConcurrentHashMap<String, String>();
+
+    /** 这个音色归哪个引擎（音色表算过就直接给；没算过就看持久表）。 */
+    public static String ownerOfVoice(Context c, String voice) {
+        if (voice == null || voice.length() == 0) return "";
+        String owner = VOICE_OWNER.get(voice);
+        if (owner == null || owner.length() == 0) owner = Prefs.voiceEngine(c, voice);
+        return owner == null ? "" : owner;
+    }
+
+    /** 所有<b>启用中</b>引擎的音色，一起列出来；顺手记住每个音色归谁。 */
+    public static List<String> fetchVoicesAll(Context c) {
+        List<String> out = new java.util.ArrayList<String>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<String>();
+        for (Item it : all(c)) {
+            if (!isEnabled(it)) continue;
+            List<String> vs;
+            try { vs = voicesCached(c, it); } catch (Throwable t) { continue; }
+            for (String v : vs) {
+                if (v == null || v.length() == 0) continue;
+                VOICE_OWNER.put(v, it.id);
+                if (seen.add(v)) out.add(v);
+            }
+        }
+        return out;
+    }
+
+    /** 这个音色是谁提供的？先看"音色→引擎"那张表（照它：音色带着配置），再挨个引擎找，最后退回当前引擎。 */
+    public static TtsEngine engineForVoice(Context c, String voice) {
+        String want = voice == null ? "" : voice.trim();
+        if (want.length() > 0) {
+            String owner = VOICE_OWNER.get(want);
+            if (owner == null || owner.length() == 0) owner = Prefs.voiceEngine(c, want);
+            if (owner != null && owner.length() > 0) {
+                Item it = get(c, owner);
+                if (it != null && isEnabled(it)) {
+                    VOICE_OWNER.put(want, owner);
+                    return build(it);
+                }
+            }
+        }
+        if (want.length() > 0) {
+            for (Item it : all(c)) {
+                if (!isEnabled(it)) continue;
+                List<String> vs;
+                try { vs = voicesCached(c, it); } catch (Throwable t) { continue; }
+                for (String v : vs) {
+                    if (sameVoice(v, want)) return build(it);
+                }
+            }
+        }
+        return activeEngine(c);
+    }
+
+    /**
+     * 这个音色该给多久 —— 插件配置里的 {@code timeout}（它那套引擎文件里有这个键）。
+     * 播放链拿它做**硬超时**：到点就丢线程，不能让插件把整条流水线拖死。
+     */
+    /**
+     * 最近一次**成功**的合成耗时（按音色记）。
+     * 硬超时按它自适应：快引擎 8 秒就该回来了，慢引擎才配等更久。
+     */
+    private static final java.util.Map<String, Long> SYNTH_MS =
+            new java.util.concurrent.ConcurrentHashMap<String, Long>();
+
+    /** 合成成功时记一笔，给 {@link #synthDeadlineMs} 当依据。 */
+    public static void noteSynthOk(String voice, long ms) {
+        if (voice == null || voice.length() == 0) return;
+        if (ms <= 0 || ms > 120000L) return;
+        SYNTH_MS.put(voice, ms);
+    }
+
+    /**
+     * 这个音色合成时最多等多久。
+     *
+     * <p>以前是照插件声明的 {@code timeout}（有些插件声明成 30 秒）—— 真机上插件一旦吊住，
+     * 就是**整整 30 秒没声**，谁等得了。现在按实测自适应：最近一次成功用了几毫秒，
+     * 就给它的 3 倍 + 2 秒，下限 8 秒、上限 60 秒；插件声明的 timeout 只当上限用。
+     * 正常一句 1~3 秒的插件，8 秒没回来就判定"这次是吊住了"，不是"慢"。
+     */
+    public static long synthDeadlineMs(Context c, String voice) {
+        long base = 5000L;
+        Long last = SYNTH_MS.get(voice == null ? "" : voice);
+        if (last != null) base = Math.max(5000L, Math.min(60000L, last * 2L + 1500L));
+        try {
+            TtsEngine e = engineForVoice(c, voice);
+            if (e instanceof JsTtsEngine) {
+                int t = ((JsTtsEngine) e).timeoutMs(30000);
+                base = Math.min(base, Math.max(5000L, Math.min(60000L, (long) t)));
+            }
+        } catch (Throwable ignored) { }
+        return base;
+    }
+
+    /** 插件宿主吊住了（合成硬超时了）：整个丢掉，下一句重新建，别再用那个抱死的运行时。 */
+    public static void abandonPluginHosts() {
+        try { JsTtsEngine.abandonHosts(); } catch (Throwable ignored) { }
+    }
+
+    /** 音色库按「来源引擎」分组 —— 选音色时左侧那一栏就是它（各家插件 / HTTP 模板 / 系统语音）。 */
+    public static final class SourceGroup {
+        public final String id;
+        public final String label;
+        public final List<String> voices = new ArrayList<String>();
+        SourceGroup(String id, String label) { this.id = id; this.label = label; }
+    }
+
+    /**
+     * 所有启用中的引擎，各自能报出哪些音色。
+     * 顺手把「音色 → 引擎」记进 {@link #VOICE_OWNER}（选了音色就等于选了引擎）。
+     */
+    public static List<SourceGroup> voicesByEngine(Context c) {
+        List<SourceGroup> out = new ArrayList<SourceGroup>();
+        for (Item it : all(c)) {
+            if (!isEnabled(it)) continue;
+            List<String> vs;
+            try { vs = voicesCached(c, it); } catch (Throwable t) { continue; }
+            if (vs == null || vs.isEmpty()) continue;
+            String label = it.label == null || it.label.trim().length() == 0 ? it.kind : it.label.trim();
+            SourceGroup g = new SourceGroup(it.id, label);
+            for (String v : vs) {
+                if (v == null || v.trim().length() == 0) continue;
+                VOICE_OWNER.put(v, it.id);
+                g.voices.add(v);
+            }
+            if (!g.voices.isEmpty()) out.add(g);
+        }
+        return out;
+    }
+
+    /** 这个引擎叫什么（界面上按来源分组时显示）。 */
+    public static String engineLabel(Context c, String id) {
+        if (id == null || id.length() == 0) return "";
+        Item it = get(c, id);
+        if (it == null) return "";
+        return it.label == null || it.label.trim().length() == 0 ? it.kind : it.label.trim();
+    }
+
+    /** 还有哪些角色在用这个音色 —— 一个音色可以绑多个角色，界面上要看得见。 */
+    public static List<String> rolesUsingVoice(Context c, String voice) {
+        List<String> out = new ArrayList<String>();
+        if (voice == null || voice.trim().length() == 0) return out;
+        String want = voice.trim();
+        for (java.util.Map.Entry<String, String> e : Prefs.voiceTableMap(c).entrySet()) {
+            String v = e.getValue();
+            if (v == null) continue;
+            if (v.trim().equalsIgnoreCase(want)) out.add(e.getKey());
+        }
+        return out;
+    }
+
+    /** 播放链只调这一个：按音色挑引擎，再合成。 */
     public static byte[] synthNow(Context c, String text, String voice) throws Exception {
-        TtsEngine e = activeEngine(c);
+        TtsEngine e = engineForVoice(c, voice);
         TtsEngine.Say say = new TtsEngine.Say();
         say.voice = voice == null ? "" : voice;
         say.rate = num(Prefs.rate(c), 1f);

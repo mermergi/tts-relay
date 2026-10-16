@@ -2,6 +2,7 @@ package com.mermergi.ttsrelay;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -10,6 +11,7 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -83,6 +85,8 @@ public class MainActivity extends Activity {
     private Switch mvSwitch;
     private Button modeBtn;
     private LinearLayout roleBox;
+    /** 这次开音色库，是为了给新音色填名字（先选音色，再填名字）。 */
+    private boolean pickForBind = false;
 
     // ── 引擎页 ──
     private LinearLayout engineBox;
@@ -533,12 +537,13 @@ public class MainActivity extends Activity {
         modeBtn.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
         mc.addView(modeBtn, topGap(12));
 
-        mc.addView(ui.label("角色音色表（角色名 → 音色；旁白是保留角色名）"));
+        mc.addView(ui.label("音色 → 名称"));
         roleBox = ui.col();
-        mc.addView(roleBox);
-        mc.addView(ui.btn("＋ 添加角色", false, new View.OnClickListener() {
-            public void onClick(View v) { addRole(); }
+        mc.addView(roleBox, topGap(8));
+        mc.addView(ui.btn("＋ 加一个音色", true, new View.OnClickListener() {
+            public void onClick(View v) { pickForBind = true; fetchVoicesAnd(null); }
         }), topGap(8));
+        renderVoiceTable();
         mc.addView(ui.btn("复制引导提示词（丢给酒馆）", false, new View.OnClickListener() {
             public void onClick(View v) { copy(GAL_PROMPT); }
         }), topGap(8));
@@ -852,8 +857,8 @@ public class MainActivity extends Activity {
                     EngineStore.Item same = EngineStore.sameLabel(MainActivity.this, it.kind, it.label);
                     if (same != null) {
                         it.id = same.id;
-                        String old = same.s("cred", "");
-                        if (old.length() > 0 && it.s("cred", "").length() == 0) it.put("cred", old);
+                        String old = same.s("cookie", "");
+                        if (old.length() > 0 && it.s("cookie", "").length() == 0) it.put("cookie", old);
                     }
                 }
                 EngineStore.put(MainActivity.this, it);
@@ -912,23 +917,44 @@ public class MainActivity extends Activity {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK) return;
 
-        // 登录页回来的是一个字符串，没有文件 Uri ——
+        // 网页登录拿回来的是一段字符串，没有文件 Uri ——
         // 千万别拿文件那套 "data.getData()==null 就 return" 的条件把它挡掉（之前就是这么丢的）
+        if (req == REQ_PICK_JS) {
+            if (res == RESULT_OK && data != null && data.getData() != null && pendingJsPick != null) {
+                try {
+                    String src = readText(data.getData());
+                    if (src == null || src.trim().length() == 0) { toast("文件是空的"); return; }
+                    EngineStore.Item e2 = pendingJsPick;
+                    e2.kind = EngineStore.KIND_JS;
+                    e2.put("src", src);
+                    EngineStore.syncJsMeta(this, e2);      // 顺手把它的名字/变量读出来
+                    EngineStore.inheritLogin(this, e2);    // 旧引擎里抓过的 Cookie 直接继承
+                    com.mermergi.ttsrelay.JsTtsEngine.clearHosts();
+                    EngineStore.put(this, e2);
+                    renderEngines();
+                    toast("已变成 JS 插件：" + e2.label);
+                    openPluginEditor(e2, false);
+                } catch (Throwable t) {
+                    toast("读文件失败：" + t.getMessage());
+                } finally {
+                    pendingJsPick = null;
+                }
+            }
+            return;
+        }
         if (req == REQ_LOGIN) {
             String v = data == null ? null : data.getStringExtra(LoginActivity.RESULT_VALUE);
-            if (v == null || v.trim().length() == 0) {
-                toast("没保存到内容 —— 先在登录页登进去，再点右上角「💾 保存」");
-                return;
-            }
+            if (v == null || v.trim().length() == 0) { toast("没取到内容：先登录，再点那个按钮"); return; }
             EngineStore.Item it = EngineStore.get(this, pendingLoginEngineId);
             if (it == null) { toast("找不到那个引擎了"); return; }
             String val = v.trim();
             it.put(loginTarget(it), val);
             EngineStore.put(this, it);
+            JsTtsEngine.clearHosts();
             renderEngines();
-            LogBus.add("已保存登录状态（" + it.label + "）：" + SessionPick.summary(val));
-            toast("已保存「" + it.label + "」\n" + SessionPick.summary(val));
-            // 关键：刚才那个编辑框是登录前开的，里面还挂着旧状态（"未保存"）。
+            LogBus.add("网页登录已取回，写进「" + it.label + "」：" + CookieGrab.summary(val));
+            toast("已写入「" + it.label + "」\n" + CookieGrab.summary(val));
+            // 关键：刚才那个编辑框是登录前开的，里面还挂着旧状态（"未设置"）。
             // 不重开的话，用户看到的就是"没写进去"。
             try { editEngine(it); } catch (Throwable ignored) { }
             return;
@@ -959,45 +985,258 @@ public class MainActivity extends Activity {
     }
 
     private static String kindName(String kind) {
-        if (EngineStore.KIND_HTTP.equals(kind)) return "HTTP 接口";
         if (EngineStore.KIND_JS.equals(kind)) return "JS 插件";
+        if (EngineStore.KIND_HTTP.equals(kind)) return "HTTP 接口";
         return "系统语音";
     }
+
+    private boolean metaSyncing = false;
+
+    private void syncJsMetaInBackground() {
+        if (metaSyncing) return;
+        final java.util.List<EngineStore.Item> todo = new java.util.ArrayList<EngineStore.Item>();
+        for (EngineStore.Item it : EngineStore.all(this)) {
+            if (!EngineStore.KIND_JS.equals(it.kind)) continue;
+            if (it.s("def_vars", "").trim().length() > 0) continue;      // 已经读过了
+            if (it.s("src", "").trim().length() == 0) continue;          // 没源码，没啥可读
+            todo.add(it);
+        }
+        if (todo.isEmpty()) return;
+        metaSyncing = true;
+        new Thread(new Runnable() {
+            public void run() {
+                boolean changed = false;
+                for (EngineStore.Item it : todo) {
+                    try { if (EngineStore.syncJsMeta(MainActivity.this, it)) changed = true; }
+                    catch (Throwable ignored) { }
+                }
+                final boolean c = changed;
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        metaSyncing = false;
+                        if (c) refreshEngineRows();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    // 行的零件都留着引用：后台结果回来时<b>原地改字</b>，不重建视图
+    // （重建会把整页高度变来变去，看着就是"乱跳"）
+    private final java.util.Map<String, TextView> rowName = new java.util.HashMap<String, TextView>();
+    private final java.util.Map<String, TextView> rowSub = new java.util.HashMap<String, TextView>();
+    private final java.util.Map<String, TextView> rowNeed = new java.util.HashMap<String, TextView>();
 
     private void renderEngines() {
         if (engineBox == null) return;
         engineBox.removeAllViews();
+        rowName.clear(); rowSub.clear(); rowNeed.clear();
         String active = EngineStore.activeId(this);
         for (final EngineStore.Item it : EngineStore.all(this)) {
-            boolean on = it.id.equals(active);
-            String prob = EngineStore.build(it).problem(this);
-            String line = (on ? "● " : "○ ") + it.label + "  ·  " + kindName(it.kind);
-            if (prob != null) line += "\n⚠ " + prob;
-            Button b = ui.btn(line, false, new View.OnClickListener() {
-                public void onClick(View v) { engineMenu(it); }
+            // 一行 = 头像 + 名字/副标题/状态 + 铅笔 + ⋮ —— 照 TTS Server 的插件列表那样
+            LinearLayout row = ui.row();
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(ui.dp(10), ui.dp(8), ui.dp(6), ui.dp(8));
+            row.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    EngineStore.setActive(MainActivity.this, it.id);
+                    refreshEngineRows();
+                    toast("当前引擎：" + it.label);
+                }
             });
-            b.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            b.setTextColor(prob != null ? p.warn : (on ? p.accent : p.textPrimary));
+
+            // ☑ 启用/禁用 —— 照它插件列表那个勾选框；停用的整行压暗
+            final android.widget.CheckBox cb = new android.widget.CheckBox(this);
+            cb.setChecked(EngineStore.isEnabled(it));
+            cb.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+                public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                    EngineStore.setEnabled(MainActivity.this, it, on);
+                    renderEngines();
+                }
+            });
+            row.addView(cb, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (!EngineStore.isEnabled(it)) row.setAlpha(0.45f);
+
+            TextView av = new TextView(this);
+            av.setText(avatarChar(it));
+            av.setGravity(Gravity.CENTER);
+            av.setTextSize(15);
+            av.setTextColor(p.onAccent);
+            av.setBackground(ui.round(avatarColor(it), ui.dp(19)));
+            row.addView(av, new LinearLayout.LayoutParams(ui.dp(38), ui.dp(38)));
+
+            LinearLayout col = ui.col();
+            col.setPadding(ui.dp(10), 0, ui.dp(6), 0);
+
+            TextView t = ui.value(it.label);
+            col.addView(t);
+            rowName.put(it.id, t);
+
+            TextView sub = ui.hint("");
+            col.addView(sub);
+            rowSub.put(it.id, sub);
+
+            // 照它那行：插件声明了变量却没填 → 主色提示，点它直接去设置变量
+            TextView need = ui.value("请设置变量（API密钥等）▸");
+            need.setTextColor(p.accent);
+            need.setVisibility(View.GONE);
+            need.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) { openPluginEditor(it, true); }
+            });
+            col.addView(need);
+            rowNeed.put(it.id, need);
+
+            row.addView(col, ui.weight(1f));
+
+            row.addView(ui.btn("✎", false, new View.OnClickListener() {
+                public void onClick(View v) { editEngine(it); }
+            }));
+            row.addView(ui.btn("⋮", false, new View.OnClickListener() {
+                public void onClick(View v) { engineMenu(it); }
+            }));
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = ui.dp(8);
-            engineBox.addView(b, lp);
+            engineBox.addView(row, lp);
         }
+        refreshEngineRows();
+        syncJsMetaInBackground();
+        EngineStore.warmVoices(this);
+    }
+
+    /**
+     * 只改字、只改可见性 —— 不新增/删除视图，也就不会跳。
+     *
+     * <b>这里绝不执行插件</b>：它（TTS Server）的插件列表也是这样，只显示已存的数据
+     * （名字、作者-版本、要不要设置变量），插件要到真用的时候（试听/合成/编辑）才跑。
+     */
+    private void refreshEngineRows() {
+        String active = EngineStore.activeId(this);
+        for (EngineStore.Item it : EngineStore.all(this)) {
+            boolean on = it.id.equals(active);
+            TextView t = rowName.get(it.id);
+            if (t != null) t.setTextColor(on ? p.accent : p.textPrimary);
+
+            TextView sub = rowSub.get(it.id);
+            if (sub != null) sub.setText(subtitle(it));
+
+            TextView need = rowNeed.get(it.id);
+            if (need != null) need.setVisibility(EngineStore.needsVars(it) ? View.VISIBLE : View.GONE);
+        }
+
         if (engineNow != null) {
             EngineStore.Item it = EngineStore.get(this, active);
-            TtsEngine e = EngineStore.activeEngine(this);
-            String prob = e == null ? "引擎起不来" : e.problem(this);
             engineNow.setText((it == null ? "（没有）" : it.label)
                     + (it == null ? "" : "  ·  " + kindName(it.kind))
-                    + "\n" + (prob == null ? "就绪" : "⚠ " + prob));
-            engineNow.setTextColor(prob == null ? p.ok : p.warn);
+                    + "\n点「试听」验证它现在通不通");
+            engineNow.setTextColor(p.textSecondary);
         }
+    }
+
+    /** 副标题：插件引擎写「作者 - v版本」，和它那边一样。 */
+    private String subtitle(EngineStore.Item it) {
+        String author = it.s("author", "");
+        int v = it.i("version", -1);
+        StringBuilder sb = new StringBuilder();
+        if (author.length() > 0) sb.append(author);
+        if (v >= 0) sb.append(sb.length() > 0 ? " - v" : "v").append(v);
+        if (sb.length() == 0) sb.append(kindName(it.kind));
+        else sb.append("  ·  ").append(kindName(it.kind));
+        return sb.toString();
+    }
+
+    /** 头像里那个字：插件用名字首字，系统引擎用「本」，HTTP 引擎用「H」。 */
+    private static String avatarChar(EngineStore.Item it) {
+        if (EngineStore.KIND_SYSTEM.equals(it.kind)) return "本";
+        if (EngineStore.KIND_JS.equals(it.kind)) {
+            String s = it.label == null ? "" : it.label.trim();
+            return s.length() == 0 ? "JS" : s.substring(0, 1);
+        }
+        return "H";
+    }
+
+    /** 头像底色：按 id 散开，别都一个色。 */
+    private int avatarColor(EngineStore.Item it) {
+        int[] cs = {p.accent, p.ok, p.warn, 0xFF7E57C2, 0xFF26A69A, 0xFFEF6C00, 0xFF5C6BC0};
+        int h = it.id == null ? 0 : it.id.hashCode();
+        return cs[Math.abs(h) % cs.length];
+    }
+
+    /** 照它的「导出配置」：把这一个引擎的配置导成 JSON（插件源码 + 变量都在里头）。 */
+    private void exportEngineConfig(EngineStore.Item it) {
+        try {
+            java.util.List<EngineStore.Item> one = new java.util.ArrayList<EngineStore.Item>();
+            one.add(it.copy());
+            copy(EngineImport.exportOurs(one));
+            toast("配置已复制到剪贴板");
+        } catch (Throwable t) {
+            toast("导出失败：" + t.getMessage());
+        }
+    }
+
+    private static final int REQ_PICK_JS = 61;
+    private EngineStore.Item pendingJsPick;
+
+    /** 挑一份插件 .js（TTS Server 导出来的那种）→ 这个引擎就变成 JS 插件。 */
+    private void pickPluginFile(EngineStore.Item it) {
+        pendingJsPick = it;
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("*/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try { startActivityForResult(Intent.createChooser(i, "选插件 .js"), REQ_PICK_JS); }
+        catch (Throwable t) { toast("打不开文件选择器：" + t.getMessage()); }
+    }
+
+    private String readText(android.net.Uri uri) throws Exception {
+        java.io.InputStream in = getContentResolver().openInputStream(uri);
+        if (in == null) return null;
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        in.close();
+        return new String(bos.toByteArray(), "UTF-8");
+    }
+
+    private void openPluginEditor(final EngineStore.Item it, final boolean openVars) {
+        // 没有插件源码的引擎（系统语音、HTTP 模板）：编辑器只管插件源码，
+        // 所以这儿给一条「粘源码转成 JS 插件」的路 —— 照 TTS Server：引擎就是插件。
+        if (it != null && it.s("src", "").trim().length() == 0
+                && !EngineStore.KIND_JS.equals(it.kind)) {
+            new AlertDialog.Builder(this, dialogTheme())
+                    .setTitle(it.label)
+                    .setMessage("这个引擎没有插件源码 —— 插件编辑器只管源码，所以没得编。\n\n"
+                            + "TTS Server 里引擎就是一份 .js：选你导出的那个文件（一般在"
+                            + "「内部存储 / 语音引擎 / ttsrv-plugin-*.js」），它立刻变成 JS 插件。")
+                    .setPositiveButton("选插件 .js 文件", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) { pickPluginFile(it); }
+                    })
+                    .setNeutralButton("直接粘贴源码", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) {
+                            it.kind = EngineStore.KIND_JS;
+                            it.put("src", "");
+                            EngineStore.put(MainActivity.this, it);
+                            renderEngines();
+                            openPluginEditor(it, false);
+                        }
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+            return;
+        }
+        Intent pi = new Intent(this, PluginEditorActivity.class);
+        pi.putExtra(PluginEditorActivity.EXTRA_ID, it.id);
+        pi.putExtra(PluginEditorActivity.EXTRA_OPEN_VARS, openVars);
+        try { startActivity(pi); } catch (Throwable t) { toast("打不开插件编辑器：" + t.getMessage()); }
     }
 
     private void engineMenu(final EngineStore.Item it) {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle(it.label)
-                .setItems(new String[]{"设为当前引擎", "编辑配置", "看看音色列表", "测试这个引擎", "删除"},
+                .setItems(new String[]{"设为当前引擎", "编辑配置", "设置变量", "导出配置",
+                                "清除缓存", "看看音色列表", "测试这个引擎", "删除"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 if (which == 0) {
@@ -1007,12 +1246,23 @@ public class MainActivity extends Activity {
                                 } else if (which == 1) {
                                     editEngine(it);
                                 } else if (which == 2) {
-                                    showEngineVoices(it);
+                                    openPluginEditor(it, true);
                                 } else if (which == 3) {
+                                    exportEngineConfig(it);
+                                } else if (which == 4) {
+                                    if (EngineStore.hasCache(MainActivity.this, it)) {
+                                        EngineStore.clearCache(MainActivity.this, it);
+                                        toast("缓存清了");
+                                    } else {
+                                        toast("这个插件没缓存");
+                                    }
+                                } else if (which == 5) {
+                                    showEngineVoices(it);
+                                } else if (which == 6) {
                                     EngineStore.setActive(MainActivity.this, it.id);
                                     renderEngines();
                                     testEngine();
-                                } else if (which == 4) {
+                                } else if (which == 7) {
                                     EngineStore.remove(MainActivity.this, it.id);
                                     renderEngines();
                                     toast("已删除");
@@ -1027,7 +1277,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("添加引擎")
                 .setItems(new String[]{"系统语音（本地、离线）", "HTTP 接口（任意云服务）",
-                                "TTS Server 的 JS 插件"},
+                                "TTS Server 的 JS 插件（.js 文件）"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 EngineStore.Item it = new EngineStore.Item();
@@ -1097,6 +1347,11 @@ public class MainActivity extends Activity {
     }
 
     private void editEngine(final EngineStore.Item it) {
+        // 所有引擎都走整屏编辑器（JS 那条是代码页，其余是参数页）—— 不再用老表单
+        if (it != null) {
+            openPluginEditor(it, false);
+            return;
+        }
         // 先关掉上一个，别叠罗汉 —— 关掉新框露出旧框，看起来就跟没保存一样
         if (engineDlg != null) {
             try { engineDlg.dismiss(); } catch (Throwable ignored) { }
@@ -1119,18 +1374,19 @@ public class MainActivity extends Activity {
             spec.add(new String[]{"json_key", "从 JSON 取音频的字段（留空=响应本身就是音频）",
                     it.s("json_key", ""), "single"});
             spec.add(new String[]{"timeout", "超时毫秒", String.valueOf(it.i("timeout", 60000)), "single"});
-            // 要登录才给音频/音色的接口：填了登录页地址，编辑框里才会出现「💾 一键保存」
-            spec.add(new String[]{"login_url", "登录页地址（留空=不用这功能）",
-                    it.s("login_url", ""), "single"});
-            spec.add(new String[]{"binding", "保存哪一项：session / session.名字 / local.键 / store.键",
-                    it.s("binding", "session"), "single"});
-            spec.add(new String[]{"ua", "登录页 UA：mobile / pc / 自定义", it.s("ua", "mobile"), "single"});
         } else if (EngineStore.KIND_JS.equals(it.kind)) {
+            // 打开编辑框就先从插件源码里把它的变量声明读回来 ——
+            // 老引擎（import 那会儿还没读懂 vars 的）也不用重新导入，它的「API密钥」会自己冒出来
+            EngineStore.syncJsMeta(this, it);
+
             spec.add(new String[]{"src", "插件源码（TTS Server 那个 .js，整份贴进来）",
                     it.s("src", ""), "multi"});
-            spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
+            spec.add(new String[]{"lang", "语言（插件 getLocales() 里的取值，比如 zh-CN）",
+                    it.s("lang", "zh-CN"), "single"});
+
+            // 插件自己声明的变量 —— 显示名用它引擎文件里的 name，提示用 hint
             java.util.Set<String> shown = new java.util.HashSet<String>();
-            try {                                   // 插件自己声明的变量，显示名用它给的
+            try {
                 org.json.JSONObject lb = new org.json.JSONObject(it.s("var_labels", ""));
                 for (java.util.Iterator<String> ki = lb.keys(); ki.hasNext(); ) {
                     String k = ki.next();
@@ -1139,21 +1395,17 @@ public class MainActivity extends Activity {
             } catch (Throwable ignored) { }
             for (java.util.Iterator<String> ki = it.cfg.keys(); ki.hasNext(); ) {
                 String k = ki.next();
-                if (k.equals("src") || k.equals("lang") || k.equals("var_labels")
-                        || k.equals("login_key") || k.equals("headers")
-                        || k.equals("voices") || k.equals("voices_url") || k.equals("voices_path")
-                        || k.equals("voices_name") || k.equals("voices_id")
-                        || k.equals("login_url") || k.equals("binding") || k.equals("ua")) continue;
+                if (JS_HIDE.contains(k)) continue;
                 if (shown.add(k)) spec.add(new String[]{k, "插件变量：" + k, it.s(k, ""), "single"});
             }
-            spec.add(new String[]{"headers", "插件只给地址时，我们取音频带上的请求头",
-                    it.s("headers", ""), "multi"});
+
         } else {
             spec.add(new String[]{"pkg", "系统引擎包名（留空=手机默认那个）", it.s("pkg", ""), "single"});
             spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
         }
 
-        // 音色目录 —— 所有引擎通用
+        // 音色目录（手工 + 远程 JSON）—— 这是给 HTTP 模板引擎用的；插件引擎的音色来自插件自己
+        if (!EngineStore.KIND_JS.equals(it.kind)) {
         spec.add(new String[]{"voices_url", "音色目录地址（GET 一个 JSON；留空=不拉）",
                 it.s("voices_url", ""), "multi"});
         spec.add(new String[]{"voices_path", "JSON 路径，如 data.list（留空=响应本身就是数组）",
@@ -1161,13 +1413,15 @@ public class MainActivity extends Activity {
         spec.add(new String[]{"voices_name", "显示名取哪个字段", it.s("voices_name", "name"), "single"});
         spec.add(new String[]{"voices_id", "取值取哪个字段（留空=同显示名）", it.s("voices_id", ""), "single"});
         spec.add(new String[]{"voices", "手工音色列表（每行一个）", it.s("voices", ""), "multi"});
+        }
 
         java.util.Set<String> used = new java.util.HashSet<String>();
         for (String[] r : spec) used.add(r[0]);
         java.util.List<String> extra = new ArrayList<String>();
         for (java.util.Iterator<String> ki = it.cfg.keys(); ki.hasNext(); ) {
             String k = ki.next();
-            if (used.contains(k) || "cred".equals(k)) continue;
+            if (used.contains(k) || "cookie".equals(k)) continue;
+            if (EngineStore.KIND_JS.equals(it.kind) && JS_HIDE.contains(k)) continue;
             extra.add(k);
             spec.add(new String[]{k, "自定义参数：" + k, it.s(k, ""), "single"});
         }
@@ -1175,20 +1429,20 @@ public class MainActivity extends Activity {
 
         final List<Fld> flds = buildForm(box, spec.toArray(new String[0][]));
 
-        // 登录状态单独一块：凭据动辄上千字符，塞进表单里没法看，所以只显示状态
+        // Cookie 单独一块：它动辄上千字符，塞进表单里没法看，所以只显示状态
         final String loginKey = loginTarget(it);
-        if (EngineStore.KIND_HTTP.equals(it.kind) || EngineStore.KIND_JS.equals(it.kind)
-                || it.cfg.has(loginKey)) {
+        // 只有"真的声明了 loginUrl"的引擎才给登录框
+        if (loginKey != null && loginKey.length() > 0 && it.cfg.has(loginKey)) {
             LinearLayout ck = ui.card();
-            ck.addView(ui.sectionTitle("登录状态"));
+            ck.addView(ui.sectionTitle("Cookie"));
             final TextView st = ui.value("");
-            // 状态跟着数据走：保存完、改完、清完都当场刷，不用关框重进
+            // 状态跟着数据走：抓完、改完、清完都当场刷，不用关框重进
             final Runnable refresh = new Runnable() {
                 public void run() {
                     String cur = it.s(loginKey, "");
                     st.setText(cur.length() == 0
-                            ? "未保存 —— 点「💾 一键保存」，或「手动填」自己粘一条"
-                            : SessionPick.summary(cur));
+                            ? "未设置 —— 点「网页登录」抓一个，或「查看/修改」自己粘一个"
+                            : CookieGrab.summary(cur));
                     st.setTextColor(cur.length() == 0 ? p.warn : p.ok);
                 }
             };
@@ -1196,31 +1450,31 @@ public class MainActivity extends Activity {
             ck.addView(st);
 
             if (it.s("login_url", "").length() > 0) {
-                ck.addView(ui.btn("💾 一键保存", true, new View.OnClickListener() {
+                ck.addView(ui.btn("网页登录，自动抓 Cookie", true, new View.OnClickListener() {
                     public void onClick(View v) {
                         applyEditor(it, nameBox, flds, extraKeys);
                         pendingLoginEngineId = it.id;
                         Intent i = new Intent(MainActivity.this, LoginActivity.class);
-                        i.putExtra(LoginActivity.EXTRA_URL, it.s("login_url", ""));
-                        i.putExtra(LoginActivity.EXTRA_BINDING, it.s("binding", "session"));
+                        i.putExtra(LoginActivity.EXTRA_URL,
+                                it.s("login_url", ""));
+                        i.putExtra(LoginActivity.EXTRA_BINDING, it.s("binding", "cookies"));
                         i.putExtra(LoginActivity.EXTRA_UA, it.s("ua", "mobile"));
-                        i.putExtra(LoginActivity.EXTRA_TITLE, "登进去以后，点右上角「💾 保存」");
+                        i.putExtra(LoginActivity.EXTRA_TITLE,
+                                "登录完点右上角那个按钮（绑定：" + it.s("binding", "cookies") + "）");
                         try { startActivityForResult(i, REQ_LOGIN); }
                         catch (Throwable t) { toast("打不开登录页：" + t.getMessage()); }
                     }
                 }), topGap(10));
-            } else {
-                ck.addView(ui.hint("填上上面那个「登录页地址」，这儿就会多一个「💾 一键保存」："
-                        + "在里面登一次，值自己就填回来了。"), topGap(6));
             }
             LinearLayout ckRow = ui.row();
-            ckRow.addView(ui.btn("手动填", false, new View.OnClickListener() {
-                public void onClick(View v) { editSession(it, refresh); }
+            ckRow.addView(ui.btn("查看/修改", false, new View.OnClickListener() {
+                public void onClick(View v) { editCookie(it, refresh); }
             }), ui.weightGap(1f, 8));
             ckRow.addView(ui.btn("清空", false, new View.OnClickListener() {
                 public void onClick(View v) {
                     it.put(loginKey, "");
                     EngineStore.put(MainActivity.this, it);
+                    JsTtsEngine.clearHosts();
                     refresh.run();
                     renderEngines();
                     toast("已清空");
@@ -1276,22 +1530,26 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * 登录凭据单独编辑：它太长，放表单里会把整屏撑爆，所以丢进自己的对话框。
+     * 登录值单独编辑：它太长，放表单里会把整屏撑爆，所以丢进自己的对话框。
      *
      * 只有一个「粘贴」按钮 —— 粘的是裸串就原样收，是 cURL / 请求头就自己摘出来，
      * 所以没必要让用户先自己选"智能提取"还是"原样粘贴"。保存时再整理一次兜底。
      */
-    /** 登录抓回来的值写进哪个配置键：JS 插件写它自己声明的那个变量，别的引擎写 cred。 */
+    /**
+     * 登录抓回来的值写进哪个配置键：JS 插件写它声明的那个变量（和 TTS Server 一样），
+     * 网页版引擎写 cookie，别的写 cred。
+     */
     private static String loginTarget(EngineStore.Item it) {
         String k = it.s("login_key", "");
-        return k.length() > 0 ? k : "cred";
+        if (k.length() > 0) return k;
+        return "cred";
     }
 
-    private void editSession(final EngineStore.Item it, final Runnable onChange) {
+    private void editCookie(final EngineStore.Item it, final Runnable onChange) {
         final String key = loginTarget(it);
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(4));
-        box.addView(ui.label("登录凭据（多长都行，框里能滚）"));
+        box.addView(ui.label("Cookie（多长都行，框里能滚）"));
         final EditText e = ui.area("");
         e.setText(it.s(key, ""));
         e.setMinLines(5);
@@ -1301,31 +1559,32 @@ public class MainActivity extends Activity {
             public void onClick(View v) {
                 String raw = readClip();
                 if (raw.trim().length() == 0) { toast("剪贴板是空的"); return; }
-                String got = SessionPick.tidy(raw);
+                String got = CookieGrab.tidy(raw);
                 if (got.length() == 0) { toast("剪贴板是空的"); return; }
                 e.setText(got);
                 e.setSelection(e.getText().length());
-                toast((got.equals(raw.trim()) ? "已粘贴（原样）\n" : "已粘贴（把值摘出来了）\n")
-                        + SessionPick.summary(got));
+                toast((got.equals(raw.trim()) ? "已粘贴（原样）\n" : "已粘贴（摘出 Cookie）\n")
+                        + CookieGrab.summary(got));
             }
         }), topGap(8));
-        box.addView(ui.hint("粘什么进来都行：整段复制出来的请求、一段请求头、或者裸的「名字=值; 名字=值」。"
-                + "带标记的会自动把值摘出来，摘不出就原样收着。"));
+        box.addView(ui.hint("粘什么进来都行：整段 cURL、一段请求头、或者裸的「名字=值; 名字=值」。"
+                + "长的会自动把 Cookie 摘出来，摘不出就原样收着。"));
         box.addView(ui.hint("框里看到的就是最终结果；想清掉就清空再保存。"));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
         new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("登录凭据")
+                .setTitle("Cookie")
                 .setView(sv)
                 .setPositiveButton("保存", new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
-                        String v = SessionPick.tidy(e.getText().toString());
+                        String v = CookieGrab.tidy(e.getText().toString());
                         it.put(key, v);
                         EngineStore.put(MainActivity.this, it);
+                        JsTtsEngine.clearHosts();
                         renderEngines();
                         if (onChange != null) onChange.run();   // 上面那块状态当场刷新
-                        LogBus.add("登录状态已保存（" + it.label + "）：" + SessionPick.summary(v));
+                        LogBus.add("Cookie 已保存（" + it.label + "）：" + CookieGrab.summary(v));
                         toast(v.length() == 0 ? "已清空" : "已保存（" + v.length() + " 字符）");
                     }
                 })
@@ -1333,7 +1592,13 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    /** 把编辑框里的东西写回引擎。保存按钮和"登录页回来"共用这一份。 */
+    /** 把编辑框里的东西写回引擎。保存和"抓完 Cookie"共用这一份。 */
+    /** JS 插件引擎用不上的那些键（HTTP 模板引擎的字段 + 我自己的内部键）—— 编辑框里别显示。 */
+    private static final java.util.Set<String> JS_HIDE = new java.util.HashSet<String>(
+            java.util.Arrays.asList("headers", "cred", "voices", "voices_url", "voices_path",
+                    "voices_name", "voices_id", "var_labels", "def_vars", "user_vars", "tts_data",
+                    "login_key", "login_url", "binding", "ua", "author", "icon"));
+
     private void applyEditor(EngineStore.Item it, EditText nameBox, List<Fld> flds,
                             List<String> extraKeys) {
         String nm = nameBox.getText().toString().trim();
@@ -1349,10 +1614,18 @@ public class MainActivity extends Activity {
                 it.put(f.key, v);
             }
         }
+        if (EngineStore.KIND_JS.equals(it.kind)) EngineStore.syncUserVars(it);
         EngineStore.put(this, it);
+        try { com.mermergi.ttsrelay.JsTtsEngine.clearHosts(); } catch (Throwable ignored) { }
+        JsTtsEngine.clearHosts();
         renderEngines();
     }
 
+    /**
+     * 插件声明的变量（它引擎文件里 {@code vars} 那些键）单独存一份 {@code user_vars} ——
+     * TTS Server 就是"声明"和"用户填的值"分开存的：放进 cfg 的散键里，插件读
+     * {@code ttsrv.userVars['api_key']} 时容易对不上。
+     */
     private void addCfgKey(final EngineStore.Item it) {
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(4));
@@ -1415,13 +1688,23 @@ public class MainActivity extends Activity {
     }
 
     private void testEngine() {
-        Speaker spk = RelayService.speakerOrNull();
+        final Speaker spk = RelayService.speakerOrNull();
         if (spk == null) { toast("先启动中转"); return; }
-        TtsEngine e = EngineStore.activeEngine(this);
-        String prob = e == null ? "引擎起不来" : e.problem(this);
-        if (prob != null) { toast("⚠ " + prob); return; }
-        spk.feed("这是当前语音引擎的测试，能听见就说明通了。", null);
-        toast("已排队（" + (e == null ? "?" : e.label()) + "）");
+        final TtsEngine e = EngineStore.activeEngine(this);
+        toast("正在问引擎…");
+        // 同样不能在 UI 线程上问：JS 引擎会真跑一遍插件
+        new Thread(new Runnable() {
+            public void run() {
+                final String prob = e == null ? "引擎起不来" : e.problem(MainActivity.this);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (prob != null) { toast("⚠ " + prob); return; }
+                        spk.feed("这是当前语音引擎的测试，能听见就说明通了。", null);
+                        toast("已排队（" + (e == null ? "?" : e.label()) + "）");
+                    }
+                });
+            }
+        }).start();
     }
 
     // ══════════════════════════ 日志 ══════════════════════════
@@ -1781,6 +2064,9 @@ public class MainActivity extends Activity {
         String age = "";
         String style = "";
         String tagLine = "";
+        String srcId = "";     // 这个音色是谁家的（引擎 id）
+        String srcLabel = "";  // 引擎显示名
+        String usedBy = "";    // 已经绑了哪些角色（一个音色可以绑多个）
 
         VoiceItem() { }
         VoiceItem(String display, String value) { name = display; raw = value; tagLine = display; }
@@ -1789,7 +2075,7 @@ public class MainActivity extends Activity {
             VoiceItem it = new VoiceItem();
             it.raw = value == null ? "" : value;
             String v = it.raw;
-            int sep = v.indexOf(EngineStore.SEP);          // 可选：名字‖取值
+            int sep = v.indexOf(EngineStore.SEP);          // 插件：名字‖取值
             if (sep > 0) v = v.substring(0, sep);
             v = v.replaceAll("_\\d+$", "").trim();
             it.name = v;
@@ -1838,11 +2124,27 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             public void run() {
                 final List<VoiceItem> names = new ArrayList<VoiceItem>();
+                final List<EngineStore.SourceGroup> groups;
                 try {
-                    String aid = EngineStore.activeId(MainActivity.this);
-                    List<String> vs = EngineStore.fetchVoices(MainActivity.this,
-                            EngineStore.get(MainActivity.this, aid));
-                    for (String v : vs) names.add(VoiceItem.parse(v));
+                    // 照它：音色是"所有启用中的引擎"合起来给的（选了音色就等于选了引擎）；
+                    // 按来源引擎分组 —— 选音色时左边那一栏就是它
+                    groups = EngineStore.voicesByEngine(MainActivity.this);
+                    for (EngineStore.SourceGroup g : groups) {
+                        for (String v : g.voices) {
+                            VoiceItem vi = VoiceItem.parse(v);
+                            vi.srcId = g.id;
+                            vi.srcLabel = g.label;
+                            // 一个音色可以绑多个角色：这里把已经绑的都列出来
+                            List<String> roles = EngineStore.rolesUsingVoice(MainActivity.this, v);
+                            StringBuilder rb = new StringBuilder();
+                            for (String r : roles) {
+                                if (rb.length() > 0) rb.append("、");
+                                rb.append(r);
+                            }
+                            vi.usedBy = rb.length() > 8 ? roles.size() + " 个角色" : rb.toString();
+                            names.add(vi);
+                        }
+                    }
                 } catch (Throwable t) {
                     final String m = String.valueOf(t.getMessage());
                     runOnUiThread(new Runnable() {
@@ -1851,13 +2153,14 @@ public class MainActivity extends Activity {
                     return;
                 }
                 runOnUiThread(new Runnable() {
-                    public void run() { showVoiceDialog(names, role); }
+                    public void run() { showVoiceDialog(names, groups, role); }
                 });
             }
         }).start();
     }
 
-    private void showVoiceDialog(final List<VoiceItem> all, final String role) {
+    private void showVoiceDialog(final List<VoiceItem> all, final List<EngineStore.SourceGroup> groups,
+                                 final String role) {
         if (all.isEmpty()) { toast("没拿到音色"); return; }
         String who = role == null ? "选择音色" : "给「" + role + "」选音色";
 
@@ -1880,17 +2183,34 @@ public class MainActivity extends Activity {
         final ListView lv = new ListView(this);
         final ArrayAdapter<VoiceItem> ad = voiceAdapter();
         lv.setAdapter(ad);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(380));
-        lp.topMargin = ui.dp(6);
-        box.addView(lv, lp);
+
+        // ── 左边那一栏：按来源引擎分类 ──
+        final LinearLayout rail = ui.col();
+        rail.setPadding(0, ui.dp(6), ui.dp(8), 0);
+        ScrollView railScroll = new ScrollView(this);
+        railScroll.addView(rail);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ui.dp(104),
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        railScroll.setLayoutParams(rlp);
+
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(
+                0, ui.dp(400), 1f);
+        vlp.topMargin = ui.dp(6);
+        lv.setLayoutParams(vlp);
+
+        LinearLayout mid = ui.row();
+        mid.addView(railScroll);
+        mid.addView(lv);
+        box.addView(mid);
 
         final String[] kw = new String[]{""};
         final String[] gen = new String[]{""};
+        final String[] src = new String[]{""};
         final Runnable refill = new Runnable() {
-            public void run() { fillVoiceList(ad, all, kw[0], gen[0]); }
+            public void run() { fillVoiceList(ad, all, kw[0], gen[0], src[0]); }
         };
         renderGenderChips(chips, gen, refill);
+        renderSourceRail(rail, groups, all, src, refill, lv);
         refill.run();
 
         final AlertDialog dlg = new AlertDialog.Builder(this, dialogTheme())
@@ -1912,28 +2232,93 @@ public class MainActivity extends Activity {
             public void onItemClick(AdapterView<?> par, View v, int pos, long id) {
                 VoiceItem vi = (VoiceItem) par.getItemAtPosition(pos);
                 if (vi == null || vi.header) return;
-                String name = vi.raw;
-                if (role == null) Prefs.setVoice(MainActivity.this, name);
-                else Prefs.putVoice(MainActivity.this, role, name);
-                Speaker spk = RelayService.speakerOrNull();
-                if (spk != null) spk.feed(Prefs.tryText(MainActivity.this), name);
-                renderVoiceTable();
-                refresh();
+                if (pickForBind) {
+                    pickForBind = false;
+                    dlg.dismiss();
+                    bindingSheet(vi.raw);       // 先选音色 → 紧接着填名字
+                    return;
+                } else {
+                    Prefs.setVoiceEngine(MainActivity.this, vi.raw,
+                            EngineStore.ownerOfVoice(MainActivity.this, vi.raw));
+                    Prefs.setVoice(MainActivity.this, vi.raw);
+                    audition(vi.raw);
+                    refresh();
+                }
                 dlg.dismiss();
             }
         });
         dlg.show();
     }
 
-    /** 两行式列表：分组标题加粗变色，音色行「名字 / 标签」。 */
+    /** 角色名怎么切：换行 / 顿号 / 逗号 / 分号 / 竖线，都能当分隔符（空格不算，名字里可能有空格）。 */
+    private static List<String> splitNames(String s) {
+        List<String> out = new ArrayList<String>();
+        if (s == null) return out;
+        for (String part : s.split("[\\n\\r、，,;；|]+")) {
+            String n = part.trim();
+            if (n.length() == 0) continue;
+            boolean dup = false;
+            for (String x : out) if (x.equalsIgnoreCase(n)) { dup = true; break; }
+            if (!dup) out.add(n);
+        }
+        return out;
+    }
+
+    private static String joinNames(List<String> names) {
+        StringBuilder sb = new StringBuilder();
+        for (String n : names) { if (sb.length() > 0) sb.append('\n'); sb.append(n); }
+        return sb.toString();
+    }
+
+
+
+    /** 左侧音色来源栏：「全部」+ 每条引擎一行（带数量）。点一下只留那一家的音色。 */
+    private void renderSourceRail(final LinearLayout rail, final List<EngineStore.SourceGroup> groups,
+                                  final List<VoiceItem> all, final String[] src,
+                                  final Runnable refill, final ListView lv) {
+        rail.removeAllViews();
+        List<String[]> items = new ArrayList<String[]>();
+        items.add(new String[]{"", "全部 " + all.size()});
+        for (EngineStore.SourceGroup g : groups) {
+            if (g.voices.isEmpty()) continue;
+            items.add(new String[]{g.id, shortSrc(g.label) + " " + g.voices.size()});
+        }
+        for (final String[] it : items) {
+            boolean on = it[0].equals(src[0]) || (it[0].length() == 0 && src[0].length() == 0);
+            TextView c = ui.chip(it[1], on, new View.OnClickListener() {
+                public void onClick(View v) {
+                    src[0] = it[0];
+                    renderSourceRail(rail, groups, all, src, refill, lv);
+                    refill.run();
+                    if (lv.getAdapter() != null) lv.setSelection(0);
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = ui.dp(6);
+            rail.addView(c, lp);
+        }
+    }
+
+    /** 引擎名太长，左边那一栏塞不下就掐头留尾。 */
+    private static String shortSrc(String label) {
+        if (label == null) return "?";
+        String s = label.trim();
+        int i = s.indexOf('（');
+        if (i > 0) s = s.substring(0, i);
+        s = s.replaceAll("\\s+", "");
+        return s.length() > 6 ? s.substring(0, 6) : s;
+    }
+
+    /** 两行式列表：分组标题加粗变色，音色行「名字 / 标签」+ 共用它的角色。 */
     private ArrayAdapter<VoiceItem> voiceAdapter() {
         return new ArrayAdapter<VoiceItem>(this, 0, new ArrayList<VoiceItem>()) {
             @Override public View getView(int pos, View cv, ViewGroup parent) {
                 VoiceItem it = getItem(pos);
-                LinearLayout row = ui.col();
-                row.setPadding(ui.dp(4), ui.dp(11), ui.dp(4), ui.dp(11));
-                if (it == null) return row;
+                if (it == null) return new TextView(MainActivity.this);
                 if (it.header) {
+                    LinearLayout row = ui.col();
+                    row.setPadding(ui.dp(4), ui.dp(11), ui.dp(4), ui.dp(11));
                     TextView h = new TextView(MainActivity.this);
                     h.setText(it.name);
                     h.setTextColor(p.accent);
@@ -1942,27 +2327,41 @@ public class MainActivity extends Activity {
                     row.addView(h);
                     return row;
                 }
+
+                LinearLayout row = ui.row();
+                row.setPadding(ui.dp(4), ui.dp(9), ui.dp(4), ui.dp(9));
+                row.setGravity(Gravity.CENTER_VERTICAL);
+
+                LinearLayout text = ui.col();
                 TextView n = new TextView(MainActivity.this);
                 n.setText(it.name);
                 n.setTextColor(p.textPrimary);
                 n.setTextSize(15);
-                row.addView(n);
-                if (it.tagLine.length() > 0) {
+                text.addView(n);
+                String sub = it.tagLine;
+                // 一个音色可以绑多个角色：这里直接写出来（点一下是"再加一个角色用它"）
+                if (it.usedBy.length() > 0) {
+                    sub = (sub.length() > 0 ? sub + "  ·  " : "") + "已用于 " + it.usedBy;
+                } else if (it.srcLabel.length() > 0) {
+                    sub = (sub.length() > 0 ? sub + "  ·  " : "") + it.srcLabel;
+                }
+                if (sub.length() > 0) {
                     TextView t = new TextView(MainActivity.this);
-                    t.setText(it.tagLine);
-                    t.setTextColor(p.textMuted);
+                    t.setText(sub);
+                    t.setTextColor(it.usedBy.length() > 0 ? p.accent : p.textMuted);
                     t.setTextSize(11.5f);
                     t.setPadding(0, ui.dp(3), 0, 0);
-                    row.addView(t);
+                    text.addView(t);
                 }
+                row.addView(text, ui.weightGap(1f, 0));
                 return row;
             }
         };
     }
 
-    /** 按性别分组填表：女声 / 男声 / 未标注，各带一条分组标题。 */
+    /** 按性别分组填表：女声 / 男声 / 未标注，各带一条分组标题；可再按来源引擎过滤。 */
     private void fillVoiceList(ArrayAdapter<VoiceItem> ad, List<VoiceItem> all,
-                               String kw, String gen) {
+                               String kw, String gen, String srcId) {
         ad.clear();
         String[] secs = {"女声", "男声", "未标注"};
         for (String sec : secs) {
@@ -1970,6 +2369,7 @@ public class MainActivity extends Activity {
             List<VoiceItem> hits = new ArrayList<VoiceItem>();
             for (VoiceItem v : all) {
                 if (!sec.equals(v.gender)) continue;
+                if (srcId.length() > 0 && !srcId.equals(v.srcId)) continue;
                 if (kw.length() > 0 && !v.name.contains(kw) && !v.tagLine.contains(kw)
                         && !v.raw.contains(kw)) continue;
                 hits.add(v);
@@ -2002,88 +2402,257 @@ public class MainActivity extends Activity {
     }
 
 
-    /** 画角色音色表：五个保留键在前，用户加的角色在后。 */
+    /** 画「音色 → 名称」这张表：一行一个音色，下面写着它的名字。 */
     private void renderVoiceTable() {
         if (roleBox == null) return;
         roleBox.removeAllViews();
-        java.util.LinkedHashMap<String, String> t = Prefs.voiceTableMap(this);
-        java.util.List<String> keys = new java.util.ArrayList<String>();
-        keys.add(MultiVoice.K_NARRATOR);
-        keys.add(MultiVoice.K_DIALOGUE);
-        keys.add(MultiVoice.K_THOUGHT);
-        keys.add(MultiVoice.K_ACTION);
-        keys.add(MultiVoice.K_DEFAULT);
-        for (String k : t.keySet()) if (!keys.contains(k)) keys.add(k);
-
-        for (final String k : keys) {
-            String v = t.get(k);
-            String shown;
-            int color;
-            if (v == null || v.length() == 0) { shown = "跟随全局"; color = p.textSecondary; }
-            else if (MultiVoice.SKIP.equals(v)) { shown = "不念"; color = p.textMuted; }
-            else { shown = TtsEngine.shortVoice(v); color = p.accent; }
-            Button b = ui.btn(k + " → " + shown + "  ▸", false, new View.OnClickListener() {
-                public void onClick(View x) { pickTableVoice(k); }
+        java.util.LinkedHashMap<String, String> m = Prefs.voiceNamesMap(this);
+        if (m.isEmpty()) {
+            roleBox.addView(ui.hint("还没配"));
+            return;
+        }
+        for (final java.util.Map.Entry<String, String> e : m.entrySet()) {
+            final String voice = e.getKey();
+            LinearLayout row = ui.row();
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(ui.dp(14), ui.dp(11), ui.dp(10), ui.dp(11));
+            row.setBackground(ui.pressable(p.cardHi, p.ripple, 14, p.border));
+            row.setClickable(true);
+            row.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View x) { bindingSheet(voice); }
             });
-            b.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            b.setTextColor(color);
+            LinearLayout col = ui.col();
+            TextView vn = new TextView(this);
+            vn.setText(TtsEngine.shortVoice(voice));
+            vn.setTextColor(p.accent);
+            vn.setTextSize(15);
+            vn.setTypeface(Typeface.DEFAULT_BOLD);
+            col.addView(vn);
+            TextView nn = new TextView(this);
+            nn.setText("名称：" + e.getValue().replace("|", " | "));
+            nn.setTextColor(p.textSecondary);
+            nn.setTextSize(12.5f);
+            nn.setPadding(0, ui.dp(3), 0, 0);
+            col.addView(nn);
+            row.addView(col, ui.weightGap(1f, 6));
+
+            TextView play = ui.chip("🎧", false, null);
+            play.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View x) { audition(voice); }
+            });
+            LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            plp.rightMargin = ui.dp(8);
+            row.addView(play, plp);
+
+            row.addView(ui.chip("编辑", false, new View.OnClickListener() {
+                public void onClick(View x) { bindingSheet(e.getKey()); }
+            }));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = ui.dp(6);
-            roleBox.addView(b, lp);
+            roleBox.addView(row, lp);
         }
     }
 
-    /** 表里这一条怎么改：跟随全局 / 不念 / 选音色 / 删掉。 */
-    private void pickTableVoice(final String key) {
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("「" + key + "」的音色")
-                .setItems(new String[]{"跟随全局音色", "不念（这个角色不出声）", "从音色库选…"},
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int which) {
-                                if (which == 0) {
-                                    Prefs.putVoice(MainActivity.this, key, "");
-                                    renderVoiceTable();
-                                } else if (which == 1) {
-                                    Prefs.putVoice(MainActivity.this, key, MultiVoice.SKIP);
-                                    renderVoiceTable();
-                                } else {
-                                    fetchVoicesAnd(key);
-                                }
-                            }
-                        })
-                .setNeutralButton("删掉这一条", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int which) {
-                        Prefs.removeVoice(MainActivity.this, key);
-                        renderVoiceTable();
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
+    /** 这个音色绑给谁：名字一栏 + 试听（它的 QuickEditBottomSheet + AuditionTextField）。 */
+    private void bindingSheet(final String voice) {
+        String cur = Prefs.voiceNamesMap(this).get(voice);
+        LinearLayout box = ui.col();
+        box.setPadding(ui.dp(18), ui.dp(2), ui.dp(18), ui.dp(22));
+
+        TextView title = new TextView(this);
+        title.setText(TtsEngine.shortVoice(voice));
+        title.setTextColor(p.textPrimary);
+        title.setTextSize(18);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title);
+
+
+        final EditText names = new EditText(this);
+        names.setHint("名称：杨幂|刘亦菲");
+        names.setText(cur == null ? "" : cur.replace("|", " | "));
+        names.setTextSize(15);
+        names.setTextColor(p.textPrimary);
+        names.setHintTextColor(p.textMuted);
+        names.setBackground(ui.round(p.cardHi, p.border, 12));
+        names.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12));
+        box.addView(names);
+
+        box.addView(auditionField(voice), ui.topGap(12));
+
+        LinearLayout rr = ui.row();
+        rr.addView(ui.btn("保存", true, new View.OnClickListener() {
+            public void onClick(View v) {
+                String raw = names.getText().toString();
+                java.util.List<String> list = MultiVoice.splitNames(raw);
+                if (list.isEmpty()) { toast("名字不能空着"); return; }
+                StringBuilder sb = new StringBuilder();
+                for (String n : list) { if (sb.length() > 0) sb.append('|'); sb.append(n); }
+                Prefs.putVoiceNames(MainActivity.this, voice, sb.toString());
+                Prefs.setVoiceEngine(MainActivity.this, voice,
+                        EngineStore.ownerOfVoice(MainActivity.this, voice));
+                renderVoiceTable();
+                dismissSheet();
+                toast("「" + TtsEngine.shortVoice(voice) + "」→ " + sb);
+            }
+        }), ui.weightGap(1f, 8));
+        rr.addView(ui.btn("换个音色", false, new View.OnClickListener() {
+            public void onClick(View v) { dismissSheet(); pickForBind = true; fetchVoicesAnd(null); }
+        }), ui.weightGap(1f, 0));
+        box.addView(rr, ui.topGap(12));
+
+        box.addView(ui.btn("删掉这一条", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                Prefs.putVoiceNames(MainActivity.this, voice, null);
+                renderVoiceTable();
+                dismissSheet();
+            }
+        }), ui.topGap(8));
+
+        roleSheet = sheet(box);
     }
 
-    private void addRole() {
-        LinearLayout box = ui.col();
-        box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(4));
-        final EditText e = ui.field("", "", InputType.TYPE_CLASS_TEXT);
-        e.setTag(null);
-        e.setHint("角色名，要和卡片里 [角色名] 一模一样");
-        box.addView(e);
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("添加角色")
-                .setView(box)
-                .setPositiveButton("确定", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int which) {
-                        String n = e.getText().toString().trim();
-                        if (n.length() == 0) { toast("没填名字"); return; }
-                        Prefs.putVoice(MainActivity.this, n, "");
-                        renderVoiceTable();
-                        toast("已加「" + n + "」—— 点它选音色");
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
+    /** 底部升起来的面板（它那边是 ModalBottomSheet；我们没引 material，就自己摆一个 Dialog）。 */
+    private Dialog sheet(View content) {
+        Dialog d = new Dialog(this);
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout wrap = ui.col();
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(p.card);
+        float r = ui.dp(20);
+        bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+        bg.setStroke(Math.max(1, ui.dp(1)), p.border);
+        wrap.setBackground(bg);
+
+        View handle = new View(this);              // 顶部那根小横条（它的 drag handle）
+        GradientDrawable hb = new GradientDrawable();
+        hb.setColor(p.border);
+        hb.setCornerRadius(ui.dp(2));
+        handle.setBackground(hb);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui.dp(36), ui.dp(4));
+        hlp.gravity = Gravity.CENTER_HORIZONTAL;
+        hlp.topMargin = ui.dp(10);
+        wrap.addView(handle, hlp);
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(content);
+        wrap.addView(sc);
+
+        d.setContentView(wrap);
+        Window w = d.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new ColorDrawable(0x00000000));
+            w.setGravity(Gravity.BOTTOM);
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        d.show();
+        return d;
     }
+
+    /** 它的 AppSpinner：上面小字标签，下面当前值，右边一个 ▾，整行可点。 */
+    private LinearLayout spinnerRow(String label, String value, View.OnClickListener click) {
+        LinearLayout row = ui.row();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(ui.dp(14), ui.dp(10), ui.dp(12), ui.dp(10));
+        row.setBackground(ui.pressable(p.cardHi, p.ripple, 12, p.border));
+        row.setClickable(true);
+        row.setOnClickListener(click);
+        LinearLayout col = ui.col();
+        TextView lab = new TextView(this);
+        lab.setText(label);
+        lab.setTextColor(p.textMuted);
+        lab.setTextSize(11.5f);
+        col.addView(lab);
+        TextView val = new TextView(this);
+        val.setText(value == null || value.length() == 0 ? "—" : value);
+        val.setTextColor(p.textPrimary);
+        val.setTextSize(15);
+        val.setPadding(0, ui.dp(2), 0, 0);
+        col.addView(val);
+        row.addView(col, ui.weightGap(1f, 6));
+        TextView arrow = new TextView(this);
+        arrow.setText("▾");
+        arrow.setTextColor(p.textSecondary);
+        arrow.setTextSize(14);
+        row.addView(arrow);
+        return row;
+    }
+
+    /** 它的 AuditionTextField：一个写着「试听文本」的框 + 右边耳机按钮。 */
+    private LinearLayout auditionField(final String voice) {
+        LinearLayout row = ui.row();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(ui.dp(14), ui.dp(6), ui.dp(6), ui.dp(6));
+        row.setBackground(ui.round(p.cardHi, p.border, 12));
+
+        EditText e = new EditText(this);
+        e.setHint("试听文本");
+        e.setText(Prefs.tryText(this));
+        e.setTextSize(14);
+        e.setTextColor(p.textPrimary);
+        e.setHintTextColor(p.textMuted);
+        e.setSingleLine(true);
+        e.setBackground(null);
+        e.setPadding(0, ui.dp(6), 0, ui.dp(6));
+        e.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            public void afterTextChanged(Editable s) {
+                String t = s.toString().trim();
+                if (t.length() > 0) Prefs.setTryText(MainActivity.this, t);
+            }
+        });
+        row.addView(e, ui.weightGap(1f, 6));
+
+        TextView ear = ui.chip("🎧", false, null);
+        ear.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View x) { audition(voice); }
+        });
+        row.addView(ear);
+        return row;
+    }
+
+    /** 试听（它的 AuditionDialog）：弹个小窗，出声后自己关掉。 */
+    private void audition(final String voice) {
+        final Speaker spk = RelayService.speakerOrNull();
+        if (spk == null) { toast("朗读没在跑（先打开中转）"); return; }
+        String use = voice;
+        if (use == null || use.length() == 0) use = Prefs.voice(this);
+        if (use == null || use.length() == 0) { toast("还没选音色"); return; }
+        final String text = Prefs.tryText(this);
+        Prefs.setVoiceEngine(this, use, EngineStore.ownerOfVoice(this, use));
+
+        final AlertDialog dlg = new AlertDialog.Builder(this, dialogTheme())
+                .setTitle("试听")
+                .setMessage(text + "\n\n— " + TtsEngine.shortVoice(use))
+                .setNegativeButton("停止", null)
+                .create();
+        dlg.show();
+        spk.interrupt();
+        spk.feed(text, use);
+        new android.os.Handler(getMainLooper()).postDelayed(new Runnable() {
+            public void run() {
+                try { dlg.dismiss(); } catch (Throwable ignored) { }
+            }
+        }, 2600);
+    }
+
+
+
+    private Dialog roleSheet;
+
+    private void dismissSheet() {
+        Dialog d = roleSheet;
+        roleSheet = null;
+        if (d != null) {
+            try { d.dismiss(); } catch (Throwable ignored) { }
+        }
+    }
+
+
+
 
     private void pickParseMode() {
         String[] items = new String[MultiVoice.MODE_COUNT];
@@ -2105,7 +2674,7 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    /** 丢给模型的格式规范：让它按 [角色名][情感][场景]「台词」 吐，GAL 模式才分得出人。 */
+    /** 丢给酒馆的格式规范 —— 照搬插件那段，模型按 [角色名] 输出才能分角色。 */
     private static final String GAL_PROMPT =
             "# 格式输出规范\n"
             + "**描写任何角色（主要角色、NPC、路人、旁白）说话时，必须严格遵守格式，对话单开一行**\n\n"

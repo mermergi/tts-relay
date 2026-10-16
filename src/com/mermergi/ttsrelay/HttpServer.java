@@ -213,6 +213,50 @@ public final class HttpServer {
             json(out, 200, o.toString());
             return;
         }
+        if ("/_editortest".equals(path)) {
+            // 本地自检：在主线程真建一个 sora 编辑器，跑和插件编辑器同一条初始化，
+            // 把「语言/配色/字号/字数/TextMate 有没有起来」吐成 JSON —— 不用人肉点界面
+            final org.json.JSONObject o = new org.json.JSONObject();
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                public void run() {
+                    try {
+                        io.github.rosemoe.sora.widget.CodeEditor ed =
+                                new io.github.rosemoe.sora.widget.CodeEditor(ctx);
+                        o.put("ctor", "ok");
+                        try {
+                            com.mermergi.ttsrelay.js.EditorSetup.init(ctx.getAssets(), ed);
+                            o.put("textmate", "ok");
+                        } catch (Throwable t) {
+                            o.put("textmate", t.getClass().getSimpleName() + ": " + t.getMessage());
+                        }
+                        ed.setText("let a = 1;\nfunction f(){ return 2; }\n// 测试\n");
+                        o.put("chars", ed.getText().length());
+                        o.put("lines", ed.getText().getLineCount());
+                        o.put("lang", String.valueOf(ed.getEditorLanguage()));
+                        o.put("sizePx", ed.getTextSizePx());
+                        io.github.rosemoe.sora.widget.schemes.EditorColorScheme sc = ed.getColorScheme();
+                        o.put("scheme", sc == null ? "null" : sc.getClass().getSimpleName());
+                        if (sc != null) {
+                            o.put("bg", Integer.toHexString(sc.getColor(
+                                    io.github.rosemoe.sora.widget.schemes.EditorColorScheme.WHOLE_BACKGROUND)));
+                            o.put("fg", Integer.toHexString(sc.getColor(
+                                    io.github.rosemoe.sora.widget.schemes.EditorColorScheme.TEXT_NORMAL)));
+                        }
+                    } catch (Throwable t) {
+                        try { o.put("error", t.toString()); } catch (Throwable ignored) { }
+                    }
+                    latch.countDown();
+                }
+            });
+            try {
+                latch.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            json(out, 200, o.toString());
+            return;
+        }
         if ("/_log".equals(path)) {
             byte[] b = LogBus.dump().getBytes(StandardCharsets.UTF_8);
             Map<String, String> h = new LinkedHashMap<String, String>();
@@ -290,7 +334,7 @@ public final class HttpServer {
             return;
         }
         if ("/_engine".equals(path)) {
-            // 本地调试：切引擎 / 改某个引擎的配置项。?id=xxx 切过去；?k=键&v=值 改配置
+            // 本地调试：切引擎 / 改某个引擎的配置项。?id=<引擎 id> 切过去；?k=cookie&v=xxx 改配置
             String del = qs.get("del");
             if (del != null && del.trim().length() > 0) {
                 EngineStore.remove(ctx, del.trim());
@@ -310,6 +354,7 @@ public final class HttpServer {
                         it.put(k, v);
                     }
                     EngineStore.put(ctx, it);
+                    JsTtsEngine.clearHosts();      // 配置改了：插件宿主里的旧变量别再用
                 }
             }
             EngineStore.Item cur = EngineStore.get(ctx, EngineStore.activeId(ctx));
@@ -340,12 +385,14 @@ public final class HttpServer {
             // 当前引擎的音色目录（手工 + voices_url + 引擎自带，三路合并）；?id=xxx 看指定引擎
             try {
                 String id = qs.get("id");
-                EngineStore.Item it = id == null || id.length() == 0
-                        ? EngineStore.get(ctx, EngineStore.activeId(ctx))
-                        : EngineStore.get(ctx, id);
+                // 不带 id = 列出「所有启用中的引擎」的音色（照它：音色集合才是选引擎的入口）
+                List<String> all = (id == null || id.length() == 0)
+                        ? EngineStore.fetchVoicesAll(ctx)
+                        : EngineStore.fetchVoices(ctx, EngineStore.get(ctx, id));
+                EngineStore.Item it = EngineStore.get(ctx, EngineStore.activeId(ctx));
                 JSONArray arr = new JSONArray();
                 boolean grouped = "1".equals(qs.get("grouped"));
-                for (String v : EngineStore.fetchVoices(ctx, it)) {
+                for (String v : all) {
                     if (!grouped) { arr.put(v); continue; }
                     // grouped=1：把标签拆出来，验证「按男女分组」用的就是这份数据
                     JSONObject o = new JSONObject();
@@ -408,13 +455,13 @@ public final class HttpServer {
                 for (int i = 0; i < t.length(); i += 3) {
                     String piece = t.substring(i, Math.min(t.length(), i + 3));
                     if (wantRoles) {
-                        for (MultiVoice.Seg g : mvo.feed(piece)) parts.put(tag(g) + "\t" + g.text);
+                        for (MultiVoice.Seg g : mvo.feed(piece)) parts.put(tagVoice(ctx, g) + "\t" + g.text);
                     } else {
                         for (String s : sp.feed(piece)) parts.put(s);
                     }
                 }
                 if (wantRoles) {
-                    for (MultiVoice.Seg g : mvo.flush()) parts.put(tag(g) + "\t" + g.text);
+                    for (MultiVoice.Seg g : mvo.flush()) parts.put(tagVoice(ctx, g) + "\t" + g.text);
                 } else {
                     for (String s : sp.flush()) parts.put(s);
                 }
@@ -447,6 +494,24 @@ public final class HttpServer {
             } else {
                 speaker.feed(t);
                 json(out, 200, "{\"ok\":true}");
+            }
+            return;
+        }
+        if ("/_names".equals(path)) {
+            // 本地调试：读写「音色 → 名称」（?text=... 或 POST 正文；一行一条：音色<TAB>名字|名字）
+            try {
+                String text = qs.get("text");
+                if (text == null) text = new String(body == null ? new byte[0] : body, java.nio.charset.StandardCharsets.UTF_8);
+                if (text != null && text.trim().length() > 0) Prefs.setVoiceNames(ctx, text);
+                JSONObject o = new JSONObject();
+                JSONArray arr = new JSONArray();
+                for (java.util.Map.Entry<String, String> e : Prefs.voiceNamesMap(ctx).entrySet()) {
+                    arr.put(TtsEngine.shortVoice(e.getKey()) + "  ⇐  " + e.getValue());
+                }
+                o.put("bindings", arr);
+                json(out, 200, o.toString());
+            } catch (Throwable t) {
+                json(out, 400, "{\"error\":\"" + esc(String.valueOf(t.getMessage())) + "\"}");
             }
             return;
         }
@@ -749,6 +814,12 @@ public final class HttpServer {
 
     private static String tag(MultiVoice.Seg g) {
         return g.name.length() == 0 ? g.role : g.role + ":" + g.name;
+    }
+
+    /** 干跑时把"这句会用谁的音色"也带上 —— 规则改完不用真念就能验。 */
+    private static String tagVoice(Context c, MultiVoice.Seg g) {
+        String v = MultiVoice.voiceFor(c, g);
+        return tag(g) + (v == null ? " → （不念）" : " → " + TtsEngine.shortVoice(v));
     }
 
     /** 每个转发请求都记一笔 —— 出问题时看一眼日志就知道 Chatbox 到底发了几发、发的什么。 */
