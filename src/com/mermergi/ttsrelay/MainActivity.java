@@ -1040,6 +1040,19 @@ public class MainActivity extends Activity {
                 }
             });
 
+            // ☑ 启用/禁用 —— 照它插件列表那个勾选框；停用的整行压暗
+            final android.widget.CheckBox cb = new android.widget.CheckBox(this);
+            cb.setChecked(EngineStore.isEnabled(it));
+            cb.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+                public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                    EngineStore.setEnabled(MainActivity.this, it, on);
+                    renderEngines();
+                }
+            });
+            row.addView(cb, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (!EngineStore.isEnabled(it)) row.setAlpha(0.45f);
+
             TextView av = new TextView(this);
             av.setText(avatarChar(it));
             av.setGravity(Gravity.CENTER);
@@ -1085,6 +1098,7 @@ public class MainActivity extends Activity {
         }
         refreshEngineRows();
         syncJsMetaInBackground();
+        EngineStore.warmVoices(this);
     }
 
     /**

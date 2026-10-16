@@ -586,9 +586,91 @@ public final class EngineStore {
 
     // ───────────────────────── 合成 ─────────────────────────
 
-    /** 播放链只调这一个：拿当前引擎合成。 */
+    // ── 启用 / 音色反查 ──
+    //
+    // 引擎不再有"当前独占"这回事：导入/新建的引擎默认都是启用的，
+    // 朗读时<b>看选了哪个音色</b>，反查是哪个引擎提供它（照 TTS Server 的模型：
+    // 音源 + 音色决定用哪个引擎）。查不到才退回"当前引擎"。
+
+    /** 停用的引擎：cfg 里 `off=1`。不写就是启用（导入的引擎默认启用）。 */
+    public static boolean isEnabled(Item it) {
+        return it == null || it.i("off", 0) == 0;
+    }
+
+    public static void setEnabled(Context c, Item it, boolean on) {
+        if (it == null) return;
+        it.put("off", on ? 0 : 1);
+        put(c, it);
+    }
+
+    /** 音色表缓存（键带 src/url 的 hash，改了配置自动失效）——JS 引擎问一次很贵。 */
+    private static final java.util.Map<String, List<String>> VOICE_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<String, List<String>>();
+
+    private static String voiceKey(Item it) {
+        return it.id + "|" + it.s("src", "").hashCode() + "|" + it.s("url", "").hashCode()
+                + "|" + it.s("voices", "").hashCode();
+    }
+
+    /** 查（必要时算）一个引擎的音色表，带缓存。 */
+    public static List<String> voicesCached(Context c, Item it) {
+        String k = voiceKey(it);
+        List<String> hit = VOICE_CACHE.get(k);
+        if (hit != null) return hit;
+        List<String> out;
+        try {
+            out = fetchVoices(c, it);
+        } catch (Throwable t) {
+            out = new java.util.ArrayList<String>();
+        }
+        VOICE_CACHE.put(k, out);
+        return out;
+    }
+
+    public static void warmVoices(Context c) {
+        new Thread(new Runnable() {
+            public void run() {
+                for (Item it : all(c)) {
+                    if (!isEnabled(it)) continue;
+                    try { voicesCached(c, it); } catch (Throwable ignored) { }
+                }
+            }
+        }).start();
+    }
+
+    private static boolean sameVoice(String entry, String want) {
+        if (entry == null || want == null) return false;
+        String e = entry.trim(), w = want.trim();
+        if (e.equalsIgnoreCase(w)) return true;
+        int i = e.indexOf(SEP);
+        String en = i > 0 ? e.substring(0, i).trim() : e;
+        String ei = i > 0 ? e.substring(i + 1).trim() : e;
+        int j = w.indexOf(SEP);
+        String wn = j > 0 ? w.substring(0, j).trim() : w;
+        String wi = j > 0 ? w.substring(j + 1).trim() : w;
+        return en.equalsIgnoreCase(wn) || en.equalsIgnoreCase(wi)
+                || ei.equalsIgnoreCase(wn) || ei.equalsIgnoreCase(wi);
+    }
+
+    /** 这个音色是谁提供的？找不到就退回当前引擎。 */
+    public static TtsEngine engineForVoice(Context c, String voice) {
+        String want = voice == null ? "" : voice.trim();
+        if (want.length() > 0) {
+            for (Item it : all(c)) {
+                if (!isEnabled(it)) continue;
+                List<String> vs;
+                try { vs = voicesCached(c, it); } catch (Throwable t) { continue; }
+                for (String v : vs) {
+                    if (sameVoice(v, want)) return build(it);
+                }
+            }
+        }
+        return activeEngine(c);
+    }
+
+    /** 播放链只调这一个：按音色挑引擎，再合成。 */
     public static byte[] synthNow(Context c, String text, String voice) throws Exception {
-        TtsEngine e = activeEngine(c);
+        TtsEngine e = engineForVoice(c, voice);
         TtsEngine.Say say = new TtsEngine.Say();
         say.voice = voice == null ? "" : voice;
         say.rate = num(Prefs.rate(c), 1f);
