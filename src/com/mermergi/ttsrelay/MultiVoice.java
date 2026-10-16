@@ -90,6 +90,12 @@ public final class MultiVoice {
     /** 这句该用哪个音色；null = 不念。 */
     public static String voiceFor(Context c, Seg seg) {
         if (!Prefs.mvEnabled(c)) return Prefs.voice(c);
+
+        // ① 先看「音色 → 名称」那几条（先选音色，再填名字）：名字对上就用它的音色。
+        String byName = nameVoice(c, seg);
+        if (byName != null) return byName;
+
+        // ② 再退回老那张「角色 → 音色」表（老配置照样能用）
         Map<String, String> t = Prefs.voiceTableMap(c);
         String v = null;
         if (seg.name.length() > 0) v = lookup(t, seg.name);
@@ -97,6 +103,38 @@ public final class MultiVoice {
         if (v == null) v = lookup(t, K_DEFAULT);
         if (v == null || v.length() == 0) return Prefs.voice(c);   // 没配 → 跟随全局
         return SKIP.equals(v) ? null : v;
+    }
+
+    // ───────────────────────── 音色 → 名称（先选音色，再填名字） ─────────────────────────
+
+    /** 名称怎么切：竖线 / 顿号 / 逗号都行。 */
+    public static java.util.List<String> splitNames(String names) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if (names == null) return out;
+        for (String p : names.split("[|｜、,，]+")) {
+            String n = p.trim();
+            if (n.length() > 0 && !out.contains(n)) out.add(n);
+        }
+        return out;
+    }
+
+    /**
+     * 这一段该用哪个音色 —— 拿「角色名 / 段类型」去和每条「音色 → 名称」里的名字对，
+     * 从上往下第一条对上的算。null = 没有绑定管它。
+     */
+    public static String nameVoice(Context c, Seg seg) {
+        java.util.LinkedHashMap<String, String> m = Prefs.voiceNamesMap(c);
+        if (m.isEmpty()) return null;
+        String name = seg.name == null ? "" : seg.name.trim();
+        String role = seg.role == null ? "" : seg.role.trim();
+        String rk = roleKey(role);
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            for (String n : splitNames(e.getValue())) {
+                if (name.length() > 0 && n.equalsIgnoreCase(name)) return e.getKey();
+                if (n.equalsIgnoreCase(role) || n.equalsIgnoreCase(rk)) return e.getKey();
+            }
+        }
+        return null;
     }
 
     public static String roleKey(String role) {

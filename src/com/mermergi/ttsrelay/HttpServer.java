@@ -455,13 +455,13 @@ public final class HttpServer {
                 for (int i = 0; i < t.length(); i += 3) {
                     String piece = t.substring(i, Math.min(t.length(), i + 3));
                     if (wantRoles) {
-                        for (MultiVoice.Seg g : mvo.feed(piece)) parts.put(tag(g) + "\t" + g.text);
+                        for (MultiVoice.Seg g : mvo.feed(piece)) parts.put(tagVoice(ctx, g) + "\t" + g.text);
                     } else {
                         for (String s : sp.feed(piece)) parts.put(s);
                     }
                 }
                 if (wantRoles) {
-                    for (MultiVoice.Seg g : mvo.flush()) parts.put(tag(g) + "\t" + g.text);
+                    for (MultiVoice.Seg g : mvo.flush()) parts.put(tagVoice(ctx, g) + "\t" + g.text);
                 } else {
                     for (String s : sp.flush()) parts.put(s);
                 }
@@ -494,6 +494,24 @@ public final class HttpServer {
             } else {
                 speaker.feed(t);
                 json(out, 200, "{\"ok\":true}");
+            }
+            return;
+        }
+        if ("/_names".equals(path)) {
+            // 本地调试：读写「音色 → 名称」（?text=... 或 POST 正文；一行一条：音色<TAB>名字|名字）
+            try {
+                String text = qs.get("text");
+                if (text == null) text = new String(body == null ? new byte[0] : body, java.nio.charset.StandardCharsets.UTF_8);
+                if (text != null && text.trim().length() > 0) Prefs.setVoiceNames(ctx, text);
+                JSONObject o = new JSONObject();
+                JSONArray arr = new JSONArray();
+                for (java.util.Map.Entry<String, String> e : Prefs.voiceNamesMap(ctx).entrySet()) {
+                    arr.put(TtsEngine.shortVoice(e.getKey()) + "  ⇐  " + e.getValue());
+                }
+                o.put("bindings", arr);
+                json(out, 200, o.toString());
+            } catch (Throwable t) {
+                json(out, 400, "{\"error\":\"" + esc(String.valueOf(t.getMessage())) + "\"}");
             }
             return;
         }
@@ -796,6 +814,12 @@ public final class HttpServer {
 
     private static String tag(MultiVoice.Seg g) {
         return g.name.length() == 0 ? g.role : g.role + ":" + g.name;
+    }
+
+    /** 干跑时把"这句会用谁的音色"也带上 —— 规则改完不用真念就能验。 */
+    private static String tagVoice(Context c, MultiVoice.Seg g) {
+        String v = MultiVoice.voiceFor(c, g);
+        return tag(g) + (v == null ? " → （不念）" : " → " + TtsEngine.shortVoice(v));
     }
 
     /** 每个转发请求都记一笔 —— 出问题时看一眼日志就知道 Chatbox 到底发了几发、发的什么。 */
