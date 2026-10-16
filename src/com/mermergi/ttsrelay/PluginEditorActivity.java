@@ -70,7 +70,10 @@ public final class PluginEditorActivity extends Activity {
         String id = getIntent() == null ? "" : getIntent().getStringExtra(EXTRA_ID);
         it = EngineStore.get(this, id);
         if (it == null) { toast("引擎没找到"); finish(); return; }
-        if (!EngineStore.KIND_JS.equals(it.kind)) {
+        // 有插件源码的（包括"改成 JS 插件"之后的豆包）→ 代码页
+        boolean asCode = EngineStore.KIND_JS.equals(it.kind)
+                || it.s("src", "").trim().length() > 0;
+        if (!asCode) {
             buildGenericUi();
             return;
         }
@@ -166,7 +169,22 @@ public final class PluginEditorActivity extends Activity {
         refreshCookie();
         final String lk = loginTarget();
         if (lk.length() > 0) {
-            ck.addView(ui.btn("网页登录，自动抓 Cookie", true, new View.OnClickListener() {
+            if (EngineStore.KIND_DOUBAO.equals(it.kind)) {
+            // TTS Server 里豆包本来就是个 .js 插件 —— 想统一成插件就一键转过去，粘源码即可
+            ck.addView(ui.hint("原生豆包引擎（这条链路是我们自己实现的）。\n"
+                    + "TTS Server 里那份豆包是 .js 插件，想跟火山那两个一样用代码页，就点下面这个："));
+            ck.addView(ui.btn("改成 JS 插件（粘插件源码）", false, new View.OnClickListener() {
+                public void onClick(View v) {
+                    saveGeneric();
+                    it.kind = EngineStore.KIND_JS;
+                    it.put("src", "");
+                    EngineStore.put(PluginEditorActivity.this, it);
+                    toast("已改成 JS 插件 —— 把插件源码贴进代码页就行");
+                    recreate();
+                }
+            }), topGap(8));
+        }
+        ck.addView(ui.btn("网页登录，自动抓 Cookie", true, new View.OnClickListener() {
                 public void onClick(View v) {
                     saveGeneric();
                     Intent i = new Intent(PluginEditorActivity.this, LoginActivity.class);
