@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * 万能的 HTTP 引擎：地址是模板，占位符一填就完事。
- * 只要对方给回音频字节，Edge / Azure / OpenAI / 你自己的服务，全都能接。
+ * 只要对方给回音频字节，Edge/Azure/OpenAI/你自己的服务，全都能接。
  *
  * <pre>
  *   {{text}} {{voice}} {{rate}} {{pitch}} {{volume}} {{format}}
@@ -60,10 +60,6 @@ public final class HttpTtsEngine implements TtsEngine {
         conn.setUseCaches(false);
         conn.setInstanceFollowRedirects(true);
         conn.setRequestProperty("User-Agent", "tts-relay/2.7");
-
-        // 保存下来的登录凭据 —— 手工填的 headers 优先级更高，会盖掉这条
-        String cred = it.s("cred", "").trim();
-        if (cred.length() > 0) conn.setRequestProperty("Cookie", cred);
 
         String headers = it.s("headers", "");
         for (String line : headers.split("\n")) {

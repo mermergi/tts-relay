@@ -11,18 +11,14 @@ import java.util.regex.Pattern;
 /**
  * 分角色朗读。
  *
- * 三种模式的<b>标签写法</b>跟酒馆那套多角色语音插件（ST-indexTTS2-X-Player）
- * 保持一致，这样模型按那套格式吐出来的文本拿来就能用 —— 但解析代码是这儿自己写的
- * （那套插件是 AGPL，只借格式、不借代码）：
+ * 解析规则<b>照搬</b>酒馆多角色语音插件（ST-indexTTS2-X-Player）的 GAL/RP 两套，
+ * 没有自己发明格式 —— 它怎么认，这里就怎么认：
  *
  * <ul>
- *   <li><b>GAL</b>：只念带角色标签的台词。角色名取<b>第一个方括号</b>，
- *       后面几层方括号（情感、场景、情绪向量…）是元数据，认了不用：
- *       {@code [角色][情感][场景]「台词」} / {@code [角色][情感]「台词」} /
- *       {@code [角色]「台词」} / {@code [角色] 台词} 都认。
+ *   <li><b>GAL</b>：只念带角色标签的台词，格式按优先级
+ *       {@code [角色][表情][场景]「台词」→ [角色][表情]「台词」→ [角色]「台词」→ [角色] 台词}，
  *       没打标签的行算旁白；旁白是<b>保留角色名</b>，和角色共用一张音色表。</li>
- *   <li><b>RP</b>：只念引号内的内容。引号成对认（{@code 「」} {@code “”} {@code 『』}
- *       {@code ‘’} {@code ""}），不跨类型。</li>
+ *   <li><b>RP</b>：只念引号内的内容，五种引号分开匹配不跨类型。</li>
  *   <li><b>听书</b>：全文都念，只是按旁白/对话/内心/动作换嗓子（原来的行为）。</li>
  * </ul>
  */
@@ -94,6 +90,12 @@ public final class MultiVoice {
     /** 这句该用哪个音色；null = 不念。 */
     public static String voiceFor(Context c, Seg seg) {
         if (!Prefs.mvEnabled(c)) return Prefs.voice(c);
+
+        // ① 先看「音色 → 名称」那几条（先选音色，再填名字）：名字对上就用它的音色。
+        String byName = nameVoice(c, seg);
+        if (byName != null) return byName;
+
+        // ② 再退回老那张「角色 → 音色」表（老配置照样能用）
         Map<String, String> t = Prefs.voiceTableMap(c);
         String v = null;
         if (seg.name.length() > 0) v = lookup(t, seg.name);
@@ -101,6 +103,38 @@ public final class MultiVoice {
         if (v == null) v = lookup(t, K_DEFAULT);
         if (v == null || v.length() == 0) return Prefs.voice(c);   // 没配 → 跟随全局
         return SKIP.equals(v) ? null : v;
+    }
+
+    // ───────────────────────── 音色 → 名称（先选音色，再填名字） ─────────────────────────
+
+    /** 名称怎么切：竖线 / 顿号 / 逗号都行。 */
+    public static java.util.List<String> splitNames(String names) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if (names == null) return out;
+        for (String p : names.split("[|｜、,，]+")) {
+            String n = p.trim();
+            if (n.length() > 0 && !out.contains(n)) out.add(n);
+        }
+        return out;
+    }
+
+    /**
+     * 这一段该用哪个音色 —— 拿「角色名 / 段类型」去和每条「音色 → 名称」里的名字对，
+     * 从上往下第一条对上的算。null = 没有绑定管它。
+     */
+    public static String nameVoice(Context c, Seg seg) {
+        java.util.LinkedHashMap<String, String> m = Prefs.voiceNamesMap(c);
+        if (m.isEmpty()) return null;
+        String name = seg.name == null ? "" : seg.name.trim();
+        String role = seg.role == null ? "" : seg.role.trim();
+        String rk = roleKey(role);
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            for (String n : splitNames(e.getValue())) {
+                if (name.length() > 0 && n.equalsIgnoreCase(name)) return e.getKey();
+                if (n.equalsIgnoreCase(role) || n.equalsIgnoreCase(rk)) return e.getKey();
+            }
+        }
+        return null;
     }
 
     public static String roleKey(String role) {
@@ -111,69 +145,58 @@ public final class MultiVoice {
         return K_DEFAULT;
     }
 
-    // ───────────────────────── GAL 标签 ─────────────────────────
+    // ───────────────────────── GAL 标签规则（原样搬来的） ─────────────────────────
+
+    private static final String Q_OPEN = "[\u300c\"\u201c\u300e]";        // 「 " “ 『
+    private static final String Q_CLOSE = "[\u300d\"\u201d\u300f]";       // 」 " ” 』
+
+    /** 格式1：[角色][表情][场景]「台词」 */
+    private static final Pattern GAL_3 = Pattern.compile(
+            "^\\s*\\[([^\\]\\n]+)\\]\\s*\\[([^\\]\\n]*)\\]\\s*\\[([^\\]\\n]+)\\]\\s*:?\\s*("
+                    + Q_OPEN + "(.*?)" + Q_CLOSE + "|.+)\\s*$");
+    /** 格式2：[角色][表情]「台词」 */
+    private static final Pattern GAL_2 = Pattern.compile(
+            "^\\s*\\[([^\\]\\n]+)\\]\\s*(?:\\|\\s*)?\\[([^\\]]*)\\]\\s*:?\\s*("
+                    + Q_OPEN + "(.*?)" + Q_CLOSE + "|.+)\\s*$");
+    /** 格式3/4：[角色][情绪向量]「台词」 或 [角色] 台词 */
+    private static final Pattern GAL_1 = Pattern.compile(
+            "^\\s*\\[([^\\]]+)\\](?:\\[[\\d.,\\s-]*\\])?\\s*\\s*("
+                    + Q_OPEN + "(.*?)" + Q_CLOSE + "|.+)\\s*$");
+    /** 引号只认这五种，分开匹配不跨类型。 */
+    private static final Pattern RP_QUOTE = Pattern.compile(
+            "\u300c([^\u300d]+)\u300d|\"([^\"]+)\"|\u300e([^\u300f]+)\u300f"
+                    + "|\u201c([^\u201d]+)\u201d|\u2018([^\u2019]+)\u2019");
 
     private static final class Gal {
         String character = "";
         String dialogue = "";
     }
 
-    /**
-     * 认一行 GAL 台词：{@code [角色][情感][场景]「台词」}。
-     *
-     * 标签可以是一层、两层、三层（再多也行），<b>角色名永远是第一个方括号</b>里的东西；
-     * 后面几层是情感/场景这类给音效用的元数据，这儿不关心。标签后面允许有一个冒号，
-     * 台词可以拿引号包着，也可以就那么直接跟。
-     *
-     * 写法是那套插件定的（见类注释），但实现是这儿一格一格扫出来的，
-     * 所以 {@code [角色][情感]} 这种压根没台词的行会老老实实判成"不是台词"，
-     * 而不是把 {@code [情感]} 当成要说的话。
-     */
     private static Gal parseGal(String line) {
         if (line == null) return null;
         String s = line.trim();
         if (s.length() == 0 || s.charAt(0) != '[') return null;
 
-        int i = 0;
-        String character = null;
-        while (i < s.length() && s.charAt(i) == '[') {
-            int close = s.indexOf(']', i + 1);
-            if (close < 0) return null;                       // 方括号没闭上
-            String tag = clean(s.substring(i + 1, close));
-            if (character == null) {
-                if (tag.length() == 0) return null;           // 第一个标签就是空的
-                character = tag;
-            }
-            i = close + 1;
-            while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t')) i++;
-        }
-        if (character == null) return null;
+        Matcher m = GAL_3.matcher(s);
+        if (m.matches()) return gal(m, 1, 5, 4);
+        m = GAL_2.matcher(s);
+        if (m.matches()) return gal(m, 1, 4, 3);
+        m = GAL_1.matcher(s);
+        if (m.matches()) return gal(m, 1, 3, 2);
+        return null;
+    }
 
-        if (i < s.length() && (s.charAt(i) == ':' || s.charAt(i) == '\uff1a')) i++;   // 半角/全角冒号都认
-        while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t')) i++;
-
-        String rest = s.substring(i).trim();
-        if (rest.length() == 0) return null;
-        String text = unwrapQuotes(rest);
-        if (text.length() == 0) return null;
-
+    private static Gal gal(Matcher m, int gName, int gInner, int gRaw) {
+        String name = clean(m.group(gName));
+        String inner = m.group(gInner);
+        String text = inner != null ? inner.trim() : String.valueOf(m.group(gRaw)).trim();
+        if (name.length() == 0 || text.length() == 0) return null;
         Gal g = new Gal();
-        g.character = character;
+        g.character = name;
         g.dialogue = text;
         return g;
     }
 
-    /** 整段正好被一对引号包着，就把引号脱掉；不是就原样还回去。 */
-    private static String unwrapQuotes(String s) {
-        if (s.length() < 2) return s;
-        char close = closeOf(s.charAt(0));
-        if (close != 0 && s.charAt(s.length() - 1) == close) {
-            return s.substring(1, s.length() - 1).trim();
-        }
-        return s;
-    }
-
-    /** 名字里的空白压成一个空格。 */
     private static String clean(String s) {
         if (s == null) return "";
         return s.replaceAll("\\s+", " ").trim();

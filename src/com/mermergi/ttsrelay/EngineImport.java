@@ -26,6 +26,9 @@ public final class EngineImport {
         if (t.length() == 0) throw new IllegalArgumentException("内容为空");
         if (looksLikeJsPlugin(t)) {
             List<EngineStore.Item> one = new ArrayList<EngineStore.Item>();
+            // 插件就是插件：一律交给 TTS Server 那套运行时真跑（见 kt/ + PluginBridge）。
+            // 引擎文件就是 .js：按插件原样处理 —— 插件用的那些全局
+            // （Buffer / WebSocket / http / fs / ttsrv.* …）我们都已经搬进来了。
             one.add(jsEngine(t));
             return one;
         }
@@ -74,7 +77,7 @@ public final class EngineImport {
     /**
      * TTS Server 的 JS 插件 → 我们的一种引擎。
      *
-     * 源码原样存进配置，跑的时候交给 TTS Server 自己的运行时（见 kt/ + PluginHost）—— 同一个引擎，
+     * 源码原样存进配置，跑的时候交给 TTS Server 自己的运行时（见 kt/app/PluginBridge.kt）—— 同一个引擎，
      * 所以插件里的 {@code getAudio} / {@code getVoices} 是什么样，这儿就是什么样，没有"搬不过来"。
      * 顺手把它声明的变量键、变量名、登录方式读出来填好。
      */
@@ -90,46 +93,83 @@ public final class EngineImport {
         it.put("voices_path", "");
         it.put("voices_name", "name");
         it.put("voices_id", "id");
+        it.put("login_url", "");
+        it.put("binding", "session");
+        it.put("ua", "mobile");
 
-        // 元数据不是猜的：把插件跑起来读它 PluginJS 上的 name/id/author/vars —— 照 TTS Server 的 eval()
-        String name = "";
-        try {
-            com.mermergi.ttsrelay.js.PluginHost h =
-                    new com.mermergi.ttsrelay.js.PluginHost(App.ctx(), it.id, src, null);
-            h.init();
-            com.mermergi.ttsrelay.js.PluginHost.Meta m = h.meta();
-            name = m.getName();
-            if (name.length() == 0) name = m.getId();
-            JSONObject labels = new JSONObject();
-            String loginKey = "";
-            for (com.mermergi.ttsrelay.js.PluginHost.VarDef v : m.getVars()) {
-                if (!it.cfg.has(v.getKey())) it.put(v.getKey(), "");
-                String lab = v.getLabel();
-                if (v.getHint().length() > 0) lab = lab + "（" + v.getHint() + "）";
-                try { labels.put(v.getKey(), lab); } catch (Throwable ignored) { }
-                if (loginKey.length() == 0 && v.getLoginUrl().length() > 0) {
-                    loginKey = v.getKey();
-                    it.put("login_key", loginKey);
-                    it.put("login_url", v.getLoginUrl());
-                    it.put("binding", v.getBinding().length() > 0 ? v.getBinding() : "session");
-                    it.put("ua", v.getUa().length() > 0 ? v.getUa() : "mobile");
-                }
-            }
-            if (labels.length() > 0) it.put("var_labels", labels.toString());
-            if (m.getAuthor().length() > 0) it.put("author", m.getAuthor());
-            if (m.getIconUrl().length() > 0) it.put("icon", m.getIconUrl());
-            h.destroy();
-        } catch (Throwable t) {
-            // 源码先留着，跑不起来的理由由引擎的 problem() 说
-        }
-        it.label = name.length() > 0 ? name : "JS 插件";
+        // 元数据不是猜的：把插件跑起来读它自己的 PluginJS —— 和编辑框走的是同一条路（EngineStore.syncJsMeta）
+        EngineStore.syncJsMeta(App.ctx(), it);
+        EngineStore.inheritLogin(App.ctx(), it);      // 别处抓过的 Cookie 直接继承过来
+        if (it.label == null || it.label.length() == 0) it.label = "JS 插件";
         return it;
     }
+
+    private static String value(String v) { return v == null ? "" : v; }
 
     /** 是不是 TTS Server 的 JS 插件（一堆 ttsrv.userVars / getAudioV2）。 */
     public static boolean looksLikeJsPlugin(String t) {
         return t.contains("ttsrv.userVars") || t.contains("getAudioV2")
                 || (t.contains("EditorJS") && t.contains("PluginJS"));
+    }
+    /** 老配置里那种"原生引擎"的 kind 已经没有了：遇到就按 .js 插件重新导一遍。 */
+    private static EngineStore.Item parseJsPlugin(String t) {
+        return jsEngine(t);
+    }
+
+    private static String varsBlock(String t) {
+        int at = t.indexOf("vars");
+        if (at < 0) return "";
+        int open = t.indexOf('{', at);
+        if (open < 0) return "";
+        int depth = 0;
+        for (int i = open; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) return t.substring(open, i + 1);
+            }
+        }
+        return "";
+    }
+
+    /** 从 vars 里取某个键的默认值（value: "..."）；没有 value 就留空。 */
+    private static void copyVar(EngineStore.Item it, String vars, String jsKey, String cfgKey) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(?:^|[\\s,{\"'])" + java.util.regex.Pattern.quote(jsKey)
+                            + "\\s*:\\s*\\{([^}]*)\\}")
+                    .matcher(vars);
+            if (!m.find()) return;
+            String val = rx(m.group(1), "value\\s*:\\s*\"([^\"]*)\"");
+            if (val.length() > 0) it.put(cfgKey, val);
+        } catch (Throwable ignored) { }
+    }
+
+    /** 从某个变量的 { } 块里读一个字符串属性（loginUrl / binding / ua 这些）。 */
+    private static void copyVarProp(EngineStore.Item it, String vars, String jsKey,
+                                    String prop, String cfgKey) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(?:^|[\\s,{\"'])" + java.util.regex.Pattern.quote(jsKey)
+                            + "\\s*:\\s*\\{([^}]*)\\}")
+                    .matcher(vars);
+            if (!m.find()) return;
+            String v = rx(m.group(1),
+                    java.util.regex.Pattern.quote(prop) + "\\s*:\\s*['\"]([^'\"]*)['\"]");
+            if (v.length() > 0) it.put(cfgKey, v);
+        } catch (Throwable ignored) { }
+    }
+
+    private static String rx(String t, String pattern) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile(pattern).matcher(t);
+            if (m.find()) {
+                String g = m.group(1);
+                return g == null ? "" : g.trim();
+            }
+        } catch (Throwable ignored) { }
+        return "";
     }
 
     private static EngineStore.Item convert(JSONObject o) {

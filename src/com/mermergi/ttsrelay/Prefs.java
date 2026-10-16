@@ -154,6 +154,48 @@ public final class Prefs {
         sp(c).edit().putString("voice_table", v == null ? "" : v).apply();
     }
 
+    /**
+     * 分角色朗读：<b>音色 → 名称</b>。一行一条，Tab 隔开：
+     * {@code 音色	杨幂|刘亦菲}（名称用 | 分开，多个名字共用一个音色）。
+     * 用法就是"先选音色，再填名字"。
+     */
+    public static String voiceNames(Context c) { return sp(c).getString("voice_names", ""); }
+    public static void setVoiceNames(Context c, String v) {
+        sp(c).edit().putString("voice_names", v == null ? "" : v).apply();
+    }
+
+    /** 音色 → 名称（按填写顺序，先填的先命中）。 */
+    public static java.util.LinkedHashMap<String, String> voiceNamesMap(Context c) {
+        java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
+        String raw = voiceNames(c);
+        if (raw == null) return m;
+        for (String line : raw.split("\n")) {
+            String s = line.trim();
+            if (s.length() == 0) continue;
+            int tab = s.indexOf('\t');
+            if (tab < 0) tab = s.indexOf(' ');
+            if (tab <= 0) continue;
+            String voice = s.substring(0, tab).trim();
+            String names = s.substring(tab + 1).trim();
+            if (voice.length() > 0 && names.length() > 0) m.put(voice, names);
+        }
+        return m;
+    }
+
+    /** 加/改一条：names 传 null 或空 = 删掉这条。 */
+    public static void putVoiceNames(Context c, String voice, String names) {
+        if (voice == null || voice.trim().length() == 0) return;
+        java.util.LinkedHashMap<String, String> m = voiceNamesMap(c);
+        if (names == null || names.trim().length() == 0) m.remove(voice.trim());
+        else m.put(voice.trim(), names.trim());
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(e.getKey()).append('\t').append(e.getValue());
+        }
+        setVoiceNames(c, sb.toString());
+    }
+
     public static java.util.LinkedHashMap<String, String> voiceTableMap(Context c) {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
         String raw = voiceTable(c);
@@ -200,6 +242,28 @@ public final class Prefs {
     }
 
     public static String activeEngine(Context c) { return sp(c).getString("engine_active", ""); }
+
+    // ── 音色 → 它属于哪个引擎 ──
+    // 照 TTS Server 的法子：它把配置 id 编进语音名（`显示名_id`），选音色就等于选配置。
+    // 我们不动音色字符串本身（插件要拿它当 style_id），另存一张表：音色 → 引擎。
+    public static String voiceEngine(Context c, String voice) {
+        if (voice == null || voice.length() == 0) return "";
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(sp(c).getString("voice_engine", "{}"));
+            return o.optString(voice, "");
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    public static void setVoiceEngine(Context c, String voice, String engineId) {
+        if (voice == null || voice.length() == 0 || engineId == null || engineId.length() == 0) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(sp(c).getString("voice_engine", "{}"));
+            o.put(voice, engineId);
+            sp(c).edit().putString("voice_engine", o.toString()).apply();
+        } catch (Throwable ignored) { }
+    }
     public static void setActiveEngine(Context c, String v) {
         sp(c).edit().putString("engine_active", v == null ? "" : v).apply();
     }

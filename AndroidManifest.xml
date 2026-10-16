@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.mermergi.ttsrelay"
-    android:versionCode="23"
+    android:versionCode="25"
     android:versionName="2.8.2">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
@@ -43,7 +43,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 内置登录页：登进去以后点「💾 保存」，把值绑回引擎配置 -->
+        <!-- 内置网页登录：登录完自动抓 Cookie -->
         <activity
             android:name=".LoginActivity"
             android:exported="false"
@@ -72,5 +72,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Run a loopback HTTP relay that forwards Chatbox requests upstream and speaks the streamed answer aloud" />
         </service>
+        <activity
+            android:name=".PluginEditorActivity"
+            android:exported="false"
+            android:label="插件编辑器" />
     </application>
 </manifest>
