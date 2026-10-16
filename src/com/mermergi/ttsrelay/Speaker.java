@@ -468,9 +468,14 @@ public final class Speaker {
                     final LiveAudio la = LiveAudio.create();
                     live = la;
                     Clip liveClip = new Clip(cur.text, null, my, cur.voice, la.url(), la);
-                    boolean qued;
+                    // 队列满了要**等**，不能塞不进就把这句丢了 —— 合成比播放快得多，
+                    // 队列（4 格）一会儿就满，那样每轮第 5 句往后全没了（真机踩过）。
+                    // 等的过程中要是这一轮被丢掉了，就把这条流撤掉、这句不要了。
+                    boolean qued = false;
                     try {
-                        qued = audioQ.offer(liveClip, 200, TimeUnit.MILLISECONDS);
+                        while (running && my == gen && ep == synthEpoch) {
+                            if (audioQ.offer(liveClip, 200, TimeUnit.MILLISECONDS)) { qued = true; break; }
+                        }
                     } catch (InterruptedException ie) {
                         LiveAudio.drop(la);
                         return;
@@ -478,9 +483,9 @@ public final class Speaker {
                     if (!qued) {
                         LiveAudio.drop(la);
                         live = null;
-                        throw new IllegalStateException("音频队列塞不进去了（这一轮已经被丢掉）");
+                        cur = null;
+                        continue;                 // 这一轮已经作废，不是失败
                     }
-                    paused = false;
                     beat("起播流");
                     Handler hp = playH;
                     if (hp != null) hp.post(playNext);       // 队列里刚有东西：叫醒播放线程
