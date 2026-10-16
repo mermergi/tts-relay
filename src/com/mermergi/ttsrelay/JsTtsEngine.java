@@ -87,7 +87,9 @@ public final class JsTtsEngine implements TtsEngine {
         Object v;
         if (h.hasFunction("getAudio")) {
             Object r = h.getAudio(text, locale(), TtsEngine.shortVoice(s.voice), rate, volume, pitch);
-            v = org.mozilla.javascript.Context.jsToJava(r, Object.class);
+            // 别在这儿 jsToJava：它会把插件返回的数组/视图揉成 Object[]，
+            // 后面认字节那步就再也认不出来了（"NativeUint8Array" 那一崩就是这么来的）
+            v = (r == null || r == org.mozilla.javascript.Undefined.instance) ? null : r;
         } else {
             v = null;
         }
@@ -108,14 +110,38 @@ public final class JsTtsEngine implements TtsEngine {
             throw new IllegalStateException("插件没写回任何音频");
         }
 
-        if (v instanceof CharSequence) {
-            String url = v.toString().trim();
-            if (url.startsWith("http://") || url.startsWith("https://")) return fetch(url);
-            throw new IllegalStateException("插件返回的不是地址：" + url);
+        // 插件把音频甩回来的姿势很多：byte[] / Uint8Array / Buffer / ArrayBuffer / 数字数组 /
+        // 包一层 {audio:...} / base64 / data: URL / 地址。统一在这儿认。
+        Object a = JsApi.audioValue(v);
+        if (a == null) {
+            throw new IllegalStateException("插件返回的东西认不出来：" + describe(v));
         }
-        if (v instanceof byte[]) return (byte[]) v;
-        if (v instanceof InputStream) return readAll((InputStream) v);
-        throw new IllegalStateException("插件返回的东西认不出来：" + v.getClass().getSimpleName());
+        if (a instanceof InputStream) return readAll((InputStream) a);
+        if (a instanceof byte[]) {
+            byte[] out = (byte[]) a;
+            if (out.length == 0) throw new IllegalStateException("插件写回的音频是空的");
+            return out;
+        }
+        String url = a.toString().trim();
+        if (url.startsWith("http://") || url.startsWith("https://")) return fetch(url);
+        throw new IllegalStateException("插件返回的不是地址：" + url);
+    }
+
+    /** 报错得能看出到底是啥，别再只说「认不出来」。 */
+    private static String describe(Object v) {
+        if (v == null) return "null";
+        StringBuilder sb = new StringBuilder();
+        try { sb.append(v.getClass().getSimpleName()); } catch (Throwable ignored) { }
+        if (v instanceof org.mozilla.javascript.Scriptable) {
+            try { sb.append('/').append(((org.mozilla.javascript.Scriptable) v).getClassName()); }
+            catch (Throwable ignored) { }
+        }
+        try {
+            Object len = org.mozilla.javascript.ScriptableObject.getProperty(
+                    (org.mozilla.javascript.Scriptable) v, "length");
+            if (len instanceof Number) sb.append(" length=").append(len);
+        } catch (Throwable ignored) { }
+        return sb.toString();
     }
 
     /** 插件只给了地址 → 我们替它把音频取回来。 */

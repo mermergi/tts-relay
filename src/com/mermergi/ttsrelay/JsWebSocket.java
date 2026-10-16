@@ -7,7 +7,6 @@ import org.mozilla.javascript.Scriptable;
 import org.mozilla.javascript.ScriptableObject;
 import org.mozilla.javascript.Undefined;
 import org.mozilla.javascript.typedarrays.NativeArrayBuffer;
-import org.mozilla.javascript.typedarrays.NativeUint8Array;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -217,14 +216,15 @@ public final class JsWebSocket {
         }
     }
 
-    /** JS 给的二进制：ArrayBuffer / Uint8Array / byte[] / 字节字符串都认。 */
+    /** JS 给的二进制：ArrayBuffer / 任意 typed array（Uint8Array、Buffer…）/ byte[] / 字节字符串都认。 */
     static byte[] bytesOf(Object o) {
         if (o == null || o == Undefined.instance) return null;
         if (o instanceof byte[]) return (byte[]) o;
         if (o instanceof NativeArrayBuffer) return ((NativeArrayBuffer) o).getBuffer();
-        if (o instanceof NativeUint8Array) {
-            NativeArrayBuffer b = ((NativeUint8Array) o).getBuffer();
-            if (b != null) return b.getBuffer();
+        // 交给 JsApi 那一份：按 byteOffset/byteLength 切，所有 typed array 一起认
+        if (o instanceof org.mozilla.javascript.typedarrays.NativeArrayBufferView) {
+            byte[] b = JsApi.bytesOf(o);
+            if (b != null && b.length > 0) return b;
         }
         if (o instanceof CharSequence) {
             try { return o.toString().getBytes("UTF-8"); } catch (Throwable t) { return null; }

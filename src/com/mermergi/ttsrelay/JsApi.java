@@ -483,6 +483,17 @@ final class JsApi {
                     int end = Math.min(all.length, off + len);
                     data = new byte[Math.max(0, end - off)];
                     System.arraycopy(all, Math.max(0, off), data, 0, data.length);
+                } else if (a[0] instanceof byte[]) {
+                    data = (byte[]) a[0];
+                } else if (a[0] instanceof org.mozilla.javascript.typedarrays.NativeArrayBufferView) {
+                    // Buffer.from(另一个 Buffer/Uint8Array) —— 按视图的 byteOffset/byteLength 拷
+                    data = rawOf((Scriptable) a[0]);
+                } else if (a[0] instanceof Scriptable) {
+                    Scriptable o = (Scriptable) a[0];
+                    if (!hasLength(o)) {
+                        throw Context.reportRuntimeError("Buffer.from: 入参既不是字符串也不是字节");
+                    }
+                    data = fromNumberArray(o);
                 } else {
                     data = decode(str(a, 0), a.length > 1 ? str(a, 1) : "utf-8");
                 }
@@ -553,12 +564,132 @@ final class JsApi {
         return self;
     }
 
+    private static boolean hasLength(Scriptable o) {
+        try { return o.get("length", o) instanceof Number; } catch (Throwable t) { return false; }
+    }
+
+    /** JS 数字数组 → 字节。{@code [1,2,3]} 和 {@code new Uint8Array([1,2,3])} 都走这儿。 */
+    private static byte[] fromNumberArray(Scriptable o) {
+        Object lenObj = o.get("length", o);
+        int n = lenObj instanceof Number ? ((Number) lenObj).intValue() : 0;
+        if (n < 0) n = 0;
+        byte[] out = new byte[n];
+        for (int i = 0; i < n; i++) {
+            Object e;
+            try { e = o.get(i, o); } catch (Throwable t) { e = null; }
+            out[i] = (e == null || e == Scriptable.NOT_FOUND || e == Undefined.instance)
+                    ? 0 : (byte) (((int) Context.toNumber(e)) & 0xff);
+        }
+        return out;
+    }
+
+    /**
+     * 取视图底下的字节。所有 typed array（Uint8Array / Buffer / Int16Array …）都走这儿。
+     *
+     * 必须按 {@code byteOffset + byteLength} 切，不能整块 buffer 端出去 ——
+     * Buffer 其实就是「一块 ArrayBuffer 上开的一个窗口」，slice/subarray 出来的都是带偏移的视图。
+     * 之前整块返回：偏移不是 0 的视图就拿错了字节（尾部还多一截），像插错了洞还硬说通了。
+     */
     private static byte[] rawOf(Scriptable o) {
-        if (o instanceof org.mozilla.javascript.typedarrays.NativeTypedArrayView) {
-            NativeArrayBuffer b = ((org.mozilla.javascript.typedarrays.NativeTypedArrayView<?>) o).getBuffer();
-            if (b != null) return b.getBuffer();
+        if (o instanceof org.mozilla.javascript.typedarrays.NativeArrayBufferView) {
+            org.mozilla.javascript.typedarrays.NativeArrayBufferView v =
+                    (org.mozilla.javascript.typedarrays.NativeArrayBufferView) o;
+            NativeArrayBuffer b = v.getBuffer();
+            if (b == null) return new byte[0];
+            byte[] all = b.getBuffer();
+            int off = v.getByteOffset();
+            int len = v.getByteLength();
+            if (off < 0) off = 0;
+            if (off > all.length) off = all.length;
+            if (len < 0 || off + len > all.length) len = all.length - off;
+            if (off == 0 && len == all.length) return all;
+            byte[] out = new byte[len];
+            System.arraycopy(all, off, out, 0, len);
+            return out;
         }
         return new byte[0];
+    }
+
+    // ═════════════════════ 插件交回来的音频 ═════════════════════
+
+    /** 插件回来的一坨东西 → 音频字节，或者一个 http 地址。认不出来返回 null（绝不默默吞成空音频）。 */
+    static Object audioValue(Object v) { return audioValue(v, 0); }
+
+    private static Object audioValue(Object v, int depth) {
+        if (v == null || v == Undefined.instance || v == Scriptable.NOT_FOUND || depth > 5) return null;
+        if (v instanceof byte[]) return v;
+        if (v instanceof NativeArrayBuffer) return ((NativeArrayBuffer) v).getBuffer();
+        // Uint8Array / Uint8ClampedArray / Int8Array / Buffer / 16 位 32 位视图 … 全在这儿
+        if (v instanceof org.mozilla.javascript.typedarrays.NativeArrayBufferView) {
+            return rawOf((Scriptable) v);
+        }
+        if (v instanceof CharSequence) {
+            String s = v.toString().trim();
+            byte[] d = dataUrl(s);
+            if (d != null) return d;
+            if (looksLikeUrl(s)) return s;
+            byte[] b64 = looseBase64(s);
+            if (b64 != null) return b64;
+            return null;
+        }
+        if (v instanceof InputStream) return v;
+
+        if (v instanceof Scriptable) {
+            Scriptable o = (Scriptable) v;
+            // 外面的插件爱包成对象：{audio: Uint8Array} / {data: ...} / {result: ...} / {url: '...'}
+            for (String k : new String[]{"audio", "audioData", "data", "bytes", "buffer",
+                    "result", "url", "audioUrl", "src"}) {
+                Object x;
+                try { x = ScriptableObject.getProperty(o, k); }
+                catch (Throwable t) { continue; }
+                if (x == null || x == Scriptable.NOT_FOUND || x == Undefined.instance) continue;
+                Object got = audioValue(x, depth + 1);
+                if (got != null) return got;
+            }
+            // 数字数组 / 数字型 typed array：自己拼字节
+            if (hasLength(o)) {
+                long n = ((Number) o.get("length", o)).longValue();
+                if (n > 0 && n <= 16L * 1024 * 1024) return fromNumberArray(o);
+                if (n == 0) return null;              // 空数组当没给，别当成 0 字节音频播出去
+            }
+            // 包着的 Java 对象（ttsrv.httpGetBytes 那种）
+            if (v instanceof org.mozilla.javascript.NativeJavaObject) {
+                Object j = Context.jsToJava(v, Object.class);
+                if (j != null && j != v) return audioValue(j, depth + 1);
+            }
+            return null;
+        }
+
+        Object j = Context.jsToJava(v, Object.class);
+        if (j != null && j != v) return audioValue(j, depth + 1);
+        return null;
+    }
+
+    /** {@code data:audio/mpeg;base64,xxxx}。 */
+    private static byte[] dataUrl(String s) {
+        if (!s.startsWith("data:") || s.length() > 64 * 1024 * 1024) return null;
+        int i = s.indexOf(";base64,");
+        if (i < 0) return null;
+        try { return decode(s.substring(i + 8), "base64"); } catch (Throwable t) { return null; }
+    }
+
+    private static boolean looksLikeUrl(String s) {
+        return s.startsWith("http://") || s.startsWith("https://") || s.startsWith("file://");
+    }
+
+    /**
+     * 插件把音频 base64 成字符串直接甩回来（不是地址、也没包 data:）。
+     * 卡得严一点：够长、纯 base64 字符、长度是 4 的倍数 —— 免得把一句报错当音频播出去。
+     */
+    private static byte[] looseBase64(String s) {
+        if (s.length() < 512 || s.length() % 4 != 0) return null;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            boolean ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == '+' || c == '/' || c == '=';
+            if (!ok) return null;
+        }
+        try { return decode(s, "base64"); } catch (Throwable t) { return null; }
     }
 
     static boolean bytesLike(Object o) {
