@@ -2084,6 +2084,9 @@ public class MainActivity extends Activity {
         String age = "";
         String style = "";
         String tagLine = "";
+        String srcId = "";     // 这个音色是谁家的（引擎 id）
+        String srcLabel = "";  // 引擎显示名
+        String usedBy = "";    // 已经绑了哪些角色（一个音色可以绑多个）
 
         VoiceItem() { }
         VoiceItem(String display, String value) { name = display; raw = value; tagLine = display; }
@@ -2141,10 +2144,27 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             public void run() {
                 final List<VoiceItem> names = new ArrayList<VoiceItem>();
+                final List<EngineStore.SourceGroup> groups;
                 try {
-                    // 照它：音色是"所有启用中的引擎"合起来给的（选了音色就等于选了引擎）
-                    List<String> vs = EngineStore.fetchVoicesAll(MainActivity.this);
-                    for (String v : vs) names.add(VoiceItem.parse(v));
+                    // 照它：音色是"所有启用中的引擎"合起来给的（选了音色就等于选了引擎）；
+                    // 按来源引擎分组 —— 选音色时左边那一栏就是它
+                    groups = EngineStore.voicesByEngine(MainActivity.this);
+                    for (EngineStore.SourceGroup g : groups) {
+                        for (String v : g.voices) {
+                            VoiceItem vi = VoiceItem.parse(v);
+                            vi.srcId = g.id;
+                            vi.srcLabel = g.label;
+                            // 一个音色可以绑多个角色：这里把已经绑的都列出来
+                            List<String> roles = EngineStore.rolesUsingVoice(MainActivity.this, v);
+                            StringBuilder rb = new StringBuilder();
+                            for (String r : roles) {
+                                if (rb.length() > 0) rb.append("、");
+                                rb.append(r);
+                            }
+                            vi.usedBy = rb.length() > 8 ? roles.size() + " 个角色" : rb.toString();
+                            names.add(vi);
+                        }
+                    }
                 } catch (Throwable t) {
                     final String m = String.valueOf(t.getMessage());
                     runOnUiThread(new Runnable() {
@@ -2153,13 +2173,14 @@ public class MainActivity extends Activity {
                     return;
                 }
                 runOnUiThread(new Runnable() {
-                    public void run() { showVoiceDialog(names, role); }
+                    public void run() { showVoiceDialog(names, groups, role); }
                 });
             }
         }).start();
     }
 
-    private void showVoiceDialog(final List<VoiceItem> all, final String role) {
+    private void showVoiceDialog(final List<VoiceItem> all, final List<EngineStore.SourceGroup> groups,
+                                 final String role) {
         if (all.isEmpty()) { toast("没拿到音色"); return; }
         String who = role == null ? "选择音色" : "给「" + role + "」选音色";
 
@@ -2182,17 +2203,34 @@ public class MainActivity extends Activity {
         final ListView lv = new ListView(this);
         final ArrayAdapter<VoiceItem> ad = voiceAdapter();
         lv.setAdapter(ad);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(380));
-        lp.topMargin = ui.dp(6);
-        box.addView(lv, lp);
+
+        // ── 左边那一栏：按来源引擎分类 ──
+        final LinearLayout rail = ui.col();
+        rail.setPadding(0, ui.dp(6), ui.dp(8), 0);
+        ScrollView railScroll = new ScrollView(this);
+        railScroll.addView(rail);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ui.dp(104),
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        railScroll.setLayoutParams(rlp);
+
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(
+                0, ui.dp(400), 1f);
+        vlp.topMargin = ui.dp(6);
+        lv.setLayoutParams(vlp);
+
+        LinearLayout mid = ui.row();
+        mid.addView(railScroll);
+        mid.addView(lv);
+        box.addView(mid);
 
         final String[] kw = new String[]{""};
         final String[] gen = new String[]{""};
+        final String[] src = new String[]{""};
         final Runnable refill = new Runnable() {
-            public void run() { fillVoiceList(ad, all, kw[0], gen[0]); }
+            public void run() { fillVoiceList(ad, all, kw[0], gen[0], src[0]); }
         };
         renderGenderChips(chips, gen, refill);
+        renderSourceRail(rail, groups, all, src, refill, lv);
         refill.run();
 
         final AlertDialog dlg = new AlertDialog.Builder(this, dialogTheme())
@@ -2230,15 +2268,53 @@ public class MainActivity extends Activity {
         dlg.show();
     }
 
-    /** 两行式列表：分组标题加粗变色，音色行「名字 / 标签」。 */
+    /** 左侧音色来源栏：「全部」+ 每条引擎一行（带数量）。点一下只留那一家的音色。 */
+    private void renderSourceRail(final LinearLayout rail, final List<EngineStore.SourceGroup> groups,
+                                  final List<VoiceItem> all, final String[] src,
+                                  final Runnable refill, final ListView lv) {
+        rail.removeAllViews();
+        List<String[]> items = new ArrayList<String[]>();
+        items.add(new String[]{"", "全部 " + all.size()});
+        for (EngineStore.SourceGroup g : groups) {
+            if (g.voices.isEmpty()) continue;
+            items.add(new String[]{g.id, shortSrc(g.label) + " " + g.voices.size()});
+        }
+        for (final String[] it : items) {
+            boolean on = it[0].equals(src[0]) || (it[0].length() == 0 && src[0].length() == 0);
+            TextView c = ui.chip(it[1], on, new View.OnClickListener() {
+                public void onClick(View v) {
+                    src[0] = it[0];
+                    renderSourceRail(rail, groups, all, src, refill, lv);
+                    refill.run();
+                    if (lv.getAdapter() != null) lv.setSelection(0);
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = ui.dp(6);
+            rail.addView(c, lp);
+        }
+    }
+
+    /** 引擎名太长，左边那一栏塞不下就掐头留尾。 */
+    private static String shortSrc(String label) {
+        if (label == null) return "?";
+        String s = label.trim();
+        int i = s.indexOf('（');
+        if (i > 0) s = s.substring(0, i);
+        s = s.replaceAll("\\s+", "");
+        return s.length() > 6 ? s.substring(0, 6) : s;
+    }
+
+    /** 两行式列表：分组标题加粗变色，音色行「名字 / 标签」+ 共用它的角色。 */
     private ArrayAdapter<VoiceItem> voiceAdapter() {
         return new ArrayAdapter<VoiceItem>(this, 0, new ArrayList<VoiceItem>()) {
             @Override public View getView(int pos, View cv, ViewGroup parent) {
                 VoiceItem it = getItem(pos);
-                LinearLayout row = ui.col();
-                row.setPadding(ui.dp(4), ui.dp(11), ui.dp(4), ui.dp(11));
-                if (it == null) return row;
+                if (it == null) return new TextView(MainActivity.this);
                 if (it.header) {
+                    LinearLayout row = ui.col();
+                    row.setPadding(ui.dp(4), ui.dp(11), ui.dp(4), ui.dp(11));
                     TextView h = new TextView(MainActivity.this);
                     h.setText(it.name);
                     h.setTextColor(p.accent);
@@ -2247,27 +2323,41 @@ public class MainActivity extends Activity {
                     row.addView(h);
                     return row;
                 }
+
+                LinearLayout row = ui.row();
+                row.setPadding(ui.dp(4), ui.dp(9), ui.dp(4), ui.dp(9));
+                row.setGravity(Gravity.CENTER_VERTICAL);
+
+                LinearLayout text = ui.col();
                 TextView n = new TextView(MainActivity.this);
                 n.setText(it.name);
                 n.setTextColor(p.textPrimary);
                 n.setTextSize(15);
-                row.addView(n);
-                if (it.tagLine.length() > 0) {
+                text.addView(n);
+                String sub = it.tagLine;
+                // 一个音色可以绑多个角色：这里直接写出来（点一下是"再加一个角色用它"）
+                if (it.usedBy.length() > 0) {
+                    sub = (sub.length() > 0 ? sub + "  ·  " : "") + "已用于 " + it.usedBy;
+                } else if (it.srcLabel.length() > 0) {
+                    sub = (sub.length() > 0 ? sub + "  ·  " : "") + it.srcLabel;
+                }
+                if (sub.length() > 0) {
                     TextView t = new TextView(MainActivity.this);
-                    t.setText(it.tagLine);
-                    t.setTextColor(p.textMuted);
+                    t.setText(sub);
+                    t.setTextColor(it.usedBy.length() > 0 ? p.accent : p.textMuted);
                     t.setTextSize(11.5f);
                     t.setPadding(0, ui.dp(3), 0, 0);
-                    row.addView(t);
+                    text.addView(t);
                 }
+                row.addView(text, ui.weightGap(1f, 0));
                 return row;
             }
         };
     }
 
-    /** 按性别分组填表：女声 / 男声 / 未标注，各带一条分组标题。 */
+    /** 按性别分组填表：女声 / 男声 / 未标注，各带一条分组标题；可再按来源引擎过滤。 */
     private void fillVoiceList(ArrayAdapter<VoiceItem> ad, List<VoiceItem> all,
-                               String kw, String gen) {
+                               String kw, String gen, String srcId) {
         ad.clear();
         String[] secs = {"女声", "男声", "未标注"};
         for (String sec : secs) {
@@ -2275,6 +2365,7 @@ public class MainActivity extends Activity {
             List<VoiceItem> hits = new ArrayList<VoiceItem>();
             for (VoiceItem v : all) {
                 if (!sec.equals(v.gender)) continue;
+                if (srcId.length() > 0 && !srcId.equals(v.srcId)) continue;
                 if (kw.length() > 0 && !v.name.contains(kw) && !v.tagLine.contains(kw)
                         && !v.raw.contains(kw)) continue;
                 hits.add(v);
@@ -2326,24 +2417,69 @@ public class MainActivity extends Activity {
             int color;
             if (v == null || v.length() == 0) { shown = "跟随全局"; color = p.textSecondary; }
             else if (MultiVoice.SKIP.equals(v)) { shown = "不念"; color = p.textMuted; }
-            else { shown = TtsEngine.shortVoice(v); color = p.accent; }
+            else {
+                shown = TtsEngine.shortVoice(v);
+                color = p.accent;
+                // 一个音色绑了多个角色时标出来 —— 改它等于同时改这几个角色
+                List<String> mates = EngineStore.rolesUsingVoice(this, v);
+                if (mates.size() > 1) {
+                    StringBuilder sb = new StringBuilder();
+                    for (String m : mates) {
+                        if (m.equals(k)) continue;
+                        if (sb.length() > 0) sb.append("、");
+                        sb.append(m);
+                    }
+                    if (sb.length() > 0) shown = shown + "（和 " + sb + " 共用同一个音色）";
+                }
+            }
             Button b = ui.btn(k + " → " + shown + "  ▸", false, new View.OnClickListener() {
                 public void onClick(View x) { pickTableVoice(k); }
             });
             b.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
             b.setTextColor(color);
+
+            // 每一行一个试听：选完音色就地听，不用再去音色库里找
+            LinearLayout rowBox = ui.row();
+            rowBox.setGravity(Gravity.CENTER_VERTICAL);
+            rowBox.addView(b, ui.weightGap(1f, 8));
+            final boolean skip = v != null && MultiVoice.SKIP.equals(v);
+            final String pv = v;
+            TextView play = ui.chip("▶", false, null);
+            if (skip) {
+                play.setAlpha(0.35f);
+            } else {
+                play.setOnClickListener(new View.OnClickListener() {
+                    public void onClick(View x) { previewRoleVoice(k, pv); }
+                });
+            }
+            rowBox.addView(play);
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = ui.dp(6);
-            roleBox.addView(b, lp);
+            roleBox.addView(rowBox, lp);
         }
     }
 
-    /** 表里这一条怎么改：跟随全局 / 不念 / 选音色 / 删掉。 */
+    /** 角色音色表里的试听：用这个角色当前的音色念一句样例（「跟随全局」就用全局音色）。 */
+    private void previewRoleVoice(String role, String voice) {
+        Speaker spk = RelayService.speakerOrNull();
+        if (spk == null) { toast("朗读没在跑（先打开中转）"); return; }
+        String use = voice;
+        if (use == null || use.length() == 0) use = Prefs.voice(this);   // 跟随全局
+        if (use == null || use.length() == 0) { toast("还没选全局音色"); return; }
+        Prefs.setVoiceEngine(this, use, EngineStore.ownerOfVoice(this, use));
+        spk.interrupt();
+        spk.feed(Prefs.tryText(this), use);
+        toast("试听「" + role + "」：" + TtsEngine.shortVoice(use));
+    }
+
+    /** 表里这一条怎么改：跟随全局 / 不念 / 选音色 / 抄别人的 / 删掉。 */
     private void pickTableVoice(final String key) {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("「" + key + "」的音色")
-                .setItems(new String[]{"跟随全局音色", "不念（这个角色不出声）", "从音色库选…"},
+                .setItems(new String[]{"跟随全局音色", "不念（这个角色不出声）", "从音色库选…",
+                                "用别的角色已经在用的音色（一个音色可以绑多个角色）…"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 if (which == 0) {
@@ -2352,8 +2488,10 @@ public class MainActivity extends Activity {
                                 } else if (which == 1) {
                                     Prefs.putVoice(MainActivity.this, key, MultiVoice.SKIP);
                                     renderVoiceTable();
-                                } else {
+                                } else if (which == 2) {
                                     fetchVoicesAnd(key);
+                                } else {
+                                    reuseOtherRoleVoice(key);
                                 }
                             }
                         })
@@ -2361,6 +2499,37 @@ public class MainActivity extends Activity {
                     public void onClick(DialogInterface d, int which) {
                         Prefs.removeVoice(MainActivity.this, key);
                         renderVoiceTable();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 把别的角色正在用的音色直接给这个角色 —— 同一个音色绑多个角色，就是这么来的。 */
+    private void reuseOtherRoleVoice(final String key) {
+        java.util.LinkedHashMap<String, String> t = Prefs.voiceTableMap(this);
+        final List<String> voices = new ArrayList<String>();
+        final List<String> labels = new ArrayList<String>();
+        for (java.util.Map.Entry<String, String> e : t.entrySet()) {
+            String v = e.getValue();
+            if (v == null || v.length() == 0 || MultiVoice.SKIP.equals(v)) continue;
+            if (v.trim().equalsIgnoreCase(String.valueOf(t.get(key)).trim())) continue;
+            int at = voices.indexOf(v);
+            if (at < 0) { voices.add(v); labels.add(TtsEngine.shortVoice(v) + "  ←  " + e.getKey()); }
+            else labels.set(at, labels.get(at) + "、" + e.getKey());
+        }
+        if (voices.isEmpty()) { toast("别的角色还没选过音色"); return; }
+        new AlertDialog.Builder(this, dialogTheme())
+                .setTitle("给「" + key + "」用谁的音色")
+                .setItems(labels.toArray(new String[0]), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        String v = voices.get(which);
+                        Prefs.putVoice(MainActivity.this, key, v);
+                        Prefs.setVoiceEngine(MainActivity.this, v,
+                                EngineStore.ownerOfVoice(MainActivity.this, v));
+                        renderVoiceTable();
+                        refresh();
+                        toast("「" + key + "」也用这个音色了");
                     }
                 })
                 .setNegativeButton("取消", null)

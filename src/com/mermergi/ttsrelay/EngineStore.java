@@ -792,6 +792,58 @@ public final class EngineStore {
         try { JsTtsEngine.abandonHosts(); } catch (Throwable ignored) { }
     }
 
+    /** 音色库按「来源引擎」分组 —— 选音色时左侧那一栏就是它（豆包 / 原神 / 火山…）。 */
+    public static final class SourceGroup {
+        public final String id;
+        public final String label;
+        public final List<String> voices = new ArrayList<String>();
+        SourceGroup(String id, String label) { this.id = id; this.label = label; }
+    }
+
+    /**
+     * 所有启用中的引擎，各自能报出哪些音色。
+     * 顺手把「音色 → 引擎」记进 {@link #VOICE_OWNER}（选了音色就等于选了引擎）。
+     */
+    public static List<SourceGroup> voicesByEngine(Context c) {
+        List<SourceGroup> out = new ArrayList<SourceGroup>();
+        for (Item it : all(c)) {
+            if (!isEnabled(it)) continue;
+            List<String> vs;
+            try { vs = voicesCached(c, it); } catch (Throwable t) { continue; }
+            if (vs == null || vs.isEmpty()) continue;
+            String label = it.label == null || it.label.trim().length() == 0 ? it.kind : it.label.trim();
+            SourceGroup g = new SourceGroup(it.id, label);
+            for (String v : vs) {
+                if (v == null || v.trim().length() == 0) continue;
+                VOICE_OWNER.put(v, it.id);
+                g.voices.add(v);
+            }
+            if (!g.voices.isEmpty()) out.add(g);
+        }
+        return out;
+    }
+
+    /** 这个引擎叫什么（界面上按来源分组时显示）。 */
+    public static String engineLabel(Context c, String id) {
+        if (id == null || id.length() == 0) return "";
+        Item it = get(c, id);
+        if (it == null) return "";
+        return it.label == null || it.label.trim().length() == 0 ? it.kind : it.label.trim();
+    }
+
+    /** 还有哪些角色在用这个音色 —— 一个音色可以绑多个角色，界面上要看得见。 */
+    public static List<String> rolesUsingVoice(Context c, String voice) {
+        List<String> out = new ArrayList<String>();
+        if (voice == null || voice.trim().length() == 0) return out;
+        String want = voice.trim();
+        for (java.util.Map.Entry<String, String> e : Prefs.voiceTableMap(c).entrySet()) {
+            String v = e.getValue();
+            if (v == null) continue;
+            if (v.trim().equalsIgnoreCase(want)) out.add(e.getKey());
+        }
+        return out;
+    }
+
     /** 播放链只调这一个：按音色挑引擎，再合成。 */
     public static byte[] synthNow(Context c, String text, String voice) throws Exception {
         TtsEngine e = engineForVoice(c, voice);
