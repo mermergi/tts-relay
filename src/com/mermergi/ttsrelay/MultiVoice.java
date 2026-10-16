@@ -60,6 +60,12 @@ public final class MultiVoice {
     /** 音色表里这个值 = 不念。 */
     public static final String SKIP = "\u0001skip";
 
+    /** 这五个是分类键，不是角色名。 */
+    public static boolean isReservedKey(String k) {
+        return K_NARRATOR.equals(k) || K_DIALOGUE.equals(k) || K_THOUGHT.equals(k)
+                || K_ACTION.equals(k) || K_DEFAULT.equals(k);
+    }
+
     /** 一段文本：正文 + 角色（可能是空）+ 语气类别。 */
     public static final class Seg {
         public final String text;
@@ -71,14 +77,28 @@ public final class MultiVoice {
         }
     }
 
+    /** 查表：允许名字两边有空白、大小写不同 —— 卡片里的写法常和手打的差一点点。 */
+    private static String lookup(Map<String, String> t, String key) {
+        if (key == null) return null;
+        String v = t.get(key);
+        if (v == null) v = t.get(key.trim());
+        if (v == null) {
+            String k = key.trim();
+            for (Map.Entry<String, String> e : t.entrySet()) {
+                if (e.getKey().trim().equalsIgnoreCase(k)) return e.getValue();
+            }
+        }
+        return v;
+    }
+
     /** 这句该用哪个音色；null = 不念。 */
     public static String voiceFor(Context c, Seg seg) {
         if (!Prefs.mvEnabled(c)) return Prefs.voice(c);
         Map<String, String> t = Prefs.voiceTableMap(c);
         String v = null;
-        if (seg.name.length() > 0) v = t.get(seg.name);
-        if (v == null) v = t.get(roleKey(seg.role));
-        if (v == null) v = t.get(K_DEFAULT);
+        if (seg.name.length() > 0) v = lookup(t, seg.name);
+        if (v == null) v = lookup(t, roleKey(seg.role));
+        if (v == null) v = lookup(t, K_DEFAULT);
         if (v == null || v.length() == 0) return Prefs.voice(c);   // 没配 → 跟随全局
         return SKIP.equals(v) ? null : v;
     }
@@ -252,6 +272,28 @@ public final class MultiVoice {
     private String name = "";
     /** 这一轮说话的人 —— 群聊整条消息都是他的。 */
     private String turnName = "";
+
+    /**
+     * 音色表里用户<b>点名过</b>的角色名。这几个名字一出现就一定是说话人 —— 不用猜、
+     * 不受"一行只有一个名字"还是"名字：内容"影响。用户既然手填了这个角色，就该认它。
+     */
+    private java.util.Set<String> knownNames = java.util.Collections.emptySet();
+
+    public void setKnownNames(java.util.Collection<String> names) {
+        java.util.Set<String> set = new java.util.LinkedHashSet<String>();
+        if (names != null) {
+            for (String n : names) {
+                if (n == null) continue;
+                String t = clean(n);
+                if (t.length() > 0 && t.length() <= 24 && !isReservedKey(t)) set.add(t);
+            }
+        }
+        knownNames = set;
+    }
+
+    private boolean isKnownName(String n) {
+        return n != null && knownNames.contains(n.trim());
+    }
     private int prefixState = 0;          // 0 收名字 / 1 吃到冒号 / 2 这行不判前缀
     private final StringBuilder prefixBuf = new StringBuilder();
     private final StringBuilder prefixWs = new StringBuilder();
@@ -372,7 +414,7 @@ public final class MultiVoice {
             String n = clean(prefixBuf.toString());
             // 群聊已经把说话人告诉过我们了：名字对得上就一定是前缀，
             // 哪怕后面跟的是「（动作）」这种括号开头，也得把它吃掉而不是念出来。
-            boolean known = turnName.length() > 0 && turnName.equals(n);
+            boolean known = (turnName.length() > 0 && turnName.equals(n)) || isKnownName(n);
             if ((isSpeakerName(n) || known)
                     && (known || isQuoteStart(c) || Character.isLetterOrDigit(c))) {
                 turnName = n;
@@ -461,6 +503,11 @@ public final class MultiVoice {
 
     private void emitGalLine(String line) {
         if (line == null || line.trim().length() == 0) return;
+        // 一行光写个名字（`小雪` / `小雪：`）—— 卡片里最常见的写法。
+        // 这个名字在音色表里被点名过 → 它就是下面几句的说话人，这行本身不念。
+        String bare = line.trim();
+        if (bare.endsWith(":") || bare.endsWith("\uff1a")) bare = bare.substring(0, bare.length() - 1).trim();
+        if (isKnownName(bare)) { turnName = bare; return; }
         Gal g = parseGal(line);
         String n;
         String text;

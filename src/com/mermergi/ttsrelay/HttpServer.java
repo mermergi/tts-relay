@@ -686,6 +686,15 @@ public final class HttpServer {
         MultiVoice mv = new MultiVoice(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx),
                 Prefs.mvEnabled(ctx), Prefs.parseMode(ctx));
         mv.setTurnName(who);
+        // 音色表里点名过的角色名交给解析器 —— 这样"小雪"就算写成单独一行、
+        // 或者「小雪：（动作）」这种，它都认得出是这个人，而不会全丢给旁白。
+        java.util.List<String> names = new java.util.ArrayList<String>();
+        for (java.util.Map.Entry<String, String> e : Prefs.voiceTableMap(ctx).entrySet()) {
+            if (MultiVoice.isReservedKey(e.getKey())) continue;
+            if (MultiVoice.SKIP.equals(e.getValue())) continue;
+            names.add(e.getKey());
+        }
+        mv.setKnownNames(names);
         return mv;
     }
 

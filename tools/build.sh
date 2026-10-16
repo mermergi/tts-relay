@@ -20,8 +20,8 @@ if [ -z "$android_jar" ] || [ ! -f "$android_jar" ]; then
     done
 fi
 
-for tool in aapt2 javac d8 apksigner keytool; do
-    command -v "$tool" >/dev/null 2>&1 || { echo "缺少 $tool —— 先跑：pkg install aapt2 apksigner d8 openjdk-17" >&2; exit 1; }
+for tool in aapt2 javac kotlinc d8 apksigner keytool; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "缺少 $tool —— 先跑：pkg install aapt2 apksigner d8 openjdk-17 kotlin" >&2; exit 1; }
 done
 
 if [ -z "$android_jar" ] || [ ! -f "$android_jar" ]; then
@@ -53,12 +53,28 @@ aapt2 link \
 
 echo "==> javac"
 mapfile -t sources < <(find "$gen" "$root/src" -name '*.java')
-# 依赖的 jar（Rhino 这种）：放在 tools/lib/ 下的都会带上
+# 依赖的 jar（Rhino / OkHttp / 协程…）：tools/lib/ 下的全带上
 libs=()
-for j in "$root"/tools/*.jar; do
-    case "$j" in *android.jar) continue;; esac
+for j in "$root"/tools/lib/*.jar; do
     [ -f "$j" ] && libs+=("$j")
 done
+if [ "${#libs[@]}" -eq 0 ]; then
+    echo "tools/lib/ 里一个 jar 都没有 —— 先跑：bash tools/fetch-deps.sh" >&2
+    exit 1
+fi
+# Kotlin 标准库跟着 kotlinc 走（自己下容易和编译器错版）
+kstdlib="$(dirname "$(readlink -f "$(command -v kotlinc)")")/../lib/kotlin-stdlib.jar"
+[ -f "$kstdlib" ] || kstdlib="$PREFIX/opt/kotlin/lib/kotlin-stdlib.jar"
+[ -f "$kstdlib" ] && libs+=("$kstdlib")
+
+echo "==> kotlinc（TTS Server 的插件运行时 kt/ttsrv-script + 协议层 kt/app）"
+cp_kt="$android_jar"
+for j in "${libs[@]}"; do cp_kt="$cp_kt:$j"; done
+mapfile -t kt_sources < <(find "$root/kt" -name '*.kt')
+kotlinc -jvm-target 1.8 -nowarn -classpath "$cp_kt" -d "$out/kt.jar" "${kt_sources[@]}" >"$out/kotlinc.log" 2>&1 || {
+    tail -40 "$out/kotlinc.log" >&2; echo "kotlinc 失败（见 $out/kotlinc.log）" >&2; exit 1; }
+libs+=("$out/kt.jar")
+
 cp_android="$android_jar"
 for j in "${libs[@]:-}"; do [ -n "$j" ] && cp_android="$cp_android:$j"; done
 set +e
