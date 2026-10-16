@@ -846,7 +846,16 @@ public final class HttpServer {
     }
 
     private static String tag(MultiVoice.Seg g) {
-        return g.name.length() == 0 ? g.role : g.role + ":" + g.name;
+        StringBuilder sb = new StringBuilder(g.name.length() == 0 ? g.role : g.role + ":" + g.name);
+        if (g.tags != null && g.tags.size() > 1) {          // 多标签：都打出来，好核对落到哪一条
+            sb.append('[');
+            for (int i = 1; i < g.tags.size(); i++) {
+                if (i > 1) sb.append(',');
+                sb.append(g.tags.get(i));
+            }
+            sb.append(']');
+        }
+        return sb.toString();
     }
 
     /** 干跑时把"这句会用谁的音色"也带上 —— 规则改完不用真念就能验。 */
