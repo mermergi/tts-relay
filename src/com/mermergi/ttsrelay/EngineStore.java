@@ -28,7 +28,7 @@ public final class EngineStore {
 
     public static final String KIND_SYSTEM = "system";
     public static final String KIND_HTTP = "http";
-    /** TTS Server 的 JS 插件 —— 源码存着，用 TTS Server 自己的运行时跑（见 kt/app/PluginBridge.kt）。 */
+    /** TTS Server 的 JS 插件 —— 源码存着，用 TTS Server 自己的运行时跑（见 kt/ + PluginHost）。 */
     public static final String KIND_JS = "js";
 
     public static final String ID_SYSTEM = "system";
@@ -731,44 +731,24 @@ public final class EngineStore {
     }
 
     /**
-     * 这个音色该给多久 —— 插件配置里的 {@code timeout}（它那套引擎文件里有这个键）。
-     * 播放链拿它做**硬超时**：到点就丢线程，不能让插件把整条流水线拖死。
+     * 这个音色是不是 JS 插件在念 —— 插件的"吊死"能用"还在不在吐字节"判断，
+     * 别的引擎只能按总时限。
      */
-    /**
-     * 最近一次**成功**的合成耗时（按音色记）。
-     * 硬超时按它自适应：快引擎 8 秒就该回来了，慢引擎才配等更久。
-     */
-    private static final java.util.Map<String, Long> SYNTH_MS =
-            new java.util.concurrent.ConcurrentHashMap<String, Long>();
+    public static boolean isJsVoice(Context c, String voice) {
+        try { return engineForVoice(c, voice) instanceof JsTtsEngine; }
+        catch (Throwable t) { return false; }
+    }
 
-    /** 合成成功时记一笔，给 {@link #synthDeadlineMs} 当依据。 */
+    /** 合成成功时记一笔（现在只用来日志里看看哪句慢）。 */
     public static void noteSynthOk(String voice, long ms) {
         if (voice == null || voice.length() == 0) return;
-        if (ms <= 0 || ms > 120000L) return;
+        if (ms <= 0 || ms > 300000L) return;
         SYNTH_MS.put(voice, ms);
     }
 
-    /**
-     * 这个音色合成时最多等多久。
-     *
-     * <p>以前是照插件声明的 {@code timeout}（有些插件声明成 30 秒）—— 真机上插件一旦吊住，
-     * 就是**整整 30 秒没声**，谁等得了。现在按实测自适应：最近一次成功用了几毫秒，
-     * 就给它的 3 倍 + 2 秒，下限 8 秒、上限 60 秒；插件声明的 timeout 只当上限用。
-     * 正常一句 1~3 秒的插件，8 秒没回来就判定"这次是吊住了"，不是"慢"。
-     */
-    public static long synthDeadlineMs(Context c, String voice) {
-        long base = 5000L;
-        Long last = SYNTH_MS.get(voice == null ? "" : voice);
-        if (last != null) base = Math.max(5000L, Math.min(60000L, last * 2L + 1500L));
-        try {
-            TtsEngine e = engineForVoice(c, voice);
-            if (e instanceof JsTtsEngine) {
-                int t = ((JsTtsEngine) e).timeoutMs(30000);
-                base = Math.min(base, Math.max(5000L, Math.min(60000L, (long) t)));
-            }
-        } catch (Throwable ignored) { }
-        return base;
-    }
+    /** 最近一次成功的合成耗时（按音色记）。 */
+    private static final java.util.Map<String, Long> SYNTH_MS =
+            new java.util.concurrent.ConcurrentHashMap<String, Long>();
 
     /** 插件宿主吊住了（合成硬超时了）：整个丢掉，下一句重新建，别再用那个抱死的运行时。 */
     public static void abandonPluginHosts() {

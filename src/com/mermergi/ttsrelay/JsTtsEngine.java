@@ -18,7 +18,7 @@ import com.mermergi.ttsrelay.js.PluginBridge;
  * TTS Server（jing332/tts-server-android，MIT）的 {@code lib-script} 源码原样编出来的
  * （见 {@code kt/ttsrv-script/}）；调用协议（{@code getAudio}、
  * {@code getAudioV2(request, callback)}、{@code EditorJS.getVoices}）也是照它
- * {@code TtsPluginEngineV2} 那份搬的（见 {@code kt/app/PluginBridge.kt}）。
+ * {@code TtsPluginEngineV2} 那份搬的（见 {@code kt/app/PluginHost.kt}）。
  *
  * 所以插件里的算法是真的在它自己的运行时里跑。
  */
@@ -218,8 +218,14 @@ public final class JsTtsEngine implements TtsEngine {
         // 同一个插件运行时同时被两个合成碰，就会互相把会话搅烂 → No data written。
         synchronized (h) {
             String v = pickVoice(c, s.voice);
-            h.setSource(locale(), v, s.rate, s.volume, s.pitch);
-            h.onVoiceChanged(locale(), v);
+            // 音色/参数没变就别再折腾插件一遍 —— 分角色朗读是"一个音色念几句又换下一个"，
+            // 每次 setSource + onVoiceChanged 都会让插件重新初始化一回（慢的就是这一下）。
+            String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
+            if (!sig.equals(h.getAppliedSig())) {
+                h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.onVoiceChanged(locale(), v);
+                h.setAppliedSig(sig);
+            }
 
             Throwable first = null;
             for (int attempt = 0; attempt < 3; attempt++) {
