@@ -1135,7 +1135,34 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void openPluginEditor(EngineStore.Item it, boolean openVars) {
+    private void openPluginEditor(final EngineStore.Item it, final boolean openVars) {
+        // 没有插件源码的引擎（系统语音、HTTP 模板、原生豆包）：编辑器只管插件源码，
+        // 所以这儿给一条「粘源码转成 JS 插件」的路 —— 照 TTS Server：引擎就是插件。
+        if (it != null && it.s("src", "").trim().length() == 0
+                && !EngineStore.KIND_JS.equals(it.kind)) {
+            new AlertDialog.Builder(this, dialogTheme())
+                    .setTitle(it.label)
+                    .setMessage("这个引擎没有插件源码，插件编辑器就没得编。\n"
+                            + "TTS Server 里引擎本身就是 .js 插件 —— 贴一份插件源码，它就变成 JS 插件。")
+                    .setPositiveButton("粘贴插件源码", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) {
+                            it.kind = EngineStore.KIND_JS;
+                            it.put("src", "");
+                            EngineStore.put(MainActivity.this, it);
+                            renderEngines();
+                            openPluginEditor(it, false);
+                        }
+                    })
+                    .setNeutralButton("设为当前引擎", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) {
+                            EngineStore.setActive(MainActivity.this, it.id);
+                            renderEngines();
+                        }
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+            return;
+        }
         Intent pi = new Intent(this, PluginEditorActivity.class);
         pi.putExtra(PluginEditorActivity.EXTRA_ID, it.id);
         pi.putExtra(PluginEditorActivity.EXTRA_OPEN_VARS, openVars);

@@ -70,11 +70,11 @@ public final class PluginEditorActivity extends Activity {
         String id = getIntent() == null ? "" : getIntent().getStringExtra(EXTRA_ID);
         it = EngineStore.get(this, id);
         if (it == null) { toast("引擎没找到"); finish(); return; }
-        // 有插件源码的（包括"改成 JS 插件"之后的豆包）→ 代码页
-        boolean asCode = EngineStore.KIND_JS.equals(it.kind)
-                || it.s("src", "").trim().length() > 0;
-        if (!asCode) {
-            buildGenericUi();
+        // 这个页只干一件事：编辑插件源码。没源码的引擎（系统语音没有代码）不进这儿。
+        if (it.s("src", "").trim().length() == 0
+                && !EngineStore.KIND_JS.equals(it.kind)) {
+            toast("这个引擎没有插件源码");
+            finish();
             return;
         }
         // 进来就先把插件声明的变量读回来（老引擎不用重新导入）
@@ -86,175 +86,6 @@ public final class PluginEditorActivity extends Activity {
                 public void run() { varsDialog(); }
             });
         }
-    }
-
-    // ───────────────────────── 通用引擎页（豆包 / HTTP / 系统）─────────────────────────
-
-    private LinearLayout genericPage;
-    private final List<String[]> genSpec = new ArrayList<String[]>();
-    private final List<EditText> genBoxes = new ArrayList<EditText>();
-    private final List<String> genKeys = new ArrayList<String>();
-    private TextView cookieState;
-
-    /**
-     * 非 JS 引擎也走这个整屏页（不是那个老表单）：
-     * 名字 + 参数卡片 + Cookie 卡片 + 顶栏的 ▶ 试听 / 💾 保存。
-     */
-    private void buildGenericUi() {
-        LinearLayout root = ui.col();
-        root.setBackgroundColor(p.bg);
-        root.setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(6));
-
-        LinearLayout top = ui.row();
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(tinyKey("←", new View.OnClickListener() {
-            public void onClick(View v) { saveGeneric(); finish(); }
-        }));
-        nameBox = ui.field("label", "", InputType.TYPE_CLASS_TEXT);
-        nameBox.setText(it.label);
-        nameBox.setHint("引擎名字");
-        nameBox.setSingleLine(true);
-        LinearLayout.LayoutParams np = ui.weight(1f);
-        np.leftMargin = ui.dp(4);
-        np.rightMargin = ui.dp(4);
-        top.addView(nameBox, np);
-        top.addView(tinyKey("▶", new View.OnClickListener() {
-            public void onClick(View v) { listen(); }
-        }));
-        top.addView(tinyKey("💾", new View.OnClickListener() {
-            public void onClick(View v) { saveGeneric(); toast("已保存"); }
-        }));
-        root.addView(top);
-
-        ScrollView sv = new ScrollView(this);
-        genericPage = ui.col();
-        sv.addView(genericPage);
-
-        if (EngineStore.KIND_HTTP.equals(it.kind)) {
-            addSpec("url", "接口地址模板（{{text}} {{voice}} {{rate}} {{pitch}} {{volume}}）", it.s("url", ""), true);
-            addSpec("method", "请求方法 GET / POST", it.s("method", "GET"), false);
-            addSpec("headers", "请求头（每行 Key: Value）", it.s("headers", ""), true);
-            addSpec("body", "POST 正文模板", it.s("body", ""), true);
-            addSpec("json_key", "从 JSON 取音频的字段（留空 = 响应本身就是音频）", it.s("json_key", ""), false);
-            addSpec("timeout", "超时（毫秒）", String.valueOf(it.i("timeout", 60000)), false);
-            addSpec("voices_url", "音色目录地址（GET 一个 JSON；留空 = 不拉）", it.s("voices_url", ""), true);
-            addSpec("voices_path", "JSON 路径，如 data.list（留空 = 响应本身就是数组）", it.s("voices_path", ""), false);
-            addSpec("voices_name", "显示名取哪个字段", it.s("voices_name", "name"), false);
-            addSpec("voices_id", "取值取哪个字段（留空 = 同显示名）", it.s("voices_id", ""), false);
-            addSpec("voices", "手工音色列表（每行一个）", it.s("voices", ""), true);
-        } else if (EngineStore.KIND_DOUBAO.equals(it.kind)) {
-            addSpec("login_url", "登录页地址（点「网页登录」开它）",
-                    it.s("login_url", "https://www.doubao.com/chat"), false);
-            addSpec("binding", "绑定什么：cookies / cookies.名字 / locals.键 / sessions.键",
-                    it.s("binding", "cookies"), false);
-            addSpec("ua", "登录页 UA：mobile / pc / 自定义", it.s("ua", "mobile"), false);
-            addSpec("proto", "链路：voicegenie（新，protobuf）/ samantha（老，纯 JSON）",
-                    it.s("proto", "voicegenie"), false);
-            addSpec("appkey", "appkey", it.s("appkey", ""), false);
-            addSpec("prefix", "发送前缀（发给引擎前拼在文本前面，可留空）", it.s("prefix", ""), false);
-            addSpec("speaker", "默认音色 style_id（留空自动挑第一个）", it.s("speaker", ""), false);
-            addSpec("format", "音频格式 mp3 / wav / ogg_opus", it.s("format", "mp3"), false);
-            addSpec("sample_rate", "采样率（mp3 用 24000）", String.valueOf(it.i("sample_rate", 24000)), false);
-        } else {
-            addSpec("pkg", "系统引擎包名（留空 = 手机默认那个）", it.s("pkg", ""), false);
-            addSpec("lang", "语言", it.s("lang", "zh-CN"), false);
-        }
-
-        // Cookie：动辄上千字，只显示状态 + 网页登录
-        LinearLayout ck = ui.card();
-        ck.addView(ui.sectionTitle("Cookie"));
-        cookieState = ui.value("");
-        cookieState.setLineSpacing(ui.dp(3), 1f);
-        ck.addView(cookieState);
-        refreshCookie();
-        final String lk = loginTarget();
-        if (lk.length() > 0) {
-            if (EngineStore.KIND_DOUBAO.equals(it.kind)) {
-            // TTS Server 里豆包本来就是个 .js 插件 —— 想统一成插件就一键转过去，粘源码即可
-            ck.addView(ui.hint("原生豆包引擎（这条链路是我们自己实现的）。\n"
-                    + "TTS Server 里那份豆包是 .js 插件，想跟火山那两个一样用代码页，就点下面这个："));
-            ck.addView(ui.btn("改成 JS 插件（粘插件源码）", false, new View.OnClickListener() {
-                public void onClick(View v) {
-                    saveGeneric();
-                    it.kind = EngineStore.KIND_JS;
-                    it.put("src", "");
-                    EngineStore.put(PluginEditorActivity.this, it);
-                    toast("已改成 JS 插件 —— 把插件源码贴进代码页就行");
-                    recreate();
-                }
-            }), topGap(8));
-        }
-        ck.addView(ui.btn("网页登录，自动抓 Cookie", true, new View.OnClickListener() {
-                public void onClick(View v) {
-                    saveGeneric();
-                    Intent i = new Intent(PluginEditorActivity.this, LoginActivity.class);
-                    i.putExtra(LoginActivity.EXTRA_URL, it.s("login_url", ""));
-                    i.putExtra(LoginActivity.EXTRA_BINDING, it.s("binding", "cookies"));
-                    i.putExtra(LoginActivity.EXTRA_UA, it.s("ua", "mobile"));
-                    i.putExtra(LoginActivity.EXTRA_TITLE, "登录完点右上角「抓取」");
-                    try { startActivityForResult(i, REQ_LOGIN); }
-                    catch (Throwable t) { toast("打不开登录页：" + t.getMessage()); }
-                }
-            }), topGap(10));
-        }
-        genericPage.addView(ck);
-        root.addView(sv, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        setContentView(root);
-    }
-
-    private LinearLayout.LayoutParams topGap(int dp) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = ui.dp(dp);
-        return lp;
-    }
-
-    private void addSpec(String key, String label, String def, boolean multi) {
-        LinearLayout card = ui.card();
-        card.addView(ui.label(label));
-        EditText e = multi ? ui.area("") : ui.field(null, def, InputType.TYPE_CLASS_TEXT);
-        if (multi) e.setText(def);
-        else e.setText(def);
-        e.setMinLines(multi ? 3 : 1);
-        card.addView(e);
-        genSpec.add(new String[]{key, label, def, multi ? "multi" : "single"});
-        genKeys.add(key);
-        genBoxes.add(e);
-        genericPage.addView(card);
-    }
-
-    private String loginTarget() {
-        if (EngineStore.KIND_DOUBAO.equals(it.kind)) return "cookie";
-        String k = it.s("login_key", "");
-        return k.length() > 0 ? k : (it.s("login_url", "").length() > 0 ? "cred" : "");
-    }
-
-    private void refreshCookie() {
-        if (cookieState == null) return;
-        String k = loginTarget();
-        String cur = k.length() == 0 ? "" : it.s(k, "");
-        cookieState.setText(cur.length() == 0
-                ? "未设置 —— 点下面的「网页登录」抓一个，或手动粘一个"
-                : CookieGrab.summary(cur));
-        cookieState.setTextColor(cur.length() == 0 ? p.warn : p.ok);
-    }
-
-    private void saveGeneric() {
-        if (it == null) return;
-        String nm = nameBox == null ? "" : nameBox.getText().toString().trim();
-        if (nm.length() > 0) it.label = nm;
-        for (int i = 0; i < genKeys.size(); i++) {
-            String k = genKeys.get(i);
-            String v = genBoxes.get(i).getText().toString();
-            if (("timeout".equals(k) || "sample_rate".equals(k)) && v.trim().length() > 0) {
-                try { it.put(k, Integer.parseInt(v.trim())); } catch (Throwable ignored) { }
-            } else {
-                it.put(k, v);
-            }
-        }
-        EngineStore.put(this, it);
-        if (EngineStore.KIND_DOUBAO.equals(it.kind)) DoubaoEngine.clearVoiceCache();
     }
 
     // ───────────────────────── 界面 ─────────────────────────
@@ -760,18 +591,6 @@ public final class PluginEditorActivity extends Activity {
         super.onActivityResult(req, res, data);
         if (req == REQ_LOGIN && res == RESULT_OK && data != null) {
             String v = data.getStringExtra(LoginActivity.RESULT_VALUE);
-            // 通用引擎页：直接写进它的登录键（豆包就是 cookie）
-            if (!EngineStore.KIND_JS.equals(it.kind)) {
-                String k = loginTarget();
-                if (v != null && k.length() > 0) {
-                    it.put(k, v);
-                    EngineStore.put(this, it);
-                    if (EngineStore.KIND_DOUBAO.equals(it.kind)) DoubaoEngine.clearVoiceCache();
-                    refreshCookie();
-                    toast("已写入「" + k + "」");
-                }
-                return;
-            }
             if (v != null && pendingLoginKey.length() > 0) {
                 it.put(pendingLoginKey, v);
                 it.put("login_key", pendingLoginKey);
