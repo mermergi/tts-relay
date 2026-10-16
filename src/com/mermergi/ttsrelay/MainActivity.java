@@ -924,6 +924,7 @@ public class MainActivity extends Activity {
                     e2.put("src", src);
                     EngineStore.syncJsMeta(this, e2);      // 顺手把它的名字/变量读出来
                     EngineStore.inheritLogin(this, e2);    // 旧引擎里抓过的 Cookie 直接继承
+                    com.mermergi.ttsrelay.JsTtsEngine.clearHosts();
                     EngineStore.put(this, e2);
                     renderEngines();
                     toast("已变成 JS 插件：" + e2.label);
@@ -1635,6 +1636,7 @@ public class MainActivity extends Activity {
         }
         if (EngineStore.KIND_JS.equals(it.kind)) EngineStore.syncUserVars(it);
         EngineStore.put(this, it);
+        try { com.mermergi.ttsrelay.JsTtsEngine.clearHosts(); } catch (Throwable ignored) { }
         if (EngineStore.KIND_DOUBAO.equals(it.kind)) DoubaoEngine.clearVoiceCache();
         renderEngines();
     }

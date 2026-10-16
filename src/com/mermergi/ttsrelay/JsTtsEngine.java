@@ -28,6 +28,39 @@ public final class JsTtsEngine implements TtsEngine {
 
     public JsTtsEngine(EngineStore.Item it) { this.it = it; }
 
+    /**
+     * 插件宿主缓存 —— <b>照 TTS Server 的做法</b>：它是把 provider 缓存起来的
+     * （`TtsManager` + `AbstractCachedManager`，key 用 `PluginTtsSource.getKey()` = 插件 id）。
+     *
+     * 不缓存的话每次合成都重建运行时、**重连一次 WebSocket**：又慢（26KB 插件每次重新 eval），
+     * 又容易撞上服务端的频率限制（表现就是"好一段、失败一段"）。
+     */
+    private static final java.util.Map<String, PluginBridge> HOSTS =
+            new java.util.concurrent.ConcurrentHashMap<String, PluginBridge>();
+
+    private String hostKey(String locale, String voice) {
+        return cacheKey() + "|" + locale + "|" + voice;
+    }
+
+    /** 配置改了（存过引擎）就把缓存清掉，别拿旧源码跑。 */
+    public static void clearHosts() {
+        for (PluginBridge b : HOSTS.values()) {
+            try { b.destroy(); } catch (Throwable ignored) { }
+        }
+        HOSTS.clear();
+        VOICES_CACHE.clear();
+    }
+
+    /** 拿一个（可能已经建好的）插件宿主。 */
+    private PluginBridge hostFor(Context c, String locale, String voice) throws Exception {
+        String k = hostKey(locale, voice);
+        PluginBridge h = HOSTS.get(k);
+        if (h != null) return h;
+        h = open(c, locale, voice);
+        HOSTS.put(k, h);
+        return h;
+    }
+
     /** 插件音色表缓存：键带上 src 的 hash，改了插件自动失效。 */
     private static final java.util.Map<String, List<String>> VOICES_CACHE =
             new java.util.concurrent.ConcurrentHashMap<String, List<String>>();
@@ -54,7 +87,9 @@ public final class JsTtsEngine implements TtsEngine {
             "src", "def_vars", "var_labels", "user_vars", "tts_data", "login_key", "login_url",
             "binding", "ua", "lang", "voice", "speed", "volume", "pitch"));
 
-    private PluginBridge open(Context c) throws Exception {
+    private PluginBridge open(Context c) throws Exception { return open(c, locale(), ""); }
+
+    private PluginBridge open(Context c, String locale, String voice) throws Exception {
         // 变量值：优先读 `user_vars`（别人那套引擎文件的模型），没有就退回"cfg 里非保留键都当变量"
         Map<String, String> vars = new LinkedHashMap<String, String>();
         String uv = it == null ? "" : it.s("user_vars", "");
@@ -95,7 +130,7 @@ public final class JsTtsEngine implements TtsEngine {
 
         String id = it == null || it.id.length() == 0 ? "plugin" : it.id;
         PluginBridge h = new PluginBridge(c, id, it == null ? "" : it.s("src", ""), vars, data,
-                locale(), TtsEngine.shortVoice(Prefs.voice(c)));
+                locale, voice.length() > 0 ? voice : TtsEngine.shortVoice(Prefs.voice(c)));
         // 构造里已经 eval() + onLoad() + onLoadUI() + onLoadData()（照它的生命周期）
         return h;
     }
@@ -137,7 +172,7 @@ public final class JsTtsEngine implements TtsEngine {
         if (bad != null) throw new IllegalStateException(bad);
         Say s = say == null ? new Say() : say;
 
-        PluginBridge h = open(c);
+        PluginBridge h = hostFor(c, locale(), TtsEngine.shortVoice(s.voice));
         try {
             // 照他们的 PluginTtsSource：这一路的参数要先塞进 ttsrv.tts，插件会读
             // 插件要的是它自己音色表里的取值（豆包那个 ICL 音色它不认识）
@@ -146,9 +181,22 @@ public final class JsTtsEngine implements TtsEngine {
             // 换音色时它会（他们的界面会调）—— 插件常在这儿初始化/记下选中的音色
             h.onVoiceChanged(locale(), v);
             // 档位换算（1.0 → 50）在它自己的 getAudio 里
-            byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch);
-            if (out == null || out.length == 0) throw new IllegalStateException("插件这次没给回音频");
-            return out;
+            try {
+                byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch);
+                if (out == null || out.length == 0) throw new IllegalStateException("插件这次没给回音频");
+                return out;
+            } catch (Throwable first) {
+                // 换音色后的第一次很容易空手而归：插件要先异步拉一遍音色表
+                // （它日志里那句「音色列表已加载: 445 个」），第一次请求就撞在这中间。
+                // 第二次一定好，所以重试一次；宿主留着（缓存过）重试很快。
+                LogBus.error("插件第一次没给音频（" + first.getMessage() + "），重试一次");
+                try { Thread.sleep(300); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.onVoiceChanged(locale(), v);
+                byte[] out2 = h.audioBytes(text, s.rate, s.volume, s.pitch);
+                if (out2 == null || out2.length == 0) throw first;
+                return out2;
+            }
         } finally {
             saveData(c, h);
             try { h.destroy(); } catch (Throwable ignored) { }

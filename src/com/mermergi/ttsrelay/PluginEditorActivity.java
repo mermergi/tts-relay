@@ -302,9 +302,14 @@ public final class PluginEditorActivity extends Activity {
         if (it == null) return;
         String nm = nameBox.getText().toString().trim();
         if (nm.length() > 0) it.label = nm;
+        String before = it.s("src", "");
         it.put("src", code.getText().toString());
         EngineStore.syncUserVars(it);
         EngineStore.put(this, it);
+        // 源码/变量动过 → 插件宿主缓存作废（合成时存 tts_data 不会走到这儿）
+        if (!before.equals(it.s("src", ""))) {
+            try { com.mermergi.ttsrelay.JsTtsEngine.clearHosts(); } catch (Throwable ignored) { }
+        }
     }
 
     // ───────────────────────── ⋮ 菜单 ─────────────────────────
