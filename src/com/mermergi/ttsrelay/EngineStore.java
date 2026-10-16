@@ -28,7 +28,7 @@ public final class EngineStore {
 
     public static final String KIND_SYSTEM = "system";
     public static final String KIND_HTTP = "http";
-    /** TTS Server 的 JS 插件 —— 源码存着，用 Rhino 跑（见 JsHost）。 */
+    /** TTS Server 的 JS 插件 —— 源码存着，用 TTS Server 自己的运行时跑（见 kt/ + PluginHost）。 */
     public static final String KIND_JS = "js";
 
     public static final String ID_SYSTEM = "system";
