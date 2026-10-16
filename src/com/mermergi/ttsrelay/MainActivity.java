@@ -1000,6 +1000,15 @@ public class MainActivity extends Activity {
             String sub = subtitle(it);
             if (sub.length() > 0) col.addView(ui.hint(sub));
             if (prob != null) col.addView(ui.hint("⚠ " + prob));
+            // 照它那行：插件声明了变量却没填 → 主色提示，点它直接去设置变量
+            if (EngineStore.needsVars(it)) {
+                TextView need = ui.value("请设置变量（API密钥等）▸");
+                need.setTextColor(p.accent);
+                need.setOnClickListener(new View.OnClickListener() {
+                    public void onClick(View v) { openPluginEditor(it, true); }
+                });
+                col.addView(need);
+            }
             row.addView(col, ui.weight(1f));
 
             row.addView(ui.btn("✎", false, new View.OnClickListener() {
@@ -1054,10 +1063,30 @@ public class MainActivity extends Activity {
         return cs[Math.abs(h) % cs.length];
     }
 
+    /** 照它的「导出配置」：把这一个引擎的配置导成 JSON（插件源码 + 变量都在里头）。 */
+    private void exportEngineConfig(EngineStore.Item it) {
+        try {
+            java.util.List<EngineStore.Item> one = new java.util.ArrayList<EngineStore.Item>();
+            one.add(it.copy());
+            copy(EngineImport.exportOurs(one));
+            toast("配置已复制到剪贴板");
+        } catch (Throwable t) {
+            toast("导出失败：" + t.getMessage());
+        }
+    }
+
+    private void openPluginEditor(EngineStore.Item it, boolean openVars) {
+        Intent pi = new Intent(this, PluginEditorActivity.class);
+        pi.putExtra(PluginEditorActivity.EXTRA_ID, it.id);
+        pi.putExtra(PluginEditorActivity.EXTRA_OPEN_VARS, openVars);
+        try { startActivity(pi); } catch (Throwable t) { toast("打不开插件编辑器：" + t.getMessage()); }
+    }
+
     private void engineMenu(final EngineStore.Item it) {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle(it.label)
-                .setItems(new String[]{"设为当前引擎", "编辑配置", "看看音色列表", "测试这个引擎", "删除"},
+                .setItems(new String[]{"设为当前引擎", "编辑配置", "设置变量", "导出配置",
+                                "清除缓存", "看看音色列表", "测试这个引擎", "删除"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 if (which == 0) {
@@ -1067,12 +1096,23 @@ public class MainActivity extends Activity {
                                 } else if (which == 1) {
                                     editEngine(it);
                                 } else if (which == 2) {
-                                    showEngineVoices(it);
+                                    openPluginEditor(it, true);
                                 } else if (which == 3) {
+                                    exportEngineConfig(it);
+                                } else if (which == 4) {
+                                    if (EngineStore.hasCache(MainActivity.this, it)) {
+                                        EngineStore.clearCache(MainActivity.this, it);
+                                        toast("缓存清了");
+                                    } else {
+                                        toast("这个插件没缓存");
+                                    }
+                                } else if (which == 5) {
+                                    showEngineVoices(it);
+                                } else if (which == 6) {
                                     EngineStore.setActive(MainActivity.this, it.id);
                                     renderEngines();
                                     testEngine();
-                                } else if (which == 4) {
+                                } else if (which == 7) {
                                     EngineStore.remove(MainActivity.this, it.id);
                                     renderEngines();
                                     toast("已删除");

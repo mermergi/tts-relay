@@ -391,6 +391,50 @@ public final class EngineStore {
 
     private static String nn(String v) { return v == null ? "" : v; }
 
+    /** 插件声明了变量、但用户一个都没填 —— 它界面上会因此提示「请设置变量」。 */
+    public static boolean needsVars(Item it) {
+        if (it == null || !KIND_JS.equals(it.kind)) return false;
+        int n = 0;
+        try { n = new JSONObject(it.s("def_vars", "")).length(); } catch (Throwable ignored) { }
+        if (n == 0) return false;
+        int filled = 0;
+        try {
+            JSONObject uv = new JSONObject(it.s("user_vars", ""));
+            for (java.util.Iterator<String> k = uv.keys(); k.hasNext(); ) {
+                if (uv.optString(k.next(), "").trim().length() > 0) filled++;
+            }
+        } catch (Throwable ignored) { }
+        return filled == 0;
+    }
+
+    /** 插件自己的缓存目录（它 `ttsrv.getFile()` 落的地方）。 */
+    public static java.io.File cacheDir(Context c, Item it) {
+        java.io.File base = c == null ? null : c.getExternalCacheDir();
+        if (base == null) return null;
+        return new java.io.File(base, it == null || it.id.length() == 0 ? "plugin" : it.id);
+    }
+
+    public static boolean hasCache(Context c, Item it) {
+        java.io.File d = cacheDir(c, it);
+        return d != null && d.isDirectory() && d.list() != null && d.list().length > 0;
+    }
+
+    public static void clearCache(Context c, Item it) {
+        java.io.File d = cacheDir(c, it);
+        if (d == null || !d.isDirectory()) return;
+        java.io.File[] fs = d.listFiles();
+        if (fs == null) return;
+        for (java.io.File f : fs) deleteTree(f);
+    }
+
+    private static void deleteTree(java.io.File f) {
+        if (f.isDirectory()) {
+            java.io.File[] fs = f.listFiles();
+            if (fs != null) for (java.io.File x : fs) deleteTree(x);
+        }
+        f.delete();
+    }
+
     /**
      * 插件声明的变量 → {@code user_vars}：TTS Server 是"声明"和"用户填的值"分开存的，
      * 插件读的是 {@code ttsrv.userVars['api_key']}，塞在 cfg 的散键里容易对不上。

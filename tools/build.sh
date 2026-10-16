@@ -67,6 +67,7 @@ aapt2 link \
     -o "$out/base.apk" \
     -I "$android_jar" \
     --manifest "$root/AndroidManifest.xml" \
+    -A "$root/assets" \
     --java "$gen" \
     --min-sdk-version 26 \
     --target-sdk-version 34 \

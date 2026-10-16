@@ -41,6 +41,8 @@ import java.util.Map;
 public final class PluginEditorActivity extends Activity {
 
     public static final String EXTRA_ID = "engine_id";
+    /** 从「请设置变量」那行进来的：打开就弹变量面板。 */
+    public static final String EXTRA_OPEN_VARS = "open_vars";
     private static final int REQ_LOGIN = 71;
     private static final String TEST_TEXT = "这是当前语音引擎的测试，能听见就说明通了。";
 
@@ -72,6 +74,11 @@ public final class PluginEditorActivity extends Activity {
         EngineStore.syncJsMeta(this, it);
         buildUi();
         load();
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_OPEN_VARS, false)) {
+            code.post(new Runnable() {
+                public void run() { varsDialog(); }
+            });
+        }
     }
 
     // ───────────────────────── 界面 ─────────────────────────
@@ -83,26 +90,30 @@ public final class PluginEditorActivity extends Activity {
 
         // ── 顶栏 ──
         LinearLayout top = ui.row();
-        top.addView(ui.btn("←", false, new View.OnClickListener() {
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.addView(tinyKey("←", new View.OnClickListener() {
             public void onClick(View v) { save(); finish(); }
         }));
         nameBox = ui.field("label", "", InputType.TYPE_CLASS_TEXT);
         nameBox.setHint("引擎名字");
+        nameBox.setSingleLine(true);
         LinearLayout.LayoutParams np = ui.weight(1f);
+        np.leftMargin = ui.dp(4);
+        np.rightMargin = ui.dp(4);
         top.addView(nameBox, np);
-        top.addView(ui.btn("▶", true, new View.OnClickListener() {
+        top.addView(tinyKey("▶", new View.OnClickListener() {
             public void onClick(View v) { listen(); }
         }));
-        top.addView(ui.btn("↶", false, new View.OnClickListener() {
+        top.addView(tinyKey("↶", new View.OnClickListener() {
             public void onClick(View v) { undo(); }
         }));
-        top.addView(ui.btn("↷", false, new View.OnClickListener() {
+        top.addView(tinyKey("↷", new View.OnClickListener() {
             public void onClick(View v) { redo(); }
         }));
-        top.addView(ui.btn("💾", false, new View.OnClickListener() {
+        top.addView(tinyKey("💾", new View.OnClickListener() {
             public void onClick(View v) { save(); toast("已保存"); }
         }));
-        top.addView(ui.btn("⋮", false, new View.OnClickListener() {
+        top.addView(tinyKey("⋮", new View.OnClickListener() {
             public void onClick(View v) { menu(v); }
         }));
         root.addView(top);
@@ -120,16 +131,12 @@ public final class PluginEditorActivity extends Activity {
         code.setWordwrap(false);
         code.setHighlightCurrentLine(true);
         code.setLigatureEnabled(false);
+        // 主题 + JS 语法：照它 CodeEditorHelper.initEditor() 来的（assets/textmate 那几份也是它的）
         try {
-            io.github.rosemoe.sora.widget.schemes.EditorColorScheme sc =
-                    new io.github.rosemoe.sora.widget.schemes.EditorColorScheme();
-            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.WHOLE_BACKGROUND, p.card);
-            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.TEXT_NORMAL, p.textPrimary);
-            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.LINE_NUMBER, p.textMuted);
-            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.LINE_NUMBER_BACKGROUND, p.card);
-            sc.setColor(io.github.rosemoe.sora.widget.schemes.EditorColorScheme.CURRENT_LINE, p.cardHi);
-            code.setColorScheme(sc);
-        } catch (Throwable ignored) { }
+            com.mermergi.ttsrelay.js.EditorSetup.init(getAssets(), code);
+        } catch (Throwable t) {
+            LogBus.error("编辑器主题/语法没装上：" + t.getMessage());
+        }
         LinearLayout.LayoutParams wp = ui.weight(1f);
         wp.topMargin = ui.dp(6);
         code.setBackground(ui.round(p.card, p.border, 12));
@@ -152,17 +159,31 @@ public final class PluginEditorActivity extends Activity {
         keys.setPadding(0, ui.dp(6), 0, 0);
         String[] ins = {"TAB", "=", ">", "{", "}", "(", ")", ",", "\"", "'", ";"};
         for (final String k : ins) {
-            Button btn = ui.btn(k, false, new View.OnClickListener() {
+            TextView chip = ui.chip(k, false, new View.OnClickListener() {
                 public void onClick(View v) {
                     insert("TAB".equals(k) ? "    " : k);
                 }
             });
+            chip.setSingleLine(true);
+            chip.setGravity(Gravity.CENTER);
+            chip.setTextSize(12f);
             LinearLayout.LayoutParams kp = ui.weight(1f);
-            keys.addView(btn, kp);
+            kp.leftMargin = ui.dp(2);
+            keys.addView(chip, kp);
         }
         root.addView(keys);
 
         setContentView(root);
+    }
+
+    /** 顶栏那些小方键（普通 Button 在这个高度太占地）。 */
+    private TextView tinyKey(String s, View.OnClickListener l) {
+        TextView t = ui.chip(s, false, l);
+        t.setSingleLine(true);
+        t.setGravity(Gravity.CENTER);
+        t.setTextSize(15f);
+        t.setLayoutParams(new LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)));
+        return t;
     }
 
     /** 状态行（行号由 sora-editor 自己画）。 */
