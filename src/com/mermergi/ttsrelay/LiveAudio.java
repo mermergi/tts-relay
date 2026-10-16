@@ -89,6 +89,9 @@ public final class LiveAudio {
         }
     }
 
+    /** 是我们自己掐断的（合成中途出错 / 被打断）：播放器那边的 EOF 报错就别当回事。 */
+    public synchronized boolean wasCut() { return error != null; }
+
     public synchronized String error() { return error; }
     public synchronized boolean isFinished() { return finished; }
     public synchronized int available() { return written; }
