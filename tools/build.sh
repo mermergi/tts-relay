@@ -53,9 +53,17 @@ aapt2 link \
 
 echo "==> javac"
 mapfile -t sources < <(find "$gen" "$root/src" -name '*.java')
+# 依赖的 jar（Rhino 这种）：放在 tools/lib/ 下的都会带上
+libs=()
+for j in "$root"/tools/*.jar; do
+    case "$j" in *android.jar) continue;; esac
+    [ -f "$j" ] && libs+=("$j")
+done
+cp_android="$android_jar"
+for j in "${libs[@]:-}"; do [ -n "$j" ] && cp_android="$cp_android:$j"; done
 set +e
 javac -encoding UTF-8 -source 8 -target 8 \
-    -bootclasspath "$android_jar" -classpath "$android_jar" \
+    -bootclasspath "$android_jar" -classpath "$cp_android" \
     -d "$obj" -nowarn "${sources[@]}" >"$out/javac.log" 2>&1
 st=$?
 set -e
@@ -64,7 +72,7 @@ grep -vE '^warning: \[|^Note: ' "$out/javac.log" || true
 
 echo "==> d8"
 mapfile -t classes < <(find "$obj" -name '*.class')
-d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}"
+d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libs[@]:-}"
 
 echo "==> package"
 cp "$out/base.apk" "$out/ttsrelay-unsigned.apk"

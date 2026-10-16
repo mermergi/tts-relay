@@ -143,7 +143,59 @@ public final class HttpTtsEngine implements TtsEngine {
         out = out.replace("{{volume}}", enc(fmt(s.volume)));
         out = out.replace("{{tone}}", encode ? enc(s.tone) : esc(s.tone));
         out = out.replace("{{format}}", "mp3");
+        out = fillNum(out, s);
+        out = fillCfg(out, encode);
         return out;
+    }
+
+    /** 数字占位符的缩放写法：{{rate*50}}、{{rate*100-100}}、{{pitch*50-50}}。
+     *  TTS Server 插件那边的 rate/pitch/volume 是 0-100（50 为正常），
+     *  我们是 1.0 为正常，导入插件时靠这个换算。 */
+    private static final java.util.regex.Pattern NUM_PH = java.util.regex.Pattern.compile(
+            "\\{\\{(rate|pitch|volume)(?:\\*(-?[0-9.]+))?(?:([+-])([0-9.]+))?\\}\\}");
+
+    private static String fillNum(String out, Say s) {
+        java.util.regex.Matcher m = NUM_PH.matcher(out);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String name = m.group(1);
+            float v = "rate".equals(name) ? s.rate : ("pitch".equals(name) ? s.pitch : s.volume);
+            if (m.group(2) != null) {
+                try { v = v * Float.parseFloat(m.group(2)); } catch (Throwable ignored) { }
+            }
+            if (m.group(3) != null) {
+                try {
+                    float b = Float.parseFloat(m.group(4));
+                    v = "-".equals(m.group(3)) ? v - b : v + b;
+                } catch (Throwable ignored) { }
+            }
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(trimNum(v)));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String trimNum(float f) {
+        if (Math.abs(f - Math.round(f)) < 0.005f) return String.valueOf(Math.round(f));
+        return String.format(java.util.Locale.US, "%.2f", f);
+    }
+
+    /** 剩下的 {{键}} 从引擎配置里取 —— 插件导进来的变量（server、region…）靠这个活起来。 */
+    private static final java.util.regex.Pattern CFG_PH = java.util.regex.Pattern.compile(
+            "\\{\\{([A-Za-z_][A-Za-z0-9_.-]*)\\}\\}");
+
+    private String fillCfg(String out, boolean encode) {
+        if (it == null) return out;
+        java.util.regex.Matcher m = CFG_PH.matcher(out);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String k = m.group(1);
+            String v = it.s(k, "");
+            if (v.length() == 0) continue;              // 没这个键就原样留着，别把 URL 掏空
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(encode ? enc(v) : esc(v)));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     private static String fmt(float f) {

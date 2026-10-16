@@ -28,6 +28,8 @@ public final class EngineStore {
 
     public static final String KIND_SYSTEM = "system";
     public static final String KIND_HTTP = "http";
+    /** TTS Server 的 JS 插件 —— 源码存着，用 Rhino 跑（见 JsHost）。 */
+    public static final String KIND_JS = "js";
 
     public static final String ID_SYSTEM = "system";
     public static final String ID_HTTP = "ts-server";
@@ -39,7 +41,7 @@ public final class EngineStore {
     public static final String[] KNOWN_KEYS = {
             "url", "method", "headers", "body", "content_type", "timeout", "json_key",
             "voices_url", "voices_path", "voices_name", "voices_id", "voices",
-            "cred", "speaker", "format", "sample_rate",
+            "cred", "speaker", "format", "sample_rate", "src", "var_labels", "login_key",
             "pkg", "lang",
     };
 
@@ -91,7 +93,8 @@ public final class EngineStore {
         boolean changed = false;
         for (java.util.Iterator<Item> li = list.iterator(); li.hasNext(); ) {
             Item it = li.next();
-            if (!KIND_HTTP.equals(it.kind) && !KIND_SYSTEM.equals(it.kind)) {
+            if (!KIND_HTTP.equals(it.kind) && !KIND_SYSTEM.equals(it.kind)
+                    && !KIND_JS.equals(it.kind)) {
                 li.remove();          // 早先版本留下、现在已经不认的引擎类型，别在列表里挂着
                 changed = true;
                 continue;
@@ -244,6 +247,7 @@ public final class EngineStore {
     public static TtsEngine build(Item it) {
         if (it == null) it = new Item();
         if (KIND_HTTP.equals(it.kind)) return new HttpTtsEngine(it);
+        if (KIND_JS.equals(it.kind)) return new JsTtsEngine(it);
         return new SystemTtsEngine(it);
     }
 
