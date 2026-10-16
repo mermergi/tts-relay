@@ -317,7 +317,9 @@ public final class Speaker {
             if (!watching || !running) return;
             long now = SystemClock.uptimeMillis();
 
-            if (synthBusy && now - synthBeat > synthWait + 15000L) {
+            boolean lead = mp != null || !audioQ.isEmpty();
+            long synthGrace = (lead ? Math.max(synthWait * 3, 120000L) : synthWait) + 15000L;
+            if (synthBusy && now - synthBeat > synthGrace) {
                 LogBus.error("🩺 合成线程 " + ((now - synthBeat) / 1000) + " 秒没动"
                         + "（卡在" + synthStage + "，这句最多该等 " + (synthWait / 1000) + " 秒），"
                         + "换新合成线程，这一句丢掉");
@@ -389,9 +391,20 @@ public final class Speaker {
     /** 这一句因为"引擎吊住"被硬超时过几次（第一次是换宿主重试，第二次才算真失败）。 */
     private int curTimeouts = 0;
 
-    /** 插件合成"还在不在动"看这个（每读到一块音频就更新一次）。 */
-    private static final HardCall.Clock PLUGIN_CLOCK = new HardCall.Clock() {
+    /** 插件合成"还在不在动" + "现在急不急"看这个。 */
+    private final HardCall.Clock pluginClock = new HardCall.Clock() {
         public long lastActivity() { return com.mermergi.ttsrelay.js.PluginBridge.getLastActivity(); }
+
+        /** 还有声音在播（且不是马上播完）/ 队列里还排着 → 这一句是提前合的，慢慢等。 */
+        public boolean hasLead() {
+            MediaPlayer p = mp;
+            if (p != null) {
+                if (playStart <= 0) return true;                  // 正在 prepare，也算有声
+                long left = playDur - (SystemClock.uptimeMillis() - playStart);
+                if (left > 4000L) return true;                    // 还够听一会儿
+            }
+            return !audioQ.isEmpty();
+        }
     };
 
     public long pace() { return paceMs; }
@@ -489,7 +502,8 @@ public final class Speaker {
                     beat("起播流");
                     Handler hp = playH;
                     if (hp != null) hp.post(playNext);       // 队列里刚有东西：叫醒播放线程
-                    HardCall.runIdle("合成", 15000L, synthWait, PLUGIN_CLOCK, new HardCall.Job<byte[]>() {
+                    HardCall.runIdle("合成", 8000L, 90000L, synthWait, Math.max(synthWait * 3, 120000L),
+                            pluginClock, new HardCall.Job<byte[]>() {
                         public byte[] run() throws Throwable {
                             EngineStore.synthTo(ctx, text_safe(job.text), job.voice, new AudioSink() {
                                 public void chunk(byte[] b, int o, int l) { la.chunk(b, o, l); }
