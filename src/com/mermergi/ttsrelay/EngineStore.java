@@ -652,9 +652,49 @@ public final class EngineStore {
                 || ei.equalsIgnoreCase(wn) || ei.equalsIgnoreCase(wi);
     }
 
-    /** 这个音色是谁提供的？找不到就退回当前引擎。 */
+    /** 音色 → 引擎（内存版，列表/音色表一算出来就填）。 */
+    private static final java.util.Map<String, String> VOICE_OWNER =
+            new java.util.concurrent.ConcurrentHashMap<String, String>();
+
+    /** 这个音色归哪个引擎（音色表算过就直接给；没算过就看持久表）。 */
+    public static String ownerOfVoice(Context c, String voice) {
+        if (voice == null || voice.length() == 0) return "";
+        String owner = VOICE_OWNER.get(voice);
+        if (owner == null || owner.length() == 0) owner = Prefs.voiceEngine(c, voice);
+        return owner == null ? "" : owner;
+    }
+
+    /** 所有<b>启用中</b>引擎的音色，一起列出来；顺手记住每个音色归谁。 */
+    public static List<String> fetchVoicesAll(Context c) {
+        List<String> out = new java.util.ArrayList<String>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<String>();
+        for (Item it : all(c)) {
+            if (!isEnabled(it)) continue;
+            List<String> vs;
+            try { vs = voicesCached(c, it); } catch (Throwable t) { continue; }
+            for (String v : vs) {
+                if (v == null || v.length() == 0) continue;
+                VOICE_OWNER.put(v, it.id);
+                if (seen.add(v)) out.add(v);
+            }
+        }
+        return out;
+    }
+
+    /** 这个音色是谁提供的？先看"音色→引擎"那张表（照它：音色带着配置），再挨个引擎找，最后退回当前引擎。 */
     public static TtsEngine engineForVoice(Context c, String voice) {
         String want = voice == null ? "" : voice.trim();
+        if (want.length() > 0) {
+            String owner = VOICE_OWNER.get(want);
+            if (owner == null || owner.length() == 0) owner = Prefs.voiceEngine(c, want);
+            if (owner != null && owner.length() > 0) {
+                Item it = get(c, owner);
+                if (it != null && isEnabled(it)) {
+                    VOICE_OWNER.put(want, owner);
+                    return build(it);
+                }
+            }
+        }
         if (want.length() > 0) {
             for (Item it : all(c)) {
                 if (!isEnabled(it)) continue;

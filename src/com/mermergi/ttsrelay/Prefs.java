@@ -200,6 +200,28 @@ public final class Prefs {
     }
 
     public static String activeEngine(Context c) { return sp(c).getString("engine_active", ""); }
+
+    // ── 音色 → 它属于哪个引擎 ──
+    // 照 TTS Server 的法子：它把配置 id 编进语音名（`显示名_id`），选音色就等于选配置。
+    // 我们不动音色字符串本身（插件要拿它当 style_id），另存一张表：音色 → 引擎。
+    public static String voiceEngine(Context c, String voice) {
+        if (voice == null || voice.length() == 0) return "";
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(sp(c).getString("voice_engine", "{}"));
+            return o.optString(voice, "");
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    public static void setVoiceEngine(Context c, String voice, String engineId) {
+        if (voice == null || voice.length() == 0 || engineId == null || engineId.length() == 0) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(sp(c).getString("voice_engine", "{}"));
+            o.put(voice, engineId);
+            sp(c).edit().putString("voice_engine", o.toString()).apply();
+        } catch (Throwable ignored) { }
+    }
     public static void setActiveEngine(Context c, String v) {
         sp(c).edit().putString("engine_active", v == null ? "" : v).apply();
     }

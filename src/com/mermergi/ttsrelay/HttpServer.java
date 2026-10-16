@@ -385,12 +385,14 @@ public final class HttpServer {
             // 当前引擎的音色目录（手工 + voices_url + 引擎自带，三路合并）；?id=xxx 看指定引擎
             try {
                 String id = qs.get("id");
-                EngineStore.Item it = id == null || id.length() == 0
-                        ? EngineStore.get(ctx, EngineStore.activeId(ctx))
-                        : EngineStore.get(ctx, id);
+                // 不带 id = 列出「所有启用中的引擎」的音色（照它：音色集合才是选引擎的入口）
+                List<String> all = (id == null || id.length() == 0)
+                        ? EngineStore.fetchVoicesAll(ctx)
+                        : EngineStore.fetchVoices(ctx, EngineStore.get(ctx, id));
+                EngineStore.Item it = EngineStore.get(ctx, EngineStore.activeId(ctx));
                 JSONArray arr = new JSONArray();
                 boolean grouped = "1".equals(qs.get("grouped"));
-                for (String v : EngineStore.fetchVoices(ctx, it)) {
+                for (String v : all) {
                     if (!grouped) { arr.put(v); continue; }
                     // grouped=1：把标签拆出来，验证「按男女分组」用的就是这份数据
                     JSONObject o = new JSONObject();

@@ -2140,9 +2140,8 @@ public class MainActivity extends Activity {
             public void run() {
                 final List<VoiceItem> names = new ArrayList<VoiceItem>();
                 try {
-                    String aid = EngineStore.activeId(MainActivity.this);
-                    List<String> vs = EngineStore.fetchVoices(MainActivity.this,
-                            EngineStore.get(MainActivity.this, aid));
+                    // 照它：音色是"所有启用中的引擎"合起来给的（选了音色就等于选了引擎）
+                    List<String> vs = EngineStore.fetchVoicesAll(MainActivity.this);
                     for (String v : vs) names.add(VoiceItem.parse(v));
                 } catch (Throwable t) {
                     final String m = String.valueOf(t.getMessage());
@@ -2214,6 +2213,9 @@ public class MainActivity extends Activity {
                 VoiceItem vi = (VoiceItem) par.getItemAtPosition(pos);
                 if (vi == null || vi.header) return;
                 String name = vi.raw;
+                // 记下这个音色属于哪个引擎 —— 朗读时按它挑引擎（不看"当前引擎"）
+                Prefs.setVoiceEngine(MainActivity.this, name,
+                        EngineStore.ownerOfVoice(MainActivity.this, name));
                 if (role == null) Prefs.setVoice(MainActivity.this, name);
                 else Prefs.putVoice(MainActivity.this, role, name);
                 Speaker spk = RelayService.speakerOrNull();
