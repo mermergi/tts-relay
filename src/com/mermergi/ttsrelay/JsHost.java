@@ -116,62 +116,30 @@ public final class JsHost {
 
         final JsHost[] self = new JsHost[1];
 
-        // http 客户端
-        Function post = new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable thisObj, Object[] a) {
-                String url = str(a, 0);
-                String body = str(a, 1);
-                Map<String, String> h = headers(a.length > 2 ? a[2] : null);
-                return response(c, sc, http("POST", url, body, h));
+        // ── http：全局的 http.* 和老式的 ttsrv.http* 都给全（照 TTS Server 的清单）──
+        Function post = JsApi.fn(new JsApi.Fn() {
+            public Object run(Context c, Scriptable sc, Object[] a) {
+                return JsApi.response(c, sc, JsApi.fetch("POST", JsApi.str(a, 0),
+                        JsApi.str(a, 1), JsApi.headers(a.length > 2 ? a[2] : null)));
             }
-        };
-        Function get = new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable thisObj, Object[] a) {
-                return response(c, sc, http("GET", str(a, 0), null,
-                        headers(a.length > 1 ? a[1] : null)));
+        });
+        Function get = JsApi.fn(new JsApi.Fn() {
+            public Object run(Context c, Scriptable sc, Object[] a) {
+                return JsApi.response(c, sc, JsApi.fetch("GET", JsApi.str(a, 0), null,
+                        JsApi.headers(a.length > 1 ? a[1] : null)));
             }
-        };
-        Function getString = new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable thisObj, Object[] a) {
-                Resp r = http("GET", str(a, 0), null, headers(a.length > 1 ? a[1] : null));
-                return r.text;
-            }
-        };
-        Function postMultipart = new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable thisObj, Object[] a) {
-                // 附件上传本 App 用不上，但别让插件炸：告诉它没成功
-                return response(c, sc, new Resp(501, "", "multipart not supported"));
-            }
-        };
-        ScriptableObject.putProperty(ttsrv, "httpPost", post);
-        ScriptableObject.putProperty(ttsrv, "httpGetString", getString);
-        ScriptableObject.putProperty(ttsrv, "httpPostMultipart", postMultipart);
-
+        });
         ScriptableObject http = (ScriptableObject) cx.newObject(scope);
-        ScriptableObject.putProperty(http, "post", post);
-        ScriptableObject.putProperty(http, "get", get);
+        JsApi.installGlobalHttp(cx, scope, http, (BaseFunction) get, (BaseFunction) post);
         ScriptableObject.putProperty(scope, "http", http);
 
-        // fs：插件常拿它缓存音色列表，内存里给一份就够
         final Map<String, String> files = new LinkedHashMap<String, String>();
+        JsApi.installTtsrvNet(cx, scope, ttsrv, null);
+        JsApi.installTtsrvExtras(cx, scope, ttsrv, files);
+
+        // fs：插件常拿它缓存音色列表；照 TTS Server 给全那 9 个方法
         ScriptableObject fs = (ScriptableObject) cx.newObject(scope);
-        ScriptableObject.putProperty(fs, "exists", new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable t, Object[] a) {
-                return files.containsKey(str(a, 0));
-            }
-        });
-        ScriptableObject.putProperty(fs, "readText", new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable t, Object[] a) {
-                String v = files.get(str(a, 0));
-                return v == null ? "" : v;
-            }
-        });
-        ScriptableObject.putProperty(fs, "writeFile", new BaseFunction() {
-            @Override public Object call(Context c, Scriptable sc, Scriptable t, Object[] a) {
-                files.put(str(a, 0), str(a, 1));
-                return Undefined.instance;
-            }
-        });
+        JsApi.installGlobalFs(cx, scope, fs, files);
         ScriptableObject.putProperty(scope, "fs", fs);
 
         // 日志：不往外吐（插件可能打敏感东西），只留个不炸的实现
