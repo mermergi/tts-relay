@@ -120,10 +120,19 @@ class PluginBridge(
 
     // ── 合成 / 音色 ──
 
-    /** 合成一次，把流读干。档位换算（1.0 → 50）在它 `getAudio` 里做。 */
-    fun audioBytes(text: String, rate: Float, volume: Float, pitch: Float): ByteArray = runBlocking {
-        engine.getAudio(text, source.locale, source.voice, rate, volume, pitch)
-            .use { it.readBytes() }
+    /**
+     * 合成一次，把流读干。档位换算（1.0 → 50）在它 `getAudio` 里做。
+     *
+     * <b>必须带硬超时</b>：插件的 WebSocket 要是吊住不返回，播放线程就一直卡在这一句上，
+     * 后面的队列看着就是"不念了、列表还剩几句"（真机上遇到过）。到点就抛，让调用方跳过这句。
+     */
+    @JvmOverloads
+    fun audioBytes(text: String, rate: Float, volume: Float, pitch: Float,
+                   timeoutMs: Long = 60_000L): ByteArray = runBlocking {
+        kotlinx.coroutines.withTimeout(timeoutMs) {
+            engine.getAudio(text, source.locale, source.voice, rate, volume, pitch)
+                .use { it.readBytes() }
+        }
     }
 
     /** 它界面上的音色表：先 `getLocales()`，再逐个 `getVoices(locale)`。 */

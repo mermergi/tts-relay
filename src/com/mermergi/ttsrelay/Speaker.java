@@ -194,8 +194,12 @@ public final class Speaker {
     /** 新的一轮来了 / 用户点了闭嘴：掐掉没念完的。 */
     public void interrupt() {
         gen++;
+        int dropped = textQ.size() + audioQ.size();
         textQ.clear();
         audioQ.clear();
+        // 打断会把"上一段还没念的"直接丢掉 —— 这是设计。但要看得出丢了几句，
+        // 否则"队列里还剩三句却不念了"就分不清是打断丢的、还是工作线程卡住了。
+        if (dropped > 0) LogBus.add("⏭ 被打断，丢掉上一段没念的 " + dropped + " 句（队列清空）");
         Handler h = playH;
         if (h != null) {
             h.post(new Runnable() {

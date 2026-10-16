@@ -185,7 +185,8 @@ public final class JsTtsEngine implements TtsEngine {
             Throwable first = null;
             for (int attempt = 0; attempt < 3; attempt++) {
                 try {
-                    byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch);
+                    byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch,
+                            it == null ? 30000L : (long) Math.min(30000, it.i("timeout", 30000)));
                     if (out != null && out.length > 0) return out;
                     first = new IllegalStateException("插件这次没给回音频");
                 } catch (Throwable t) {
