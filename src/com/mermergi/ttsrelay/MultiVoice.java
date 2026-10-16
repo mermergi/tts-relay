@@ -66,8 +66,32 @@ public final class MultiVoice {
     public static final class Seg {
         public final String text;
         public final String role;
-        public final String name;     // 角色名；空 = 按 role 查表
-        public Seg(String t, String r, String n) { text = t; role = r; name = n == null ? "" : n; }
+        public final String name;     // 第一个标签（角色名）；空 = 按 role 查表
+        /**
+         * 这一行开头那几个 {@code [标签]}，按顺序。
+         * 例：[小明][少年]「…」 → ["小明", "少年"]。
+         * 查音色时**从头一个个试，第一个命中的算**，所以 [小明] 没配过就能落到 [少年] 上。
+         */
+        public final java.util.List<String> tags;
+
+        public Seg(String t, String r, String n) { this(t, r, n, null); }
+
+        public Seg(String t, String r, String n, java.util.List<String> tagList) {
+            text = t;
+            role = r;
+            name = n == null ? "" : n;
+            java.util.List<String> tags0 = new java.util.ArrayList<String>();
+            if (tagList != null) {
+                for (String x : tagList) {
+                    String v = x == null ? "" : x.trim();
+                    if (v.length() > 0 && !tags0.contains(v)) tags0.add(v);
+                }
+            } else if (name.length() > 0) {
+                tags0.add(name);
+            }
+            tags = tags0;
+        }
+
         @Override public String toString() {
             return "[" + role + (name.length() == 0 ? "" : ":" + name) + "] " + text;
         }
@@ -125,13 +149,29 @@ public final class MultiVoice {
     public static String nameVoice(Context c, Seg seg) {
         java.util.LinkedHashMap<String, String> m = Prefs.voiceNamesMap(c);
         if (m.isEmpty()) return null;
-        String name = seg.name == null ? "" : seg.name.trim();
+        // ① 行首的标签**一个接一个试**：第一个命中的就定下来，不再看后面的。
+        //    例：[小明][少年]「…」——小明配过就用小明的，没配过就落到少年那条上。
+        if (seg.tags != null) {
+            for (String tag : seg.tags) {
+                String hit = voiceOfName(m, tag);
+                if (hit != null) return hit;
+            }
+        }
+        // ② 标签都不认，再看段类型（旁白 / 对话 / 内心 / 动作）
         String role = seg.role == null ? "" : seg.role.trim();
-        String rk = roleKey(role);
+        String hit = voiceOfName(m, role);
+        if (hit != null) return hit;
+        return voiceOfName(m, roleKey(role));
+    }
+
+    /** 这个名字（或段类型）配了哪个音色；没有就 null。 */
+    private static String voiceOfName(java.util.LinkedHashMap<String, String> m, String want) {
+        if (want == null) return null;
+        String w = want.trim();
+        if (w.length() == 0) return null;
         for (java.util.Map.Entry<String, String> e : m.entrySet()) {
             for (String n : splitNames(e.getValue())) {
-                if (name.length() > 0 && n.equalsIgnoreCase(name)) return e.getKey();
-                if (n.equalsIgnoreCase(role) || n.equalsIgnoreCase(rk)) return e.getKey();
+                if (n.equalsIgnoreCase(w)) return e.getKey();
             }
         }
         return null;
@@ -170,6 +210,23 @@ public final class MultiVoice {
     private static final class Gal {
         String character = "";
         String dialogue = "";
+        java.util.List<String> tags = new java.util.ArrayList<String>();
+    }
+
+    /** 行首连着的那几个 [标签]：{@code [小明][少年]「…」} → ["小明","少年"]。 */
+    private static final Pattern LEAD_TAGS = Pattern.compile("^\\s*(\\[[^\\]]*\\])+");
+
+    private static java.util.List<String> leadingTags(String line) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        Matcher m = LEAD_TAGS.matcher(line == null ? "" : line);
+        if (!m.find()) return out;
+        String head = m.group();
+        Matcher one = Pattern.compile("\\[([^\\]]*)\\]").matcher(head);
+        while (one.find()) {
+            String t = clean(one.group(1));
+            if (t.length() > 0 && !out.contains(t)) out.add(t);
+        }
+        return out;
     }
 
     private static Gal parseGal(String line) {
@@ -194,6 +251,11 @@ public final class MultiVoice {
         Gal g = new Gal();
         g.character = name;
         g.dialogue = text;
+        // 行首所有 [标签] 都收着：第一个当角色名，后面几个是"退路"
+        // （[小明][少年]：小明没配音色就用少年那一条）
+        java.util.List<String> tags = leadingTags(m.group(0));
+        if (tags.isEmpty()) tags.add(name);
+        g.tags = tags;
         return g;
     }
 
@@ -293,6 +355,8 @@ public final class MultiVoice {
 
     private String role = NARRATOR;
     private String name = "";
+    /** 当前这段行首的标签表（第一个是角色名，后面是退路）。 */
+    private java.util.List<String> curTags = null;
     /** 这一轮说话的人 —— 群聊整条消息都是他的。 */
     private String turnName = "";
 
@@ -551,7 +615,7 @@ public final class MultiVoice {
             r = NARRATOR;
         }
         if (text.trim().length() == 0) return;
-        putAll(text, r, n);
+        putAll(text, r, n, g == null ? null : g.tags);
         out.addAll(flushRun());      // 一行一句，行与行之间不许粘
     }
 
@@ -721,7 +785,9 @@ public final class MultiVoice {
 
     private void put(char c, String r) { putAll(String.valueOf(c), r, ""); }
 
-    private void putAll(String s, String r, String n) {
+    private void putAll(String s, String r, String n) { putAll(s, r, n, null); }
+
+    private void putAll(String s, String r, String n, java.util.List<String> tags) {
         if (s == null || s.isEmpty()) return;
         String nn = n == null ? "" : n;
         if (!r.equals(role) || !nn.equals(name)) {
@@ -729,16 +795,19 @@ public final class MultiVoice {
             else run.setLength(0);        // 还没说人话，直接改标签，不用冲断句器
             role = r;
             name = nn;
+            curTags = tags;
+        } else if (tags != null && (curTags == null || !curTags.equals(tags))) {
+            curTags = tags;               // 名字一样但退路标签换了（少见）：跟着换
         }
         run.append(s);
         for (int i = 0; i < s.length(); i++) ctxPush(s.charAt(i));
-        for (String x : sp.feed(s)) out.add(new Seg(x, role, name));
+        for (String x : sp.feed(s)) out.add(new Seg(x, role, name, curTags));
         prev = s.charAt(s.length() - 1);
     }
 
     private List<Seg> flushRun() {
         List<Seg> res = new ArrayList<Seg>();
-        for (String s : sp.flush()) res.add(new Seg(s, role, name));
+        for (String s : sp.flush()) res.add(new Seg(s, role, name, curTags));
         run.setLength(0);
         return res;
     }
