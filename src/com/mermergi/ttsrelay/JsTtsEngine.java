@@ -1,5 +1,6 @@
 package com.mermergi.ttsrelay;
 
+import com.mermergi.ttsrelay.js.AudioSink;
 import android.content.Context;
 
 import java.util.ArrayList;
@@ -251,6 +252,54 @@ public final class JsTtsEngine implements TtsEngine {
                     Thread.currentThread().interrupt();
                     break;
                 }
+                h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.onVoiceChanged(locale(), v);
+            }
+            if (!isDead(h)) saveData(c, h);
+            throw new IllegalStateException(first == null ? "插件没给音频" : first.getMessage());
+        }
+    }
+
+    /**
+     * 流式合成：插件吐一块就交给 {@code sink}（播放端同时已经开播），
+     * 不再等整句都下完。重试用在"一个字节都还没送出去"的情况 ——
+     * 已经送过一半再重来，播放器听到的就是接了两遍的音频。
+     */
+    public void synthTo(Context c, String text, Say say, AudioSink sink) throws Exception {
+        String bad = problem(c);
+        if (bad != null) throw new IllegalStateException(bad);
+        Say s = say == null ? new Say() : say;
+        final PluginBridge h = hostFor(c, locale(), TtsEngine.shortVoice(s.voice));
+
+        synchronized (h) {
+            String v = pickVoice(c, s.voice);
+            String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
+            if (!sig.equals(h.getAppliedSig())) {
+                h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.onVoiceChanged(locale(), v);
+                h.setAppliedSig(sig);
+            }
+            final boolean[] got = new boolean[]{false};
+            AudioSink wrapped = new AudioSink() {
+                public void chunk(byte[] data, int off, int len) throws Exception {
+                    got[0] = true;
+                    sink.chunk(data, off, len);
+                }
+            };
+            Throwable first = null;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                if (isDead(h)) throw new IllegalStateException("宿主已被丢弃（这一句超时跳过了）");
+                try {
+                    int n = h.audioTo(text, s.rate, s.volume, s.pitch,
+                            it == null ? 30000L : (long) Math.min(30000, it.i("timeout", 30000)), wrapped);
+                    if (n > 0) { saveData(c, h); return; }
+                    first = new IllegalStateException("插件这次没给回音频");
+                } catch (Throwable t) {
+                    first = t;
+                }
+                if (got[0] || isDead(h)) break;      // 已经送过字节 / 已被丢弃 → 不重来
+                LogBus.error("插件第 " + (attempt + 1) + " 次没给音频（" + first.getMessage() + "），等一下再试");
+                try { Thread.sleep(400L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
                 h.onVoiceChanged(locale(), v);
             }

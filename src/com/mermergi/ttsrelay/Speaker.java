@@ -1,5 +1,6 @@
 package com.mermergi.ttsrelay;
 
+import com.mermergi.ttsrelay.js.AudioSink;
 import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
@@ -36,8 +37,15 @@ public final class Speaker {
         final byte[] data;
         final int gen;
         final String voice;
+        /** 非空 = 边下边播：这个地址是一条还在往里写的流（LiveAudio）。 */
+        final String url;
+        final LiveAudio live;
 
-        Clip(String t, byte[] d, int g, String v) { text = t; data = d; gen = g; voice = v; }
+        Clip(String t, byte[] d, int g, String v) { this(t, d, g, v, null, null); }
+
+        Clip(String t, byte[] d, int g, String v, String u, LiveAudio la) {
+            text = t; data = d; gen = g; voice = v; url = u; live = la;
+        }
     }
 
     /** 合成任务：一句话 + 它该用的音色（多语音时每句可能不同）。 */
@@ -234,6 +242,7 @@ public final class Speaker {
         gen++;
         int dropped = textQ.size() + audioQ.size();
         textQ.clear();
+        for (Clip c : audioQ) if (c.live != null) c.live.fail("被打断");
         audioQ.clear();
         // 打断会把"上一段还没念的"直接丢掉 —— 这是设计。但要看得出丢了几句，
         // 否则"队列里还剩三句却不念了"就分不清是打断丢的、还是工作线程卡住了。
@@ -435,6 +444,9 @@ public final class Speaker {
             byte[] data = null;
             String err = null;
             boolean timedOut = false;
+            LiveAudio live = null;
+            boolean streaming = EngineStore.isJsVoice(ctx, cur.voice);   // 插件走边下边播
+            boolean streamed = false;                                    // 这一句已经交给播放线程了
             final Task job = cur;
             // 句子越长，TTS 那边本来就越久（64 字能吐出 18 秒音频）。总时限按字数放宽，
             // 但真正的判据是"有没有动静"：插件还在吐字节就一直等，见 HardCall.runIdle。
@@ -449,9 +461,39 @@ public final class Speaker {
                         return EngineStore.synthNow(ctx, text_safe(job.text), job.voice);
                     }
                 };
-                if (EngineStore.isJsVoice(ctx, cur.voice)) {
+                if (streaming) {
+                    // 边下边播：先把这条"还在下载的流"塞进播放队列，播放线程立刻起播；
+                    // 合成线程接着把插件吐的字节往里泵，整句下完这边才算完。
                     com.mermergi.ttsrelay.js.PluginBridge.touch();   // 起跑线
-                    data = HardCall.runIdle("合成", 10000L, synthWait, PLUGIN_CLOCK, job2);
+                    final LiveAudio la = LiveAudio.create();
+                    live = la;
+                    Clip liveClip = new Clip(cur.text, null, my, cur.voice, la.url(), la);
+                    boolean qued;
+                    try {
+                        qued = audioQ.offer(liveClip, 200, TimeUnit.MILLISECONDS);
+                    } catch (InterruptedException ie) {
+                        LiveAudio.drop(la);
+                        return;
+                    }
+                    if (!qued) {
+                        LiveAudio.drop(la);
+                        live = null;
+                        throw new IllegalStateException("音频队列塞不进去了（这一轮已经被丢掉）");
+                    }
+                    paused = false;
+                    beat("起播流");
+                    Handler hp = playH;
+                    if (hp != null) hp.post(playNext);       // 队列里刚有东西：叫醒播放线程
+                    HardCall.runIdle("合成", 10000L, synthWait, PLUGIN_CLOCK, new HardCall.Job<byte[]>() {
+                        public byte[] run() throws Throwable {
+                            EngineStore.synthTo(ctx, text_safe(job.text), job.voice, new AudioSink() {
+                                public void chunk(byte[] b, int o, int l) { la.chunk(b, o, l); }
+                            });
+                            return null;
+                        }
+                    });
+                    la.finish();                             // 下完了：让播放端读到流尾
+                    streamed = true;
                 } else {
                     data = HardCall.run("合成", synthWait, job2);
                 }
@@ -462,6 +504,18 @@ public final class Speaker {
                 err = t.getClass().getSimpleName() + ": " + t.getMessage();
             } finally {
                 synthBusy = false;
+                if (live != null && !streamed) live.fail(err == null ? "合成失败" : err);
+            }
+            // 边下边播：这一句已经交给播放线程了，成不成看那边播得怎么样
+            if (streamed) {
+                long cost = System.currentTimeMillis() - t0;
+                EngineStore.noteSynthOk(cur.voice, cost);
+                if (cost > 8000L) {
+                    LogBus.add("🐢 这句下载花了 " + (cost / 1000) + " 秒（文本 "
+                            + cur.text.length() + " 字 · 边下边播）");
+                }
+                cur = null;
+                continue;
             }
             if (data != null && data.length > 0) {
                 long cost = System.currentTimeMillis() - t0;
@@ -647,7 +701,7 @@ public final class Speaker {
                 return;
             }
             try {
-                playOne(clip);
+                if (clip.url != null) playLive(clip); else playOne(clip);
                 scheduleTick();
             } catch (Throwable t) {
                 failed.incrementAndGet();
@@ -700,6 +754,59 @@ public final class Speaker {
         if (h == null || tickOn) return;
         tickOn = true;
         h.postDelayed(playTick, 1000);
+    }
+
+    /**
+     * 播一条还在下载的流：MediaPlayer 直接读 {@code http://127.0.0.1:8788/_live/xxx}
+     * （progressive 流，读到哪放到哪）。用 prepareAsync 是为了别把播放线程堵在
+     * "等第一批字节"上 —— 那样看门狗会以为线程卡死。
+     */
+    private void playLive(final Clip clip) throws Exception {
+        releasePlayer();
+        final MediaPlayer p = new MediaPlayer();
+        beat("打开流");
+        try {
+            p.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build());
+            p.setVolume(volume, volume);
+            p.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                public void onPrepared(MediaPlayer m) {
+                    try {
+                        playDur = m.getDuration();
+                    } catch (Throwable ignored) { }
+                    playStart = SystemClock.uptimeMillis();
+                    beat("流播放中");
+                    try { m.start(); } catch (Throwable ignored) { }
+                }
+            });
+            p.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                public void onCompletion(MediaPlayer m) { postAfter(null, null); }
+            });
+            p.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                public boolean onError(MediaPlayer m, int what, int extra) {
+                    postAfter(null, "流播放出错 what=" + what + " extra=" + extra);
+                    return true;
+                }
+            });
+            p.setDataSource(clip.url);
+            p.prepareAsync();
+        } catch (Throwable t) {
+            try { p.reset(); } catch (Throwable ignored) { }
+            try { p.release(); } catch (Throwable ignored) { }
+            throw new IllegalStateException("流起播失败：" + t.getClass().getSimpleName()
+                    + " " + t.getMessage());
+        }
+        mp = p;                       // 立刻记上：playNext 靠它守着"一句是一句"
+        spoken.incrementAndGet();
+        chars.addAndGet(clip.text.length());
+        last = clip.text;
+        LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
+                ? "" : "【" + clip.voice.replaceAll("_\\d+$", "") + "】")
+                + head(clip.text, 42) + "  (边下边播 · 文本 " + clip.text.length() + " 字)");
+        playStart = 0;
+        playDur = 0;
     }
 
     private void playOne(final Clip clip) throws Exception {
@@ -773,8 +880,10 @@ public final class Speaker {
             public void run() {
                 if (err != null) LogBus.error(err);
                 releasePlayer();
-                //noinspection ResultOfMethodCallIgnored
-                f.delete();
+                if (f != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
                 playStart = 0;
                 playDur = 0;
                 beat("上一句播完");
