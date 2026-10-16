@@ -240,6 +240,11 @@ final class JsApi {
         if (o == null || o == Undefined.instance) return new byte[0];
         if (o instanceof byte[]) return (byte[]) o;
         if (o instanceof NativeArrayBuffer) return ((NativeArrayBuffer) o).getBuffer();
+        // Uint8Array / Buffer 这类 —— 漏了这条，Buffer 的东西会被当成空字节
+        if (o instanceof org.mozilla.javascript.typedarrays.NativeTypedArrayView) {
+            byte[] raw = rawOf((Scriptable) o);
+            if (raw.length > 0) return raw;
+        }
         if (o instanceof CharSequence) {
             try { return o.toString().getBytes("UTF-8"); } catch (Throwable t) { return new byte[0]; }
         }
@@ -453,6 +458,206 @@ final class JsApi {
             }
         }
         return 24000;
+    }
+
+    // ═════════════════════════ Buffer / UUID / environment ═════════════════════════
+
+    /**
+     * 全局 {@code Buffer} —— TTS Server 自己给 Rhino 加的那个（它包里的 NativeBuffer.kt）。
+     * 插件里最常见的就是 {@code Buffer.from(x, 'base64')} 和 {@code buf.toString('hex')}。
+     * 底下拿 Rhino 自己的 Uint8Array 兜着，于是 length、下标、slice 这些也都有。
+     */
+    static void installBuffer(Context cx, Scriptable scope) {
+        final ScriptableObject buf = (ScriptableObject) cx.newObject(scope);
+        put(buf, "BYTES_PER_ELEMENT", Integer.valueOf(1));
+        put(buf, "from", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                if (a.length == 0 || a[0] == null || a[0] == Undefined.instance) {
+                    throw Context.reportRuntimeError("First argument must be a string or buffer");
+                }
+                byte[] data;
+                if (a[0] instanceof NativeArrayBuffer) {
+                    byte[] all = ((NativeArrayBuffer) a[0]).getBuffer();
+                    int off = a.length > 2 ? (int) Context.toNumber(a[2]) : 0;
+                    int len = a.length > 3 ? (int) Context.toNumber(a[3]) : all.length;
+                    int end = Math.min(all.length, off + len);
+                    data = new byte[Math.max(0, end - off)];
+                    System.arraycopy(all, Math.max(0, off), data, 0, data.length);
+                } else {
+                    data = decode(str(a, 0), a.length > 1 ? str(a, 1) : "utf-8");
+                }
+                return wrapBytes(c, s, data);
+            }
+        }));
+        put(buf, "alloc", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                int n = a.length > 0 ? (int) Context.toNumber(a[0]) : 0;
+                byte[] data = new byte[Math.max(0, n)];
+                if (a.length > 1 && a[1] != Undefined.instance) java.util.Arrays.fill(data, (byte) Context.toNumber(a[1]));
+                return wrapBytes(c, s, data);
+            }
+        }));
+        put(buf, "concat", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                if (a.length > 0 && a[0] instanceof Scriptable) {
+                    Scriptable arr = (Scriptable) a[0];
+                    Object lenObj = arr.get("length", arr);
+                    int n = lenObj instanceof Number ? ((Number) lenObj).intValue() : 0;
+                    for (int i = 0; i < n; i++) {
+                        byte[] one = bytesOf(arr.get(i, arr));
+                        bos.write(one, 0, one.length);
+                    }
+                }
+                return wrapBytes(c, s, bos.toByteArray());
+            }
+        }));
+        put(buf, "isBuffer", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                return Boolean.valueOf(bytesLike(a.length > 0 ? a[0] : null));
+            }
+        }));
+        put(scope, "Buffer", buf);
+    }
+
+    /** 把一个 byte[] 包成"能当 Buffer 用"的对象。 */
+    static Scriptable wrapBytes(Context cx, Scriptable scope, byte[] data) {
+        Scriptable u8 = null;
+        try {
+            u8 = (Scriptable) cx.newObject(scope, "Uint8Array", new Object[]{arrayBuffer(data)});
+        } catch (Throwable ignored) { }
+        if (u8 == null) u8 = cx.newObject(scope);
+        final Scriptable self = u8;
+        put(self, "length", Integer.valueOf(data.length));
+        put(self, "BYTES_PER_ELEMENT", Integer.valueOf(1));
+        put(self, "toString", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                String enc = a.length > 0 && a[0] != Undefined.instance ? str(a, 0).toLowerCase() : "utf-8";
+                return encode(rawOf(self), enc);
+            }
+        }));
+        put(self, "slice", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                byte[] all = rawOf(self);
+                int from = a.length > 0 ? (int) Context.toNumber(a[0]) : 0;
+                int to = a.length > 1 && a[1] != Undefined.instance ? (int) Context.toNumber(a[1]) : all.length;
+                if (from < 0) from += all.length;
+                if (to < 0) to += all.length;
+                from = Math.max(0, Math.min(all.length, from));
+                to = Math.max(from, Math.min(all.length, to));
+                byte[] out = new byte[to - from];
+                System.arraycopy(all, from, out, 0, out.length);
+                return wrapBytes(c, s, out);
+            }
+        }));
+        return self;
+    }
+
+    private static byte[] rawOf(Scriptable o) {
+        if (o instanceof org.mozilla.javascript.typedarrays.NativeTypedArrayView) {
+            NativeArrayBuffer b = ((org.mozilla.javascript.typedarrays.NativeTypedArrayView<?>) o).getBuffer();
+            if (b != null) return b.getBuffer();
+        }
+        return new byte[0];
+    }
+
+    static boolean bytesLike(Object o) {
+        return o instanceof NativeArrayBuffer
+                || o instanceof org.mozilla.javascript.typedarrays.NativeTypedArrayView
+                || o instanceof byte[];
+    }
+
+    /** 编码：utf-8 / base64 / hex / ascii / latin1 / 其它 charset。 */
+    static byte[] decode(String input, String encoding) {
+        String e = encoding == null ? "utf-8" : encoding.toLowerCase().trim();
+        try {
+            if (e.equals("base64") || e.equals("base64url")) {
+                String t = input.replace('-', '+').replace('_', '/');
+                while (t.length() % 4 != 0) t = t + "=";
+                return java.util.Base64.getDecoder().decode(t);
+            }
+            if (e.equals("hex")) return unhex(input);
+            if (e.equals("latin1") || e.equals("binary")) return input.getBytes("ISO-8859-1");
+            if (e.equals("utf8") || e.equals("utf-8") || e.isEmpty()) return input.getBytes("UTF-8");
+            return input.getBytes(e);
+        } catch (Throwable t) {
+            throw Context.reportRuntimeError("Unsupported encoding: " + encoding);
+        }
+    }
+
+    static String encode(byte[] data, String encoding) {
+        String e = encoding == null ? "utf-8" : encoding.toLowerCase().trim();
+        try {
+            if (e.equals("base64") || e.equals("base64url")) {
+                String out = java.util.Base64.getEncoder().encodeToString(data);
+                return e.equals("base64url") ? out.replace('+', '-').replace('/', '_') : out;
+            }
+            if (e.equals("hex")) return hex(data);
+            if (e.equals("latin1") || e.equals("binary")) return new String(data, "ISO-8859-1");
+            if (e.equals("utf8") || e.equals("utf-8") || e.isEmpty()) return new String(data, "UTF-8");
+            return new String(data, e);
+        } catch (Throwable t) {
+            throw Context.reportRuntimeError("Unsupported encoding: " + encoding);
+        }
+    }
+
+    /** 全局 {@code UUID}：v4 / stringify / parse / validate。 */
+    static void installUUID(Context cx, Scriptable scope, final String engineId) {
+        final ScriptableObject u = (ScriptableObject) cx.newObject(scope);
+        put(u, "v4", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) { return java.util.UUID.randomUUID().toString(); }
+        }));
+        put(u, "stringify", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                byte[] b = bytesOf(a.length > 0 ? a[0] : null);
+                if (b.length == 16) {
+                    return new java.util.UUID(bytesToLong(b, 0), bytesToLong(b, 8)).toString();
+                }
+                return java.util.UUID.randomUUID().toString();
+            }
+        }));
+        put(u, "parse", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                java.util.UUID id;
+                try { id = java.util.UUID.fromString(str(a, 0)); }
+                catch (Throwable t) { throw Context.reportRuntimeError("Invalid UUID: " + str(a, 0)); }
+                byte[] out = new byte[16];
+                longOf(id.getMostSignificantBits(), out, 0);
+                longOf(id.getLeastSignificantBits(), out, 8);
+                return wrapBytes(c, s, out);
+            }
+        }));
+        put(u, "validate", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) {
+                try { java.util.UUID.fromString(str(a, 0)); return Boolean.TRUE; }
+                catch (Throwable t) { return Boolean.FALSE; }
+            }
+        }));
+        put(scope, "UUID", u);
+    }
+
+    private static long bytesToLong(byte[] b, int at) {
+        long v = 0;
+        for (int i = 0; i < 8; i++) v = (v << 8) | (b[at + i] & 0xffL);
+        return v;
+    }
+
+    private static void longOf(long v, byte[] out, int at) {
+        for (int i = 7; i >= 0; i--) {
+            out[at + i] = (byte) (v & 0xff);
+            v >>= 8;
+        }
+    }
+
+    /** 全局 {@code environment}：TTS Server 那边给插件看缓存目录/引擎 id。 */
+    static void installEnvironment(Context cx, Scriptable scope, String engineId) {
+        ScriptableObject env = (ScriptableObject) cx.newObject(scope);
+        put(env, "id", engineId == null ? "" : engineId);
+        put(env, "cacheDir", "");
+        put(scope, "environment", env);
+        put(scope, "println", fn(new Fn() {
+            public Object run(Context c, Scriptable s, Object[] a) { return Undefined.instance; }
+        }));
     }
 
     static String hex(byte[] b) {
