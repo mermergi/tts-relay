@@ -289,6 +289,7 @@ public final class PluginEditorActivity extends Activity {
 
     private void menu(View anchor) {
         PopupMenu m = new PopupMenu(this, anchor);
+        m.getMenu().add("插件界面（插件自己画的控件）");
         m.getMenu().add("设置变量…");
         m.getMenu().add("选择语言…");
         m.getMenu().add("看插件信息");
@@ -298,7 +299,8 @@ public final class PluginEditorActivity extends Activity {
         m.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
             public boolean onMenuItemClick(android.view.MenuItem item) {
                 String t = String.valueOf(item.getTitle());
-                if ("设置变量…".equals(t)) { save(); varsDialog(); }
+                if (t.startsWith("插件界面")) { save(); pluginUiDialog(); }
+                else if ("设置变量…".equals(t)) { save(); varsDialog(); }
                 else if ("选择语言…".equals(t)) { save(); localeDialog(); }
                 else if ("看插件信息".equals(t)) { infoDialog(); }
                 else if ("粘贴源码".equals(t)) { paste(); }
@@ -308,6 +310,37 @@ public final class PluginEditorActivity extends Activity {
             }
         });
         m.show();
+    }
+
+    /** 那个插件自己带的界面实例（弹窗关掉前别让它被回收）。 */
+    private com.mermergi.ttsrelay.js.PluginBridge uiBridge;
+
+    /**
+     * 把插件自己的界面显示出来 —— 照它 `PluginTtsUI` 里的 previewUi：
+     * 建一个容器，调插件的 `onLoadUI(context, container)`，它往里塞自己的控件。
+     * 火山那个插件的 BV 输入框就活在这儿（选 custom 音色才用得到）。
+     */
+    private void pluginUiDialog() {
+        try {
+            uiBridge = new com.mermergi.ttsrelay.js.PluginBridge(this, it.id,
+                    code.getText().toString(), null, null, it.s("lang", "zh-CN"), "");
+        } catch (Throwable t) {
+            toast("插件界面起不来：" + t.getMessage());
+            return;
+        }
+        LinearLayout host = uiBridge.getUiContainer();
+        if (host == null || host.getChildCount() == 0) {
+            toast("这个插件没有自己的界面（onLoadUI 是空的）");
+            return;
+        }
+        ScrollView sv = new ScrollView(this);
+        host.setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8));
+        sv.addView(host);
+        new AlertDialog.Builder(this, dialogTheme())
+                .setTitle("插件界面")
+                .setView(sv)
+                .setPositiveButton("好", null)
+                .show();
     }
 
     /** 设置变量 —— 就是 TTS Server 里「更多选项 → 设置变量」，显示名用它引擎文件里的 name。 */

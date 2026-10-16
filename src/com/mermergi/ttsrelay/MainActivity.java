@@ -965,52 +965,6 @@ public class MainActivity extends Activity {
 
     private boolean metaSyncing = false;
 
-    /**
-     * 引擎"有没有毛病"的缓存 —— <b>绝不能</b>在 UI 线程上问：
-     * JS 引擎的 problem() 要起一个 Rhino 真跑一遍插件源码（indexTTS2 1124 行），
-     * 在列表里同步跑就是几百毫秒到几秒的卡顿，点击全被丢掉。
-     * 这儿只读缓存；没算过的先在后台算，算完刷一次列表。空串 = 没问题。
-     */
-    private final java.util.Map<String, String> probCache = new java.util.HashMap<String, String>();
-    private boolean probChecking = false;
-
-    private String probKey(EngineStore.Item it) {
-        return it.id + "|" + it.kind + "|" + it.s("src", "").hashCode()
-                + "|" + it.s("url", "").hashCode() + "|" + it.s("tpl", "").hashCode()
-                + "|" + it.s("pkg", "").hashCode();
-    }
-
-    private void checkProblemsAsync() {
-        if (probChecking) return;
-        final java.util.List<EngineStore.Item> todo = new java.util.ArrayList<EngineStore.Item>();
-        for (EngineStore.Item it : EngineStore.all(this)) {
-            if (!probCache.containsKey(probKey(it))) todo.add(it);
-        }
-        if (todo.isEmpty()) return;
-        probChecking = true;
-        final Context ctx = this;
-        new Thread(new Runnable() {
-            public void run() {
-                for (EngineStore.Item it : todo) {
-                    String p;
-                    try {
-                        p = EngineStore.build(it).problem(ctx);
-                    } catch (Throwable t) {
-                        p = String.valueOf(t.getMessage());
-                    }
-                    probCache.put(probKey(it), p == null ? "" : p);
-                }
-                runOnUiThread(new Runnable() {
-                    public void run() { probChecking = false; renderEngines(); }
-                });
-            }
-        }).start();
-    }
-
-    /**
-     * 老引擎（导入时还没读懂 vars 的）后台补一次插件元数据 —— 补完重画列表，
-     * 「请设置变量」和变量输入框就自己出来了。照它那样：列表上直接能看到该填什么。
-     */
     private void syncJsMetaInBackground() {
         if (metaSyncing) return;
         final java.util.List<EngineStore.Item> todo = new java.util.ArrayList<EngineStore.Item>();
@@ -1033,31 +987,33 @@ public class MainActivity extends Activity {
                 runOnUiThread(new Runnable() {
                     public void run() {
                         metaSyncing = false;
-                        if (c) { probCache.clear(); renderEngines(); }
+                        if (c) refreshEngineRows();
                     }
                 });
             }
         }).start();
     }
 
+    // 行的零件都留着引用：后台结果回来时<b>原地改字</b>，不重建视图
+    // （重建会把整页高度变来变去，看着就是"乱跳"）
+    private final java.util.Map<String, TextView> rowName = new java.util.HashMap<String, TextView>();
+    private final java.util.Map<String, TextView> rowSub = new java.util.HashMap<String, TextView>();
+    private final java.util.Map<String, TextView> rowNeed = new java.util.HashMap<String, TextView>();
+
     private void renderEngines() {
         if (engineBox == null) return;
         engineBox.removeAllViews();
+        rowName.clear(); rowSub.clear(); rowNeed.clear();
         String active = EngineStore.activeId(this);
         for (final EngineStore.Item it : EngineStore.all(this)) {
-            final boolean on = it.id.equals(active);
-            String cached = probCache.get(probKey(it));
-            final String prob = cached == null ? "（检查中…）" : (cached.length() == 0 ? null : cached);
-
-            // 一行 = 头像 + 名字/副标题 + 铅笔 + ⋮ —— 照 TTS Server 的插件列表那样
+            // 一行 = 头像 + 名字/副标题/状态 + 铅笔 + ⋮ —— 照 TTS Server 的插件列表那样
             LinearLayout row = ui.row();
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(ui.dp(10), ui.dp(8), ui.dp(6), ui.dp(8));
-            row.setBackground(ui.round(on ? p.cardHi : p.card, on ? p.accent : p.border, 14));
             row.setOnClickListener(new View.OnClickListener() {
                 public void onClick(View v) {
                     EngineStore.setActive(MainActivity.this, it.id);
-                    renderEngines();
+                    refreshEngineRows();
                     toast("当前引擎：" + it.label);
                 }
             });
@@ -1072,21 +1028,25 @@ public class MainActivity extends Activity {
 
             LinearLayout col = ui.col();
             col.setPadding(ui.dp(10), 0, ui.dp(6), 0);
+
             TextView t = ui.value(it.label);
-            t.setTextColor(prob != null ? p.warn : (on ? p.accent : p.textPrimary));
             col.addView(t);
-            String sub = subtitle(it);
-            if (sub.length() > 0) col.addView(ui.hint(sub));
-            if (prob != null) col.addView(ui.hint("⚠ " + prob));
+            rowName.put(it.id, t);
+
+            TextView sub = ui.hint("");
+            col.addView(sub);
+            rowSub.put(it.id, sub);
+
             // 照它那行：插件声明了变量却没填 → 主色提示，点它直接去设置变量
-            if (EngineStore.needsVars(it)) {
-                TextView need = ui.value("请设置变量（API密钥等）▸");
-                need.setTextColor(p.accent);
-                need.setOnClickListener(new View.OnClickListener() {
-                    public void onClick(View v) { openPluginEditor(it, true); }
-                });
-                col.addView(need);
-            }
+            TextView need = ui.value("请设置变量（API密钥等）▸");
+            need.setTextColor(p.accent);
+            need.setVisibility(View.GONE);
+            need.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) { openPluginEditor(it, true); }
+            });
+            col.addView(need);
+            rowNeed.put(it.id, need);
+
             row.addView(col, ui.weight(1f));
 
             row.addView(ui.btn("✎", false, new View.OnClickListener() {
@@ -1101,17 +1061,36 @@ public class MainActivity extends Activity {
             lp.topMargin = ui.dp(8);
             engineBox.addView(row, lp);
         }
+        refreshEngineRows();
         syncJsMetaInBackground();
-        checkProblemsAsync();
+    }
+
+    /**
+     * 只改字、只改可见性 —— 不新增/删除视图，也就不会跳。
+     *
+     * <b>这里绝不执行插件</b>：它（TTS Server）的插件列表也是这样，只显示已存的数据
+     * （名字、作者-版本、要不要设置变量），插件要到真用的时候（试听/合成/编辑）才跑。
+     */
+    private void refreshEngineRows() {
+        String active = EngineStore.activeId(this);
+        for (EngineStore.Item it : EngineStore.all(this)) {
+            boolean on = it.id.equals(active);
+            TextView t = rowName.get(it.id);
+            if (t != null) t.setTextColor(on ? p.accent : p.textPrimary);
+
+            TextView sub = rowSub.get(it.id);
+            if (sub != null) sub.setText(subtitle(it));
+
+            TextView need = rowNeed.get(it.id);
+            if (need != null) need.setVisibility(EngineStore.needsVars(it) ? View.VISIBLE : View.GONE);
+        }
+
         if (engineNow != null) {
             EngineStore.Item it = EngineStore.get(this, active);
-            String pc = it == null ? null : probCache.get(probKey(it));
-            String prob = it == null ? "没有引擎"
-                    : (pc == null ? "检查中…" : (pc.length() == 0 ? null : pc));
             engineNow.setText((it == null ? "（没有）" : it.label)
                     + (it == null ? "" : "  ·  " + kindName(it.kind))
-                    + "\n" + (prob == null ? "就绪" : "⚠ " + prob));
-            engineNow.setTextColor(prob == null ? p.ok : p.warn);
+                    + "\n点「试听」验证它现在通不通");
+            engineNow.setTextColor(p.textSecondary);
         }
     }
 
@@ -1644,13 +1623,23 @@ public class MainActivity extends Activity {
     }
 
     private void testEngine() {
-        Speaker spk = RelayService.speakerOrNull();
+        final Speaker spk = RelayService.speakerOrNull();
         if (spk == null) { toast("先启动中转"); return; }
-        TtsEngine e = EngineStore.activeEngine(this);
-        String prob = e == null ? "引擎起不来" : e.problem(this);
-        if (prob != null) { toast("⚠ " + prob); return; }
-        spk.feed("这是当前语音引擎的测试，能听见就说明通了。", null);
-        toast("已排队（" + (e == null ? "?" : e.label()) + "）");
+        final TtsEngine e = EngineStore.activeEngine(this);
+        toast("正在问引擎…");
+        // 同样不能在 UI 线程上问：JS 引擎会真跑一遍插件
+        new Thread(new Runnable() {
+            public void run() {
+                final String prob = e == null ? "引擎起不来" : e.problem(MainActivity.this);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (prob != null) { toast("⚠ " + prob); return; }
+                        spk.feed("这是当前语音引擎的测试，能听见就说明通了。", null);
+                        toast("已排队（" + (e == null ? "?" : e.label()) + "）");
+                    }
+                });
+            }
+        }).start();
     }
 
     // ══════════════════════════ 日志 ══════════════════════════

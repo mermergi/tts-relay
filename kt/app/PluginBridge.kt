@@ -33,6 +33,12 @@ class PluginBridge(
         locale = locale, voice = voice, pluginId = engineId, data = LinkedHashMap(ttsData ?: emptyMap())
     )
 
+    /** 插件用它自己的控件画出来的界面（它们的 onLoadUI 往这儿 addView）。 */
+    val uiContainer: android.widget.LinearLayout =
+        android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+
     /** 它自己的引擎：eval / getAudio / getVoices / getLocales / getSampleRate 全在里头。 */
     val engine: TtsPluginUiEngineV2 = TtsPluginUiEngineV2(context, plugin)
 
@@ -44,7 +50,7 @@ class PluginBridge(
         // 不建就会在 onVoiceChanged 里对 null 调 setVisibility（火山那个插件就是这么死的）。
         // 我们没有插件界面，但给它一个真容器，让那些控件句柄至少是个真对象。
         try {
-            engine.onLoadUI(context, android.widget.LinearLayout(context))
+            engine.onLoadUI(context, uiContainer)
         } catch (_: Throwable) {
         }
         // onLoadData / onVoiceChanged 是它们界面上的回调，插件报错不该把合成一起带走
