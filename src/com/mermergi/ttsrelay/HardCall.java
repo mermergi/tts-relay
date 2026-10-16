@@ -31,9 +31,18 @@ public final class HardCall {
         T run() throws Throwable;
     }
 
-    /** 干活的进度：还在动就返回"刚刚有过动静"的时间戳。 */
+    /** 干活的进度 + "急不急"：还在动就返回"刚刚有过动静"的时间戳。 */
     public interface Clock {
         long lastActivity();
+
+        /**
+         * 现在还有没有声音在播 / 在等着播？
+         *
+         * <p>有 = 这一句是**提前**在合后面的话，卡住了也不影响听感，慢慢等就是了；
+         * 没有 = 前面都播完了、机器在干等这一句（真的静音了），这时候才值得判卡住。
+         * 这就是"前面的还在播你就别管后面的"那条规矩。
+         */
+        boolean hasLead();
     }
 
     /**
@@ -45,6 +54,16 @@ public final class HardCall {
      * 然后丢宿主、重建、下一发又慢 —— 朗读开头就是这么断断续续的。
      */
     public static <T> T runIdle(final String what, long idleMs, long maxMs,
+                                final Clock clock, final Job<T> job) throws Exception {
+        return runIdle(what, idleMs, idleMs * 12, maxMs, maxMs * 3, clock, job);
+    }
+
+    /**
+     * 带"急不急"的版本：有声音在播时，允许的空闲/总时长都放宽（[idleWithLead]/[maxWithLead]）；
+     * 一旦没声音了，就按 [idleStarved]/[maxStarved] 来 —— 停几秒就重试，别让人对着静音等。
+     */
+    public static <T> T runIdle(final String what, long idleStarved, long idleWithLead,
+                                long maxStarved, long maxWithLead,
                                 final Clock clock, final Job<T> job) throws Exception {
         final Object[] out = new Object[1];
         final Throwable[] err = new Throwable[1];
@@ -60,15 +79,21 @@ public final class HardCall {
         t.setDaemon(true);
         long start = System.currentTimeMillis();
         t.start();
+        boolean hadLead = false;
         while (true) {
             t.join(250L);
             if (!t.isAlive()) break;
             long now = System.currentTimeMillis();
+            boolean lead = clock != null && clock.hasLead();
+            if (lead) hadLead = true;
+            long idle = lead ? idleWithLead : idleStarved;
+            long max = lead ? maxWithLead : maxStarved;
             long last = clock == null ? now : clock.lastActivity();
-            if (last > 0 && now - last > Math.max(1000L, idleMs)) {
-                return abandon(t, what, (now - last) / 1000 + " 秒没有任何动静（还活着的话它还在吐数据）");
+            if (last > 0 && now - last > Math.max(1000L, idle)) {
+                return abandon(t, what, (now - last) / 1000 + " 秒没有任何动静"
+                        + (hadLead ? "（前面有声音在播，一直等到现在才判）" : "（前面已经播完，没声音了）"));
             }
-            if (now - start > Math.max(2000L, maxMs)) {
+            if (now - start > Math.max(2000L, max)) {
                 return abandon(t, what, (now - start) / 1000 + " 秒还没读完（总时限）");
             }
         }
