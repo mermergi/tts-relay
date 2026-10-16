@@ -14,3 +14,4 @@ keystore.jks
 *.log
 __pycache__/
 tools/lib/*.jar
+tools/lib/aar/*.aar
