@@ -914,6 +914,27 @@ public class MainActivity extends Activity {
 
         // 登录抓取回来的是一段字符串，没有文件 Uri ——
         // 千万别拿文件那套 "data.getData()==null 就 return" 的条件把它挡掉（之前就是这么丢的）
+        if (req == REQ_PICK_JS) {
+            if (res == RESULT_OK && data != null && data.getData() != null && pendingJsPick != null) {
+                try {
+                    String src = readText(data.getData());
+                    if (src == null || src.trim().length() == 0) { toast("文件是空的"); return; }
+                    EngineStore.Item e2 = pendingJsPick;
+                    e2.kind = EngineStore.KIND_JS;
+                    e2.put("src", src);
+                    EngineStore.syncJsMeta(this, e2);      // 顺手把它的名字/变量读出来
+                    EngineStore.put(this, e2);
+                    renderEngines();
+                    toast("已变成 JS 插件：" + e2.label);
+                    openPluginEditor(e2, false);
+                } catch (Throwable t) {
+                    toast("读文件失败：" + t.getMessage());
+                } finally {
+                    pendingJsPick = null;
+                }
+            }
+            return;
+        }
         if (req == REQ_LOGIN) {
             String v = data == null ? null : data.getStringExtra(LoginActivity.RESULT_VALUE);
             if (v == null || v.trim().length() == 0) { toast("没抓到内容，先登录再点抓取"); return; }
@@ -1135,6 +1156,30 @@ public class MainActivity extends Activity {
         }
     }
 
+    private static final int REQ_PICK_JS = 61;
+    private EngineStore.Item pendingJsPick;
+
+    /** 挑一份插件 .js（TTS Server 导出来的那种）→ 这个引擎就变成 JS 插件。 */
+    private void pickPluginFile(EngineStore.Item it) {
+        pendingJsPick = it;
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("*/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try { startActivityForResult(Intent.createChooser(i, "选插件 .js"), REQ_PICK_JS); }
+        catch (Throwable t) { toast("打不开文件选择器：" + t.getMessage()); }
+    }
+
+    private String readText(android.net.Uri uri) throws Exception {
+        java.io.InputStream in = getContentResolver().openInputStream(uri);
+        if (in == null) return null;
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        in.close();
+        return new String(bos.toByteArray(), "UTF-8");
+    }
+
     private void openPluginEditor(final EngineStore.Item it, final boolean openVars) {
         // 没有插件源码的引擎（系统语音、HTTP 模板、原生豆包）：编辑器只管插件源码，
         // 所以这儿给一条「粘源码转成 JS 插件」的路 —— 照 TTS Server：引擎就是插件。
@@ -1142,21 +1187,19 @@ public class MainActivity extends Activity {
                 && !EngineStore.KIND_JS.equals(it.kind)) {
             new AlertDialog.Builder(this, dialogTheme())
                     .setTitle(it.label)
-                    .setMessage("这个引擎没有插件源码，插件编辑器就没得编。\n"
-                            + "TTS Server 里引擎本身就是 .js 插件 —— 贴一份插件源码，它就变成 JS 插件。")
-                    .setPositiveButton("粘贴插件源码", new DialogInterface.OnClickListener() {
+                    .setMessage("这个引擎没有插件源码 —— 插件编辑器只管源码，所以没得编。\n\n"
+                            + "TTS Server 里引擎就是一份 .js：选你导出的那个文件（一般在"
+                            + "「内部存储 / 语音引擎 / ttsrv-plugin-*.js」），它立刻变成 JS 插件。")
+                    .setPositiveButton("选插件 .js 文件", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) { pickPluginFile(it); }
+                    })
+                    .setNeutralButton("直接粘贴源码", new DialogInterface.OnClickListener() {
                         public void onClick(DialogInterface d, int w) {
                             it.kind = EngineStore.KIND_JS;
                             it.put("src", "");
                             EngineStore.put(MainActivity.this, it);
                             renderEngines();
                             openPluginEditor(it, false);
-                        }
-                    })
-                    .setNeutralButton("设为当前引擎", new DialogInterface.OnClickListener() {
-                        public void onClick(DialogInterface d, int w) {
-                            EngineStore.setActive(MainActivity.this, it.id);
-                            renderEngines();
                         }
                     })
                     .setNegativeButton("取消", null)

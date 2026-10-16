@@ -26,13 +26,10 @@ public final class EngineImport {
         if (t.length() == 0) throw new IllegalArgumentException("内容为空");
         if (looksLikeJsPlugin(t)) {
             List<EngineStore.Item> one = new ArrayList<EngineStore.Item>();
-            // 豆包那两条链路是原生实现的（自带 WebSocket），走原生更快也更稳；
-            // 别的插件就交给 Rhino 真跑（见 JsHost）。
-            if (t.contains("frontier-audio-web-ws.doubao.com") || t.contains("ws-samantha.doubao.com")) {
-                one.add(parseJsPlugin(t));
-            } else {
-                one.add(jsEngine(t));
-            }
+            // 插件就是插件：一律交给 TTS Server 那套运行时真跑（见 kt/ + PluginBridge）。
+            // 以前豆包那两条链路走原生实现，现在按"引擎文件就是 .js"的原样处理 ——
+            // 豆包插件（含 WebSocket/protobuf）用的全局我们都已经搬进来了。
+            one.add(jsEngine(t));
             return one;
         }
 
