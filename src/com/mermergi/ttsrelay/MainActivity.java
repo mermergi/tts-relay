@@ -122,6 +122,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle b) {
+        App.install(this);
         super.onCreate(b);
         p = Palette.of(this);
         ui = new Ui(this, p);

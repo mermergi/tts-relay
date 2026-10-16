@@ -13,3 +13,4 @@ keystore.jks
 .DS_Store
 *.log
 __pycache__/
+tools/lib/*.jar

@@ -67,6 +67,7 @@ public final class RelayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        App.install(this);
         INSTANCE = this;
         LogBus.init(this);
         createChannel();

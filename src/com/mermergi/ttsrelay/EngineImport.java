@@ -78,8 +78,11 @@ public final class EngineImport {
     }
 
     /**
-     * 其它 TTS Server 的 JS 插件 → "JS 插件" 引擎：源码原样存着，跑的时候交给 {@link JsHost}（Rhino）。
-     * 它声明的变量、变量名、登录方式都读出来填好。
+     * TTS Server 的 JS 插件 → 我们的一种引擎。
+     *
+     * 源码原样存进配置，跑的时候交给 TTS Server 自己的运行时（见 kt/ + PluginHost）—— 同一个引擎，
+     * 所以插件里的 {@code getAudio} / {@code getVoices} 是什么样，这儿就是什么样，没有"搬不过来"。
+     * 顺手把它声明的变量键、变量名、登录方式读出来填好。
      */
     private static EngineStore.Item jsEngine(String src) {
         EngineStore.Item it = new EngineStore.Item();
@@ -89,27 +92,42 @@ public final class EngineImport {
         it.put("lang", "zh-CN");
         it.put("headers", "");
         it.put("voices", "");
+        it.put("voices_url", "");
+        it.put("voices_path", "");
+        it.put("voices_name", "name");
+        it.put("voices_id", "id");
         it.put("login_url", "");
         it.put("binding", "session");
         it.put("ua", "mobile");
+
+        // 元数据不是猜的：把插件跑起来读它 PluginJS 上的 name/id/author/vars —— 照 TTS Server 的 eval()
         String name = "";
         try {
-            JsHost h = JsHost.load(src, null);
-            name = h.name();
-            if (name.length() == 0) name = h.id();
+            com.mermergi.ttsrelay.js.PluginHost h =
+                    new com.mermergi.ttsrelay.js.PluginHost(App.ctx(), it.id, src, null);
+            h.init();
+            com.mermergi.ttsrelay.js.PluginHost.Meta m = h.meta();
+            name = m.getName();
+            if (name.length() == 0) name = m.getId();
             JSONObject labels = new JSONObject();
-            for (String k : h.varKeys()) {
-                if (!it.cfg.has(k)) it.put(k, "");
-                try { labels.put(k, h.varLabel(k)); } catch (Throwable ignored) { }
+            String loginKey = "";
+            for (com.mermergi.ttsrelay.js.PluginHost.VarDef v : m.getVars()) {
+                if (!it.cfg.has(v.getKey())) it.put(v.getKey(), "");
+                String lab = v.getLabel();
+                if (v.getHint().length() > 0) lab = lab + "（" + v.getHint() + "）";
+                try { labels.put(v.getKey(), lab); } catch (Throwable ignored) { }
+                if (loginKey.length() == 0 && v.getLoginUrl().length() > 0) {
+                    loginKey = v.getKey();
+                    it.put("login_key", loginKey);
+                    it.put("login_url", v.getLoginUrl());
+                    it.put("binding", v.getBinding().length() > 0 ? v.getBinding() : "session");
+                    it.put("ua", v.getUa().length() > 0 ? v.getUa() : "mobile");
+                }
             }
             if (labels.length() > 0) it.put("var_labels", labels.toString());
-            String lk = h.loginKey();
-            if (lk.length() > 0) {
-                it.put("login_key", lk);
-                it.put("login_url", h.loginUrl());
-                it.put("binding", h.binding().length() > 0 ? h.binding() : "session");
-                it.put("ua", h.ua().length() > 0 ? h.ua() : "mobile");
-            }
+            if (m.getAuthor().length() > 0) it.put("author", m.getAuthor());
+            if (m.getIconUrl().length() > 0) it.put("icon", m.getIconUrl());
+            h.destroy();
         } catch (Throwable t) {
             // 源码留着，跑不起来的理由由引擎的 problem() 说
         }
