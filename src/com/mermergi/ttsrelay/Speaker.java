@@ -380,6 +380,11 @@ public final class Speaker {
     /** 这一句因为"引擎吊住"被硬超时过几次（第一次是换宿主重试，第二次才算真失败）。 */
     private int curTimeouts = 0;
 
+    /** 插件合成"还在不在动"看这个（每读到一块音频就更新一次）。 */
+    private static final HardCall.Clock PLUGIN_CLOCK = new HardCall.Clock() {
+        public long lastActivity() { return com.mermergi.ttsrelay.js.PluginBridge.getLastActivity(); }
+    };
+
     public long pace() { return paceMs; }
 
     private void synthLoop(final int ep) {
@@ -431,19 +436,25 @@ public final class Speaker {
             String err = null;
             boolean timedOut = false;
             final Task job = cur;
-            synthWait = EngineStore.synthDeadlineMs(ctx, cur.voice);
+            // 句子越长，TTS 那边本来就越久（64 字能吐出 18 秒音频）。总时限按字数放宽，
+            // 但真正的判据是"有没有动静"：插件还在吐字节就一直等，见 HardCall.runIdle。
+            synthWait = Math.max(15000L, Math.min(90000L, 6000L + 200L * cur.text.length()));
             synthBusy = true;
             synthBeat("引擎合成 " + head(cur.text, 12) + "（最多等 " + (synthWait / 1000) + " 秒）");
             long t0 = System.currentTimeMillis();
             try {
                 lastSynthAt = System.currentTimeMillis();
-                // 硬超时：插件要是吊死不回调（它是阻塞在 PipedInputStream 上读的，
-                // 协程超时救不了），到点就把那条线程丢掉，别把整条流水线拖死。
-                data = HardCall.run("合成", synthWait, new HardCall.Job<byte[]>() {
+                final HardCall.Job<byte[]> job2 = new HardCall.Job<byte[]>() {
                     public byte[] run() throws Throwable {
                         return EngineStore.synthNow(ctx, text_safe(job.text), job.voice);
                     }
-                });
+                };
+                if (EngineStore.isJsVoice(ctx, cur.voice)) {
+                    com.mermergi.ttsrelay.js.PluginBridge.touch();   // 起跑线
+                    data = HardCall.runIdle("合成", 10000L, synthWait, PLUGIN_CLOCK, job2);
+                } else {
+                    data = HardCall.run("合成", synthWait, job2);
+                }
             } catch (HardCall.TimedOut te) {
                 timedOut = true;
                 err = te.getMessage();
@@ -453,7 +464,12 @@ public final class Speaker {
                 synthBusy = false;
             }
             if (data != null && data.length > 0) {
-                EngineStore.noteSynthOk(cur.voice, System.currentTimeMillis() - t0);
+                long cost = System.currentTimeMillis() - t0;
+                EngineStore.noteSynthOk(cur.voice, cost);
+                if (cost > 8000L) {
+                    LogBus.add("🐢 这句合成花了 " + (cost / 1000) + " 秒（文本 "
+                            + cur.text.length() + " 字 · 音频 " + (data.length / 1024) + "KB）");
+                }
             }
             if (data == null) {
                 if (timedOut) {

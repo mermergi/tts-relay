@@ -218,8 +218,14 @@ public final class JsTtsEngine implements TtsEngine {
         // 同一个插件运行时同时被两个合成碰，就会互相把会话搅烂 → No data written。
         synchronized (h) {
             String v = pickVoice(c, s.voice);
-            h.setSource(locale(), v, s.rate, s.volume, s.pitch);
-            h.onVoiceChanged(locale(), v);
+            // 音色/参数没变就别再折腾插件一遍 —— 分角色朗读是"一个音色念几句又换下一个"，
+            // 每次 setSource + onVoiceChanged 都会让插件重新初始化一回（慢的就是这一下）。
+            String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
+            if (!sig.equals(h.getAppliedSig())) {
+                h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.onVoiceChanged(locale(), v);
+                h.setAppliedSig(sig);
+            }
 
             Throwable first = null;
             for (int attempt = 0; attempt < 3; attempt++) {

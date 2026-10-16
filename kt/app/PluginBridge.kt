@@ -33,6 +33,24 @@ class PluginBridge(
         locale = locale, voice = voice, pluginId = engineId, data = LinkedHashMap(ttsData ?: emptyMap())
     )
 
+    companion object {
+        /**
+         * 最近一次"插件真的吐了字节"的时间戳（毫秒）。全局一份就够了 —— 合成是串行的。
+         * 看门狗靠它区分"慢"和"吊死"：还在吐就用不着超时。
+         */
+        @JvmStatic
+        @Volatile
+        var lastActivity: Long = 0L
+            private set
+
+        @JvmStatic
+        fun touch() { lastActivity = System.currentTimeMillis() }
+    }
+
+    /** 上一次真正应用过的音色/参数（一样就不必再 setSource + onVoiceChanged 折腾插件）。 */
+    @Volatile
+    var appliedSig: String = ""
+
     /** 插件用它自己的控件画出来的界面（它们的 onLoadUI 往这儿 addView）。 */
     val uiContainer: android.widget.LinearLayout =
         android.widget.LinearLayout(context).apply {
@@ -130,10 +148,25 @@ class PluginBridge(
     fun audioBytes(text: String, rate: Float, volume: Float, pitch: Float,
                    timeoutMs: Long = 60_000L): ByteArray = runBlocking {
         kotlinx.coroutines.withTimeout(timeoutMs) {
-            engine.getAudio(text, source.locale, source.voice, rate, volume, pitch)
-                .use { it.readBytes() }
+            val ins = engine.getAudio(text, source.locale, source.voice, rate, volume, pitch)
+            // 一块一块读，每读到一块就把"它还在吐字节"的时间戳更新一次。
+            // 外面那层硬超时看的就是这个时间戳：只要还在吐，慢也让它慢完；
+            // 真的一个字节都不来（WS 会话废了）才算吊死。以前直接 readBytes()，
+            // 外面只能按总时长卡，长句就被误杀 → 丢宿主 → 重建 → 开头断断续续。
+            val bos = java.io.ByteArrayOutputStream(64 * 1024)
+            val buf = ByteArray(8192)
+            ins.use {
+                while (true) {
+                    val n = it.read(buf)
+                    if (n <= 0) break
+                    bos.write(buf, 0, n)
+                    touch()
+                }
+            }
+            bos.toByteArray()
         }
     }
+
 
     /** 它界面上的音色表：先 `getLocales()`，再逐个 `getVoices(locale)`。 */
     fun locales(): Map<String, String> = engine.getLocales()
