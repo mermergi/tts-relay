@@ -1265,11 +1265,9 @@ public class MainActivity extends Activity {
     }
 
     private void editEngine(final EngineStore.Item it) {
-        // JS 插件走它自己的编辑器（整屏代码 + 变量 + 试听），不走这个通用表单
-        if (it != null && EngineStore.KIND_JS.equals(it.kind)) {
-            Intent pi = new Intent(this, PluginEditorActivity.class);
-            pi.putExtra(PluginEditorActivity.EXTRA_ID, it.id);
-            try { startActivity(pi); } catch (Throwable t) { toast("打不开插件编辑器：" + t.getMessage()); }
+        // 所有引擎都走整屏编辑器（JS 那条是代码页，其余是参数页）—— 不再用老表单
+        if (it != null) {
+            openPluginEditor(it, false);
             return;
         }
         // 先关掉上一个，别叠罗汉 —— 关掉新框露出旧框，看起来就跟没保存一样
