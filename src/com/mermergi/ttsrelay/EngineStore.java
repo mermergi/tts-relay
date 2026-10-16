@@ -1,5 +1,6 @@
 package com.mermergi.ttsrelay;
 
+import com.mermergi.ttsrelay.js.AudioSink;
 import android.content.Context;
 
 import org.json.JSONArray;
@@ -805,6 +806,24 @@ public final class EngineStore {
             if (v.trim().equalsIgnoreCase(want)) out.add(e.getKey());
         }
         return out;
+    }
+
+    /**
+     * 边合成边给：JS 插件走真流式；别的引擎先下完再一块送（老路）。
+     */
+    public static void synthTo(Context c, String text, String voice, AudioSink sink) throws Exception {
+        TtsEngine e = engineForVoice(c, voice);
+        TtsEngine.Say say = new TtsEngine.Say();
+        say.voice = voice == null ? "" : voice;
+        say.rate = num(Prefs.rate(c), 1f);
+        say.pitch = num(Prefs.pitch(c), 1f);
+        say.volume = Prefs.volume(c);
+        if (e instanceof JsTtsEngine) {
+            ((JsTtsEngine) e).synthTo(c, text, say, sink);
+            return;
+        }
+        byte[] all = e.synth(c, text, say);
+        if (all != null && all.length > 0) sink.chunk(all, 0, all.length);
     }
 
     /** 播放链只调这一个：按音色挑引擎，再合成。 */

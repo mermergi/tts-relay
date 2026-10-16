@@ -145,6 +145,29 @@ class PluginBridge(
      * 后面的队列看着就是"不念了、列表还剩几句"（真机上遇到过）。到点就抛，让调用方跳过这句。
      */
     @JvmOverloads
+    /**
+     * 边读边往外送：插件的流一有字节就交给 [sink]（播放端同时在放）。
+     * 返回总共送出去多少字节；一个字节都没有就是失败。
+     */
+    fun audioTo(text: String, rate: Float, volume: Float, pitch: Float,
+                timeoutMs: Long, sink: AudioSink): Int = runBlocking {
+        kotlinx.coroutines.withTimeout(timeoutMs) {
+            val ins = engine.getAudio(text, source.locale, source.voice, rate, volume, pitch)
+            val buf = ByteArray(8192)
+            var total = 0
+            ins.use {
+                while (true) {
+                    val n = it.read(buf)
+                    if (n <= 0) break
+                    touch()
+                    sink.chunk(buf, 0, n)
+                    total += n
+                }
+            }
+            total
+        }
+    }
+
     fun audioBytes(text: String, rate: Float, volume: Float, pitch: Float,
                    timeoutMs: Long = 60_000L): ByteArray = runBlocking {
         kotlinx.coroutines.withTimeout(timeoutMs) {
