@@ -2252,20 +2252,135 @@ public class MainActivity extends Activity {
             public void onItemClick(AdapterView<?> par, View v, int pos, long id) {
                 VoiceItem vi = (VoiceItem) par.getItemAtPosition(pos);
                 if (vi == null || vi.header) return;
-                String name = vi.raw;
-                // 记下这个音色属于哪个引擎 —— 朗读时按它挑引擎（不看"当前引擎"）
-                Prefs.setVoiceEngine(MainActivity.this, name,
-                        EngineStore.ownerOfVoice(MainActivity.this, name));
-                if (role == null) Prefs.setVoice(MainActivity.this, name);
-                else Prefs.putVoice(MainActivity.this, role, name);
-                Speaker spk = RelayService.speakerOrNull();
-                if (spk != null) spk.feed(Prefs.tryText(MainActivity.this), name);
-                renderVoiceTable();
-                refresh();
-                dlg.dismiss();
+                // 先选音色，再绑角色 —— 音色是主体，角色名可以现场写、可以写好几个
+                bindVoiceToRoles(vi.raw, role);
             }
         });
         dlg.show();
+    }
+
+    /** 角色名怎么切：换行 / 顿号 / 逗号 / 分号 / 竖线，都能当分隔符（空格不算，名字里可能有空格）。 */
+    private static List<String> splitNames(String s) {
+        List<String> out = new ArrayList<String>();
+        if (s == null) return out;
+        for (String part : s.split("[\\n\\r、，,;；|]+")) {
+            String n = part.trim();
+            if (n.length() == 0) continue;
+            boolean dup = false;
+            for (String x : out) if (x.equalsIgnoreCase(n)) { dup = true; break; }
+            if (!dup) out.add(n);
+        }
+        return out;
+    }
+
+    private static String joinNames(List<String> names) {
+        StringBuilder sb = new StringBuilder();
+        for (String n : names) { if (sb.length() > 0) sb.append('\n'); sb.append(n); }
+        return sb.toString();
+    }
+
+    /**
+     * 一个音色绑给谁 —— 这一步就是「先选音色，再绑角色」。
+     *
+     * <p>框里一行一个角色名（也可以顿号/逗号分隔），随便写、随便改：
+     * 保存时上面写到的角色都绑上这个音色；<b>之前绑过、这次没写的</b>会被解绑
+     * （改回「跟随全局」，不删角色，随时能再选）。
+     */
+    private void bindVoiceToRoles(final String voice, final String presetRole) {
+        final List<String> before = EngineStore.rolesUsingVoice(this, voice);
+        if (presetRole != null && presetRole.length() > 0) {
+            boolean has = false;
+            for (String b : before) if (b.equalsIgnoreCase(presetRole)) { has = true; break; }
+            if (!has) before.add(0, presetRole);
+        }
+
+        LinearLayout box = ui.col();
+        box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(4));
+        box.addView(ui.hint("「" + TtsEngine.shortVoice(voice) + "」绑给哪些角色？"
+                + "一行一个名字，也能用顿号/逗号分隔；原来绑过、这次删掉的名字会被解绑。"));
+
+        final EditText e = ui.area("角色名，一行一个。例：\n旁白\n杨幂\n刘亦菲");
+        e.setMinLines(3);
+        e.setText(joinNames(before));
+        e.setTextColor(p.textPrimary);
+        LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        elp.topMargin = ui.dp(8);
+        box.addView(e, elp);
+
+        // 现成的角色名做成小格子：点一下加进框里 / 再点一下从框里去掉
+        java.util.LinkedHashMap<String, String> table = Prefs.voiceTableMap(this);
+        if (!table.isEmpty()) {
+            box.addView(ui.hint("点一下加进来（再点去掉）："));
+            HorizontalScrollView hs = new HorizontalScrollView(this);
+            final LinearLayout chips = ui.row();
+            chips.setPadding(0, ui.dp(2), 0, ui.dp(2));
+            for (final String k : table.keySet()) {
+                TextView c = ui.chip(k, false, null);
+                c.setOnClickListener(new View.OnClickListener() {
+                    public void onClick(View x) {
+                        List<String> cur = splitNames(e.getText().toString());
+                        boolean removed = false;
+                        for (int i = 0; i < cur.size(); i++) {
+                            if (cur.get(i).equalsIgnoreCase(k)) { cur.remove(i); removed = true; break; }
+                        }
+                        if (!removed) cur.add(k);
+                        e.setText(joinNames(cur));
+                        e.setSelection(e.getText().length());
+                    }
+                });
+                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                clp.rightMargin = ui.dp(6);
+                chips.addView(c, clp);
+            }
+            hs.addView(chips);
+            box.addView(hs);
+        }
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this, dialogTheme())
+                .setTitle("把「" + TtsEngine.shortVoice(voice) + "」绑给角色")
+                .setView(box)
+                .setPositiveButton("保存", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        saveVoiceRoles(voice, e.getText().toString(), before);
+                    }
+                })
+                .setNegativeButton("取消", null);
+        if (presetRole == null) {
+            b.setNeutralButton("只设为全局音色", new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface d, int which) {
+                    Prefs.setVoiceEngine(MainActivity.this, voice,
+                            EngineStore.ownerOfVoice(MainActivity.this, voice));
+                    Prefs.setVoice(MainActivity.this, voice);
+                    Speaker spk = RelayService.speakerOrNull();
+                    if (spk != null) spk.feed(Prefs.tryText(MainActivity.this), voice);
+                    refresh();
+                    toast("全局音色：" + TtsEngine.shortVoice(voice));
+                }
+            });
+        }
+        b.show();
+    }
+
+    /** 保存「音色 → 角色」这批绑定。 */
+    private void saveVoiceRoles(String voice, String text, List<String> before) {
+        List<String> names = splitNames(text);
+        if (names.isEmpty()) { toast("至少要写一个角色名（或者点上面的取消）"); return; }
+        Prefs.setVoiceEngine(this, voice, EngineStore.ownerOfVoice(this, voice));
+        for (String n : names) Prefs.putVoice(this, n, voice);
+        List<String> unbound = new ArrayList<String>();
+        for (String old : before) {
+            boolean keep = false;
+            for (String n : names) if (n.equalsIgnoreCase(old)) { keep = true; break; }
+            if (!keep) { Prefs.putVoice(this, old, ""); unbound.add(old); }
+        }
+        Speaker spk = RelayService.speakerOrNull();
+        if (spk != null) spk.feed(Prefs.tryText(this), voice);
+        renderVoiceTable();
+        refresh();
+        toast("「" + TtsEngine.shortVoice(voice) + "」绑了 " + names.size() + " 个角色"
+                + (unbound.isEmpty() ? "" : "；解绑 " + unbound.size() + " 个（改回跟随全局）"));
     }
 
     /** 左侧音色来源栏：「全部」+ 每条引擎一行（带数量）。点一下只留那一家的音色。 */
@@ -2479,7 +2594,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("「" + key + "」的音色")
                 .setItems(new String[]{"跟随全局音色", "不念（这个角色不出声）", "从音色库选…",
-                                "用别的角色已经在用的音色（一个音色可以绑多个角色）…"},
+                                "用别的角色已经在用的音色（一个音色可以绑多个角色）…", "改这个角色名…"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 if (which == 0) {
@@ -2490,8 +2605,10 @@ public class MainActivity extends Activity {
                                     renderVoiceTable();
                                 } else if (which == 2) {
                                     fetchVoicesAnd(key);
-                                } else {
+                                } else if (which == 3) {
                                     reuseOtherRoleVoice(key);
+                                } else {
+                                    renameRole(key);
                                 }
                             }
                         })
@@ -2539,20 +2656,53 @@ public class MainActivity extends Activity {
     private void addRole() {
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(4));
-        final EditText e = ui.field("", "", InputType.TYPE_CLASS_TEXT);
-        e.setTag(null);
-        e.setHint("角色名，要和卡片里 [角色名] 一模一样");
-        box.addView(e);
+        box.addView(ui.hint("要和卡片里 [角色名] 一模一样；一行一个，也能一次写好几个。"));
+        final EditText e = ui.area("例：\n旁白\n杨幂\n刘亦菲");
+        LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        elp.topMargin = ui.dp(8);
+        box.addView(e, elp);
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("添加角色")
                 .setView(box)
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
-                        String n = e.getText().toString().trim();
-                        if (n.length() == 0) { toast("没填名字"); return; }
-                        Prefs.putVoice(MainActivity.this, n, "");
+                        List<String> names = splitNames(e.getText().toString());
+                        if (names.isEmpty()) { toast("没填名字"); return; }
+                        for (String n : names) Prefs.putVoice(MainActivity.this, n, "");
                         renderVoiceTable();
-                        toast("已加「" + n + "」—— 点它选音色");
+                        toast(names.size() == 1 ? "已加「" + names.get(0) + "」—— 点它选音色"
+                                : "加了 " + names.size() + " 个角色，挨个点 ▶ 选音色");
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 改角色名：改的是"这个角色叫什么"，它用的音色跟着一起过去。保留角色名不让改。 */
+    private void renameRole(final String key) {
+        if (MultiVoice.isReservedKey(key)) { toast("「" + key + "」是保留角色名，改不了"); return; }
+        LinearLayout box = ui.col();
+        box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(4));
+        box.addView(ui.hint("改完名字，它现在用的音色会跟着一起过去。"));
+        final EditText e = ui.field("", key, InputType.TYPE_CLASS_TEXT);
+        e.setSingleLine(true);
+        box.addView(e);
+        new AlertDialog.Builder(this, dialogTheme())
+                .setTitle("改角色名")
+                .setView(box)
+                .setPositiveButton("改", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        String n = e.getText().toString().trim();
+                        if (n.length() == 0) { toast("名字不能空着"); return; }
+                        if (n.equals(key)) return;
+                        if (MultiVoice.isReservedKey(n)) { toast("「" + n + "」是保留角色名"); return; }
+                        java.util.LinkedHashMap<String, String> t = Prefs.voiceTableMap(MainActivity.this);
+                        String v = t.get(key);
+                        Prefs.putVoice(MainActivity.this, key, null);   // 先摘掉老名字
+                        if (v != null) Prefs.putVoice(MainActivity.this, n, v);
+                        renderVoiceTable();
+                        toast("「" + key + "」→「" + n + "」");
                     }
                 })
                 .setNegativeButton("取消", null)
