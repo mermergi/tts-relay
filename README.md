@@ -386,4 +386,5 @@ export ANDROID_JAR=/path/to/android.jar   # 从任意 Android SDK 的 platforms/
 
 ## License
 
-MIT
+MIT —— 见 [`LICENSE`](LICENSE)。编进包里的第三方组件（TTS Server 运行时、sora-editor 等）
+另见 [`THIRD-PARTY.md`](THIRD-PARTY.md) 与 [`tools/lib/SOURCES.md`](tools/lib/SOURCES.md)。
