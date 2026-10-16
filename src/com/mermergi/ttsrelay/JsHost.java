@@ -160,6 +160,11 @@ public final class JsHost {
         }
         ScriptableObject.putProperty(scope, "console", console);
 
+        // TTS Server 装的全局，一个一个对齐：Buffer / UUID / environment / println
+        JsApi.installBuffer(cx, scope);
+        JsApi.installUUID(cx, scope, vars == null ? "" : String.valueOf(vars.get("__id")));
+        JsApi.installEnvironment(cx, scope, "");
+
         ScriptableObject.putProperty(scope, "ttsrv", ttsrv);
 
         // Websocket 构造函数：插件里是 new Websocket(url, headers) + ws.on(...)
