@@ -508,9 +508,13 @@ public final class Speaker {
         chars.addAndGet(clip.text.length());
         last = clip.text;
         // 多语音时把音色也打出来 —— 一眼就能看出这句是谁在念
+        // 把"合成出来的音频有多少"也打出来 —— 有些引擎（系统 TTS 那条）会把超长句子截断，
+        // 听感就是"没念完就自己停了"，这时候一眼能看出是音频本身短，而不是播放被打断
         LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
                 ? "" : "【" + clip.voice.replaceAll("_\\d+$", "") + "】")
-                + head(clip.text, 42) + "  (" + playDur + "ms)");
+                + head(clip.text, 42) + "  (" + playDur + "ms"
+                + " · 文本 " + clip.text.length() + " 字 · 音频 " + (clip.data == null ? 0 : clip.data.length) + " 字节"
+                + (clip.data == null ? "" : " ≈ " + (clip.data.length / 48) + "ms") + ")");
     }
 
     /** 收尾统一走这里：先释放、再取下一条，全在播放线程上排队。 */
