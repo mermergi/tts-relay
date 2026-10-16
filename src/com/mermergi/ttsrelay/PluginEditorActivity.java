@@ -337,6 +337,9 @@ public final class PluginEditorActivity extends Activity {
     /** 那个插件自己带的界面实例（弹窗关掉前别让它被回收）。 */
     private com.mermergi.ttsrelay.js.PluginBridge uiBridge;
 
+    /** 变量面板 —— 登录回来要关掉重开，否则框里还是登录前的空值，一点保存就把新值盖回去。 */
+    private AlertDialog varsDlg;
+
     /**
      * 把插件自己的界面显示出来 —— 照它 `PluginTtsUI` 里的 previewUi：
      * 建一个容器，调插件的 `onLoadUI(context, container)`，它往里塞自己的控件。
@@ -432,7 +435,7 @@ public final class PluginEditorActivity extends Activity {
             }
         }
 
-        new AlertDialog.Builder(this, dialogTheme())
+        varsDlg = new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("设置变量")
                 .setView(sv)
                 .setPositiveButton("保存", new DialogInterface.OnClickListener() {
@@ -449,7 +452,8 @@ public final class PluginEditorActivity extends Activity {
                     public void onClick(DialogInterface d, int w) { openFirstLogin(logins); }
                 })
                 .setNegativeButton("取消", null)
-                .show();
+                .create();
+        varsDlg.show();
     }
 
     private String pendingLoginKey = "";
@@ -591,12 +595,22 @@ public final class PluginEditorActivity extends Activity {
         super.onActivityResult(req, res, data);
         if (req == REQ_LOGIN && res == RESULT_OK && data != null) {
             String v = data.getStringExtra(LoginActivity.RESULT_VALUE);
-            if (v != null && pendingLoginKey.length() > 0) {
-                it.put(pendingLoginKey, v);
+            if (v != null && v.trim().length() > 0 && pendingLoginKey.length() > 0) {
+                it.put(pendingLoginKey, v.trim());
                 it.put("login_key", pendingLoginKey);
                 EngineStore.syncUserVars(it);
                 EngineStore.put(this, it);
-                toast("已填入「" + pendingLoginKey + "」");
+                toast("已填入「" + pendingLoginKey + "」（" + v.trim().length() + " 字符）");
+                // 关键：登录前开的那个面板里还是旧值，关掉重开 —— 不然一点保存就把它盖回去
+                if (varsDlg != null) {
+                    try { varsDlg.dismiss(); } catch (Throwable ignored) { }
+                    varsDlg = null;
+                }
+                code.post(new Runnable() {
+                    public void run() { varsDialog(); }
+                });
+            } else if (pendingLoginKey.length() > 0) {
+                toast("没抓到东西（登录页可能还没登录完）");
             }
         }
     }

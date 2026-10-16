@@ -352,6 +352,10 @@ public final class EngineStore {
                         try { d.put(f.getKey(), nn(f.getValue())); } catch (Throwable ignored) { }
                     }
                 }
+                // 插件声明的默认值（vars 里的 value）—— TTS Server 会拿它预填。
+                // 不填的话插件读 userVars 拿到 undefined，请求就会缺字段（豆包就这么被服务端拒的）。
+                String dv = def == null ? "" : nn(def.get("value"));
+                if (dv.length() > 0 && it.s(key, "").trim().length() == 0) it.put(key, dv);
                 try { defs.put(key, d); } catch (Throwable ignored) { }
 
                 String loginUrl = def == null ? "" : nn(def.get("loginUrl"));
@@ -392,6 +396,51 @@ public final class EngineStore {
     }
 
     private static String nn(String v) { return v == null ? "" : v; }
+
+    /**
+     * 把「别处已经抓过的登录信息」搬到插件声明的变量上。
+     *
+     * 典型场景：以前用的是原生豆包引擎（Cookie 存在 cfg 里），现在改用插件版 ——
+     * 插件声明的变量也叫 cookie，没必要让用户再登一次。任何一个引擎里存着的
+     * cookie / cred 都能当来源，谁先有值用谁。
+     */
+    public static void inheritLogin(Context c, Item js) {
+        if (js == null || !KIND_JS.equals(js.kind)) return;
+        java.util.Map<String, String> defs = new java.util.LinkedHashMap<String, String>();
+        try {
+            JSONObject d = new JSONObject(js.s("def_vars", ""));
+            for (java.util.Iterator<String> k = d.keys(); k.hasNext(); ) {
+                String key = k.next();
+                JSONObject one = d.optJSONObject(key);
+                String binding = one == null ? "" : one.optString("binding", "");
+                String loginUrl = one == null ? "" : one.optString("loginUrl", "");
+                boolean cookieish = key.toLowerCase().contains("cookie")
+                        || binding.toLowerCase().contains("cookie");
+                if (cookieish && (loginUrl.length() > 0 || binding.length() > 0 || true)) {
+                    defs.put(key, binding);
+                }
+            }
+        } catch (Throwable ignored) { }
+        if (defs.isEmpty()) return;
+
+        String src = "";
+        for (Item other : all(c)) {
+            if (other == js) continue;
+            String cv = other.s("cookie", "");
+            if (cv.length() == 0) cv = other.s("cred", "");
+            if (cv.length() > 0) { src = cv; break; }
+        }
+        if (src.length() == 0) return;
+
+        for (String key : defs.keySet()) {
+            if (js.s(key, "").length() == 0) {
+                js.put(key, src);
+                js.put("login_key", key);
+                LogBus.add("把已有的登录信息填进了插件的「" + key + "」变量（" + src.length() + " 字符）");
+            }
+        }
+        syncUserVars(js);
+    }
 
     /** 插件声明了变量、但用户一个都没填 —— 它界面上会因此提示「请设置变量」。 */
     public static boolean needsVars(Item it) {

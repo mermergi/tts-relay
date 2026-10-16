@@ -99,6 +99,7 @@ public final class EngineImport {
 
         // 元数据不是猜的：把插件跑起来读它自己的 PluginJS —— 和编辑框走的是同一条路（EngineStore.syncJsMeta）
         EngineStore.syncJsMeta(App.ctx(), it);
+        EngineStore.inheritLogin(App.ctx(), it);      // 别处抓过的 Cookie 直接继承过来
         if (it.label == null || it.label.length() == 0) it.label = "JS 插件";
         return it;
     }

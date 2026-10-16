@@ -923,6 +923,7 @@ public class MainActivity extends Activity {
                     e2.kind = EngineStore.KIND_JS;
                     e2.put("src", src);
                     EngineStore.syncJsMeta(this, e2);      // 顺手把它的名字/变量读出来
+                    EngineStore.inheritLogin(this, e2);    // 旧引擎里抓过的 Cookie 直接继承
                     EngineStore.put(this, e2);
                     renderEngines();
                     toast("已变成 JS 插件：" + e2.label);

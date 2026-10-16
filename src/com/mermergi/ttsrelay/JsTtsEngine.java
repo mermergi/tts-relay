@@ -63,7 +63,9 @@ public final class JsTtsEngine implements TtsEngine {
                 org.json.JSONObject o = new org.json.JSONObject(uv);
                 for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
                     String key = k.next();
-                    vars.put(key, o.optString(key, ""));
+                    String val = o.optString(key, "");
+                    // 空值 = 没设置（照 TTS Server：空值会把键删掉，让插件的 || 默认值生效）
+                    if (val.trim().length() > 0) vars.put(key, val);
                 }
             } catch (Throwable ignored) { }
         }
@@ -71,7 +73,10 @@ public final class JsTtsEngine implements TtsEngine {
             for (java.util.Iterator<String> k = it.cfg.keys(); k.hasNext(); ) {
                 String key = k.next();
                 if (NOT_VARS.contains(key) || vars.containsKey(key)) continue;
-                vars.put(key, it.s(key, ""));
+                String val = it.s(key, "");
+                // 关键：空字符串别当"用户填了空"传给插件 —— 那会让它的默认值失效
+                // （豆包插件就是这么被坑的：appkey 传了空串 → 服务端说 app key not found）
+                if (val.trim().length() > 0) vars.put(key, val);
             }
         }
 

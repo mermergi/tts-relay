@@ -43,6 +43,18 @@ class PluginBridge(
     val engine: TtsPluginUiEngineV2 = TtsPluginUiEngineV2(context, plugin)
 
     init {
+        // 插件里的 console.log / logger.* 接到我们的日志页 —— 不然插件报什么错我们都看不见
+        // （它自己就是用 console 吐槽"登录过期/连不上"这类事的）
+        try {
+            engine.runtime.console.addLogListener { entry ->
+                try {
+                    // Kotlin 编译在 javac 之前，看不到我的 Java 类 —— 直接写 logcat（adb 能读）
+                    android.util.Log.i("ttsrelay", "插件：" + entry.message)
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
         engine.source = source
         engine.eval()          // 跑脚本 + 读 name/id/author/version/vars
         engine.onLoad()
