@@ -26,7 +26,13 @@ public final class EngineImport {
         if (t.length() == 0) throw new IllegalArgumentException("内容为空");
         if (looksLikeJsPlugin(t)) {
             List<EngineStore.Item> one = new ArrayList<EngineStore.Item>();
-            one.add(parseJsPlugin(t));
+            // 豆包那两条链路是原生实现的（自带 WebSocket），走原生更快也更稳；
+            // 别的插件就交给 Rhino 真跑（见 JsHost）。
+            if (t.contains("frontier-audio-web-ws.doubao.com") || t.contains("ws-samantha.doubao.com")) {
+                one.add(parseJsPlugin(t));
+            } else {
+                one.add(jsEngine(t));
+            }
             return one;
         }
 
@@ -69,6 +75,46 @@ public final class EngineImport {
         }
         if (out.isEmpty()) throw new IllegalArgumentException("没找到能认的引擎");
         return out;
+    }
+
+    /**
+     * 其它 TTS Server 的 JS 插件 → "JS 插件" 引擎：源码原样存着，跑的时候交给 {@link JsHost}（Rhino）。
+     * 它声明的变量、变量名、登录方式都读出来填好。
+     */
+    private static EngineStore.Item jsEngine(String src) {
+        EngineStore.Item it = new EngineStore.Item();
+        it.kind = EngineStore.KIND_JS;
+        it.id = EngineStore.newId(EngineStore.KIND_JS);
+        it.put("src", src);
+        it.put("lang", "zh-CN");
+        it.put("headers", "");
+        it.put("voices", "");
+        it.put("login_url", "");
+        it.put("binding", "session");
+        it.put("ua", "mobile");
+        String name = "";
+        try {
+            JsHost h = JsHost.load(src, null);
+            name = h.name();
+            if (name.length() == 0) name = h.id();
+            JSONObject labels = new JSONObject();
+            for (String k : h.varKeys()) {
+                if (!it.cfg.has(k)) it.put(k, "");
+                try { labels.put(k, h.varLabel(k)); } catch (Throwable ignored) { }
+            }
+            if (labels.length() > 0) it.put("var_labels", labels.toString());
+            String lk = h.loginKey();
+            if (lk.length() > 0) {
+                it.put("login_key", lk);
+                it.put("login_url", h.loginUrl());
+                it.put("binding", h.binding().length() > 0 ? h.binding() : "session");
+                it.put("ua", h.ua().length() > 0 ? h.ua() : "mobile");
+            }
+        } catch (Throwable t) {
+            // 源码留着，跑不起来的理由由引擎的 problem() 说
+        }
+        it.label = name.length() > 0 ? name : "JS 插件";
+        return it;
     }
 
     /** 是不是 TTS Server 的 JS 插件（一堆 ttsrv.userVars / getAudioV2）。 */

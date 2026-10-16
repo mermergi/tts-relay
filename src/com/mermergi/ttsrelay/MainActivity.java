@@ -919,7 +919,7 @@ public class MainActivity extends Activity {
             EngineStore.Item it = EngineStore.get(this, pendingLoginEngineId);
             if (it == null) { toast("找不到那个引擎了"); return; }
             String val = v.trim();
-            it.put("cookie", val);
+            it.put(loginTarget(it), val);
             EngineStore.put(this, it);
             DoubaoEngine.clearVoiceCache();
             renderEngines();
@@ -957,6 +957,7 @@ public class MainActivity extends Activity {
 
     private static String kindName(String kind) {
         if (EngineStore.KIND_DOUBAO.equals(kind)) return "豆包 VoiceGenie";
+        if (EngineStore.KIND_JS.equals(kind)) return "JS 插件";
         if (EngineStore.KIND_HTTP.equals(kind)) return "HTTP 接口";
         return "系统语音";
     }
@@ -1023,7 +1024,8 @@ public class MainActivity extends Activity {
     private void addEngine() {
         new AlertDialog.Builder(this, dialogTheme())
                 .setTitle("添加引擎")
-                .setItems(new String[]{"系统语音（本地、离线）", "HTTP 接口（任意云服务）", "豆包 VoiceGenie"},
+                .setItems(new String[]{"系统语音（本地、离线）", "HTTP 接口（任意云服务）",
+                                "豆包 VoiceGenie", "TTS Server 的 JS 插件"},
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d, int which) {
                                 EngineStore.Item it = new EngineStore.Item();
@@ -1042,7 +1044,7 @@ public class MainActivity extends Activity {
                                     it.put("timeout", 60000);
                                     it.put("json_key", "");
                                     it.put("voices", "");
-                                } else {
+                                } else if (which == 2) {
                                     it.kind = EngineStore.KIND_DOUBAO;
                                     it.label = "豆包 VoiceGenie";
                                     it.put("cookie", "");
@@ -1050,6 +1052,13 @@ public class MainActivity extends Activity {
                                     it.put("speaker", "");
                                     it.put("format", "mp3");
                                     it.put("sample_rate", 24000);
+                                } else if (which == 3) {
+                                    it.kind = EngineStore.KIND_JS;
+                                    it.label = "JS 插件";
+                                    it.put("src", "");
+                                    it.put("lang", "zh-CN");
+                                    it.put("headers", "");
+                                    it.put("voices", "");
                                 }
                                 it.id = EngineStore.newId(it.kind);
                                 EngineStore.put(MainActivity.this, it);
@@ -1131,6 +1140,28 @@ public class MainActivity extends Activity {
             spec.add(new String[]{"format", "音频格式 mp3 / wav / ogg_opus", it.s("format", "mp3"), "single"});
             spec.add(new String[]{"sample_rate", "采样率（mp3 用 24000）",
                     String.valueOf(it.i("sample_rate", 24000)), "single"});
+        } else if (EngineStore.KIND_JS.equals(it.kind)) {
+            spec.add(new String[]{"src", "插件源码（TTS Server 那个 .js，整份贴进来）",
+                    it.s("src", ""), "multi"});
+            spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
+            java.util.Set<String> shown = new java.util.HashSet<String>();
+            try {                                   // 插件自己声明的变量，显示名用它给的
+                org.json.JSONObject lb = new org.json.JSONObject(it.s("var_labels", ""));
+                for (java.util.Iterator<String> ki = lb.keys(); ki.hasNext(); ) {
+                    String k = ki.next();
+                    if (shown.add(k)) spec.add(new String[]{k, lb.optString(k, k), it.s(k, ""), "single"});
+                }
+            } catch (Throwable ignored) { }
+            for (java.util.Iterator<String> ki = it.cfg.keys(); ki.hasNext(); ) {
+                String k = ki.next();
+                if (k.equals("src") || k.equals("lang") || k.equals("var_labels")
+                        || k.equals("login_key") || k.equals("headers")
+                        || k.equals("voices") || k.equals("login_url")
+                        || k.equals("binding") || k.equals("ua")) continue;
+                if (shown.add(k)) spec.add(new String[]{k, "插件变量：" + k, it.s(k, ""), "single"});
+            }
+            spec.add(new String[]{"headers", "插件只给地址时，我们取音频带上的请求头",
+                    it.s("headers", ""), "multi"});
         } else {
             spec.add(new String[]{"pkg", "系统引擎包名（留空=手机默认那个）", it.s("pkg", ""), "single"});
             spec.add(new String[]{"lang", "语言", it.s("lang", "zh-CN"), "single"});
@@ -1159,14 +1190,16 @@ public class MainActivity extends Activity {
         final List<Fld> flds = buildForm(box, spec.toArray(new String[0][]));
 
         // Cookie 单独一块：它动辄上千字符，塞进表单里没法看，所以只显示状态
-        if (EngineStore.KIND_DOUBAO.equals(it.kind) || it.cfg.has("cookie")) {
+        final String loginKey = loginTarget(it);
+        if (EngineStore.KIND_DOUBAO.equals(it.kind) || EngineStore.KIND_JS.equals(it.kind)
+                || it.cfg.has(loginKey)) {
             LinearLayout ck = ui.card();
             ck.addView(ui.sectionTitle("Cookie"));
             final TextView st = ui.value("");
             // 状态跟着数据走：抓完、改完、清完都当场刷，不用关框重进
             final Runnable refresh = new Runnable() {
                 public void run() {
-                    String cur = it.s("cookie", "");
+                    String cur = it.s(loginKey, "");
                     st.setText(cur.length() == 0
                             ? "未设置 —— 点「网页登录」抓一个，或「查看/修改」自己粘一个"
                             : CookieGrab.summary(cur));
@@ -1176,7 +1209,7 @@ public class MainActivity extends Activity {
             refresh.run();
             ck.addView(st);
 
-            if (it.s("login_url", "").length() > 0 || EngineStore.KIND_DOUBAO.equals(it.kind)) {
+            if (it.s("login_url", "").length() > 0) {
                 ck.addView(ui.btn("网页登录，自动抓 Cookie", true, new View.OnClickListener() {
                     public void onClick(View v) {
                         applyEditor(it, nameBox, flds, extraKeys);
@@ -1199,7 +1232,7 @@ public class MainActivity extends Activity {
             }), ui.weightGap(1f, 8));
             ckRow.addView(ui.btn("清空", false, new View.OnClickListener() {
                 public void onClick(View v) {
-                    it.put("cookie", "");
+                    it.put(loginKey, "");
                     EngineStore.put(MainActivity.this, it);
                     DoubaoEngine.clearVoiceCache();
                     refresh.run();
@@ -1257,17 +1290,28 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Cookie 单独编辑：它太长，放表单里会把整屏撑爆，所以丢进自己的对话框。
+     * 登录值单独编辑：它太长，放表单里会把整屏撑爆，所以丢进自己的对话框。
      *
      * 只有一个「粘贴」按钮 —— 粘的是裸串就原样收，是 cURL / 请求头就自己摘出来，
      * 所以没必要让用户先自己选"智能提取"还是"原样粘贴"。保存时再整理一次兜底。
      */
+    /**
+     * 登录抓回来的值写进哪个配置键：JS 插件写它声明的那个变量（和 TTS Server 一样），
+     * 豆包写 cookie，别的写 cred。
+     */
+    private static String loginTarget(EngineStore.Item it) {
+        String k = it.s("login_key", "");
+        if (k.length() > 0) return k;
+        return EngineStore.KIND_DOUBAO.equals(it.kind) ? "cookie" : "cred";
+    }
+
     private void editCookie(final EngineStore.Item it, final Runnable onChange) {
+        final String key = loginTarget(it);
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(4));
         box.addView(ui.label("Cookie（多长都行，框里能滚）"));
         final EditText e = ui.area("");
-        e.setText(it.s("cookie", ""));
+        e.setText(it.s(key, ""));
         e.setMinLines(5);
         e.setMaxLines(9);
         box.addView(e);
@@ -1295,7 +1339,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton("保存", new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
                         String v = CookieGrab.tidy(e.getText().toString());
-                        it.put("cookie", v);
+                        it.put(key, v);
                         EngineStore.put(MainActivity.this, it);
                         DoubaoEngine.clearVoiceCache();
                         renderEngines();
