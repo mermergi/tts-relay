@@ -61,11 +61,8 @@ public final class JsTtsEngine implements TtsEngine {
         if (it == null || it.s("src", "").trim().length() == 0) return "还没导入插件源码";
         try {
             JsHost h = host();
-            if (h.hasFunction("getAudio")) return null;
-            if (h.hasFunction("getAudioV2")) {
-                return "这个插件只给了 getAudioV2（WebSocket 流式），本 App 只跑 getAudio 那种";
-            }
-            return "插件里没找到 getAudio";
+            if (h.hasFunction("getAudio") || h.hasFunction("getAudioV2")) return null;
+            return "插件里既没有 getAudio 也没有 getAudioV2";
         } catch (Throwable t) {
             return "插件跑不起来：" + t.getMessage();
         }
@@ -85,14 +82,36 @@ public final class JsTtsEngine implements TtsEngine {
         int volume = Math.round(s.volume * JsHost.NEUTRAL);
         int pitch = Math.round(s.pitch * JsHost.NEUTRAL);
 
-        Object r = h.getAudio(text, locale(), TtsEngine.shortVoice(s.voice), rate, volume, pitch);
-        Object v = org.mozilla.javascript.Context.jsToJava(r, Object.class);
+        // 按 TTS Server 的次序：先问 getAudio（简单插件直接给链接/字节流），
+        // 没有再走 getAudioV2（插件自己开 WebSocket，把音频一段段写回来）。
+        Object v;
+        if (h.hasFunction("getAudio")) {
+            Object r = h.getAudio(text, locale(), TtsEngine.shortVoice(s.voice), rate, volume, pitch);
+            v = org.mozilla.javascript.Context.jsToJava(r, Object.class);
+        } else {
+            v = null;
+        }
+        if (v == null && h.hasFunction("getAudioV2")) {
+            JsHost.V2 got = h.getAudioV2(text, locale(), TtsEngine.shortVoice(s.voice),
+                    rate, volume, pitch, it == null ? 120000 : it.i("timeout", 120000));
+            Object r = got.result;
+            if (r instanceof CharSequence) {
+                v = r;
+            } else if (r instanceof byte[] || r instanceof InputStream) {
+                v = r;
+            } else {
+                v = got.audio;                 // 插件写回桥里的字节
+            }
+        }
         if (v == null) throw new IllegalStateException("插件没给出音频");
+        if (v instanceof byte[] && ((byte[]) v).length == 0) {
+            throw new IllegalStateException("插件没写回任何音频");
+        }
 
         if (v instanceof CharSequence) {
             String url = v.toString().trim();
-            if (url.length() == 0) throw new IllegalStateException("插件给了个空地址");
-            return fetch(url);
+            if (url.startsWith("http://") || url.startsWith("https://")) return fetch(url);
+            throw new IllegalStateException("插件返回的不是地址：" + url);
         }
         if (v instanceof byte[]) return (byte[]) v;
         if (v instanceof InputStream) return readAll((InputStream) v);

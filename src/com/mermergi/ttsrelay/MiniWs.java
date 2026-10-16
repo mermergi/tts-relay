@@ -74,7 +74,7 @@ public final class MiniWs {
 
         byte[] nonce = new byte[16];
         new SecureRandom().nextBytes(nonce);
-        String key = android.util.Base64.encodeToString(nonce, android.util.Base64.NO_WRAP);
+        String key = java.util.Base64.getEncoder().encodeToString(nonce);   // API 26 起就有
 
         StringBuilder req = new StringBuilder();
         req.append("GET ").append(path).append(" HTTP/1.1\r\n");

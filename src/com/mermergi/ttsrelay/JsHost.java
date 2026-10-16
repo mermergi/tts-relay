@@ -43,13 +43,16 @@ public final class JsHost {
     private final Scriptable pluginJs;
     private final Scriptable editorJs;
     private final String source;
-    private final Map<String, String> files = new LinkedHashMap<String, String>();
+    /** 插件这次调用里造出来的 Websocket。等 JS 调用返回了才真去连（不然 'open' 会跑在 ws.on() 前面）。 */
+    private final List<JsWebSocket> pending;
 
-    private JsHost(Scriptable scope, Scriptable pluginJs, Scriptable editorJs, String source) {
+    private JsHost(Scriptable scope, Scriptable pluginJs, Scriptable editorJs, String source,
+                   List<JsWebSocket> pending) {
         this.scope = scope;
         this.pluginJs = pluginJs;
         this.editorJs = editorJs;
         this.source = source;
+        this.pending = pending;
     }
 
     public String source() { return source; }
@@ -74,14 +77,15 @@ public final class JsHost {
             cx.setOptimizationLevel(-1);          // Android 上只能解释执行
             cx.setLanguageVersion(Context.VERSION_ES6);
             Scriptable scope = cx.initStandardObjects();
-            installHost(cx, scope, vars);
+            List<JsWebSocket> pending = new ArrayList<JsWebSocket>();
+            installHost(cx, scope, vars, pending);
             cx.evaluateString(scope, src == null ? "" : src, "plugin.js", 1, null);
             Object p = scope.get("PluginJS", scope);
             Object e = scope.get("EditorJS", scope);
             return new JsHost(scope,
                     p instanceof Scriptable ? (Scriptable) p : null,
                     e instanceof Scriptable ? (Scriptable) e : null,
-                    src);
+                    src, pending);
         } finally {
             Context.exit();
         }
@@ -89,7 +93,8 @@ public final class JsHost {
 
     // ───────────────────────── 全局对象 ─────────────────────────
 
-    private static void installHost(Context cx, Scriptable scope, final Map<String, String> vars) {
+    private static void installHost(Context cx, Scriptable scope, final Map<String, String> vars,
+                                    final List<JsWebSocket> pending) {
         final ScriptableObject ttsrv = (ScriptableObject) cx.newObject(scope);
 
         // ttsrv.userVars：插件读变量的地方
@@ -188,6 +193,34 @@ public final class JsHost {
         ScriptableObject.putProperty(scope, "console", console);
 
         ScriptableObject.putProperty(scope, "ttsrv", ttsrv);
+
+        // Websocket 构造函数：插件里是 new Websocket(url, headers) + ws.on(...)
+        BaseFunction wsCtor = new BaseFunction() {
+            @Override public Object call(Context c, Scriptable sc, Scriptable t, Object[] a) {
+                return construct(c, sc, a);
+            }
+            @Override public Scriptable construct(Context c, Scriptable sc, Object[] a) {
+                String url = a.length > 0 ? Context.toString(a[0]) : "";
+                LinkedHashMap<String, String> hs = new LinkedHashMap<String, String>();
+                if (a.length > 1 && a[1] instanceof Scriptable) {
+                    Scriptable h = (Scriptable) a[1];
+                    for (Object id : h.getIds()) {
+                        Object v = h.get(String.valueOf(id), h);
+                        if (v != null && v != Scriptable.NOT_FOUND) {
+                            hs.put(String.valueOf(id), Context.toString(v));
+                        }
+                    }
+                }
+                JsWebSocket w = JsWebSocket.make(c, sc, url, hs, 15000);
+                pending.add(w);
+                return w.object();
+            }
+        };
+        ScriptableObject.putProperty(wsCtor, "CONNECTING", Integer.valueOf(JsWebSocket.CONNECTING));
+        ScriptableObject.putProperty(wsCtor, "OPEN", Integer.valueOf(JsWebSocket.OPEN));
+        ScriptableObject.putProperty(wsCtor, "CLOSING", Integer.valueOf(JsWebSocket.CLOSING));
+        ScriptableObject.putProperty(wsCtor, "CLOSED", Integer.valueOf(JsWebSocket.CLOSED));
+        ScriptableObject.putProperty(scope, "Websocket", wsCtor);
     }
 
     private static final class Resp {
@@ -274,6 +307,47 @@ public final class JsHost {
             }
         }
         return out;
+    }
+
+    /** 插件那一趟调用返回之后，把这次造出来的 WebSocket 统一开闸。 */
+    private void startPending() {
+        List<JsWebSocket> copy = new ArrayList<JsWebSocket>(pending);
+        pending.clear();
+        for (JsWebSocket w : copy) {
+            try { w.start(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 音频桥：插件往这儿 write，我们等它 close。 */
+    private static final class Bridge {
+        private final ByteArrayOutputStream buf = new ByteArrayOutputStream(128 * 1024);
+        private boolean done = false;
+        private String err = null;
+
+        synchronized void write(byte[] b) {
+            if (b != null && b.length > 0) buf.write(b, 0, b.length);
+        }
+
+        synchronized void close() { done = true; notifyAll(); }
+
+        synchronized void error(String m) { err = m == null ? "插件报错" : m; done = true; notifyAll(); }
+
+        synchronized byte[] await(long ms) throws Exception {
+            long end = System.currentTimeMillis() + ms;
+            while (!done) {
+                long left = end - System.currentTimeMillis();
+                if (left <= 0) throw new IllegalStateException("等插件的音频等超时了");
+                wait(Math.min(left, 500));
+            }
+            if (err != null) throw new IllegalStateException(err);
+            return buf.toByteArray();
+        }
+    }
+
+    /** getAudioV2 的结果：插件直接返回的东西 + 桥上收到的字节。 */
+    public static final class V2 {
+        public Object result;
+        public byte[] audio;
     }
 
     private static String str(Object[] a, int i) {
@@ -367,6 +441,67 @@ public final class JsHost {
                            int rate100, int volume100, int pitch100) throws Exception {
         return call("getAudio", new Object[]{text, locale, voice,
                 Integer.valueOf(rate100), Integer.valueOf(volume100), Integer.valueOf(pitch100)});
+    }
+
+    /**
+     * 调 {@code PluginJS.getAudioV2(request, callback)} —— 插件自己发请求、把音频一段段 write 回来。
+     *
+     * request 就是插件里读的那个对象：{@code {text, locale, voice, rate, volume, pitch}}
+     * （档位和 TTS Server 一致，0-100，50 正常）。
+     */
+    public V2 getAudioV2(String text, String locale, String voice,
+                         int rate100, int volume100, int pitch100, long timeoutMs) throws Exception {
+        final Bridge bridge = new Bridge();
+        Context cx = Context.enter();
+        V2 out = new V2();
+        try {
+            cx.setOptimizationLevel(-1);
+            Scriptable req = cx.newObject(scope);
+            ScriptableObject.putProperty(req, "text", text);
+            ScriptableObject.putProperty(req, "locale", locale);
+            ScriptableObject.putProperty(req, "voice", voice);
+            ScriptableObject.putProperty(req, "rate", Integer.valueOf(rate100));
+            ScriptableObject.putProperty(req, "volume", Integer.valueOf(volume100));
+            ScriptableObject.putProperty(req, "pitch", Integer.valueOf(pitch100));
+
+            Scriptable cb = cx.newObject(scope);
+            ScriptableObject.putProperty(cb, "write", new BaseFunction() {
+                @Override public Object call(Context c, Scriptable s, Scriptable t, Object[] a) {
+                    if (a.length > 0) bridge.write(JsWebSocket.bytesOf(a[0]));
+                    return Undefined.instance;
+                }
+            });
+            ScriptableObject.putProperty(cb, "close", new BaseFunction() {
+                @Override public Object call(Context c, Scriptable s, Scriptable t, Object[] a) {
+                    bridge.close();
+                    return Undefined.instance;
+                }
+            });
+            ScriptableObject.putProperty(cb, "error", new BaseFunction() {
+                @Override public Object call(Context c, Scriptable s, Scriptable t, Object[] a) {
+                    bridge.error(a.length > 0 ? Context.toString(a[0]) : null);
+                    return Undefined.instance;
+                }
+            });
+
+            if (pluginJs == null) throw new IllegalStateException("插件里没有 PluginJS");
+            Object f = pluginJs.get("getAudioV2", pluginJs);
+            if (!(f instanceof Function)) throw new IllegalStateException("插件里没有 getAudioV2()");
+            Object r = ((Function) f).call(cx, scope, pluginJs, new Object[]{req, cb});
+            // 插件一般没有 return（音频是靠 callback 写回来的），别把 undefined 当成返回值
+            if (r == null || r == Undefined.instance) {
+                out.result = null;
+            } else {
+                Object j = Context.jsToJava(r, Object.class);
+                out.result = "undefined".equals(String.valueOf(j)) ? null : j;
+            }
+        } finally {
+            Context.exit();
+        }
+        // 回调都注册好了，现在才真的去连
+        startPending();
+        out.audio = bridge.await(timeoutMs <= 0 ? 120000 : timeoutMs);
+        return out;
     }
 
     /** 采样率；插件没声明就返回 0。 */
