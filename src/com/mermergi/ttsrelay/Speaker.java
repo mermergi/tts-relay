@@ -489,7 +489,7 @@ public final class Speaker {
                     beat("起播流");
                     Handler hp = playH;
                     if (hp != null) hp.post(playNext);       // 队列里刚有东西：叫醒播放线程
-                    HardCall.runIdle("合成", 10000L, synthWait, PLUGIN_CLOCK, new HardCall.Job<byte[]>() {
+                    HardCall.runIdle("合成", 15000L, synthWait, PLUGIN_CLOCK, new HardCall.Job<byte[]>() {
                         public byte[] run() throws Throwable {
                             EngineStore.synthTo(ctx, text_safe(job.text), job.voice, new AudioSink() {
                                 public void chunk(byte[] b, int o, int l) { la.chunk(b, o, l); }
@@ -505,6 +505,9 @@ public final class Speaker {
             } catch (HardCall.TimedOut te) {
                 timedOut = true;
                 err = te.getMessage();
+                if (live != null) {
+                    err = err + "（这句已经收到 " + live.available() + " 字节）";
+                }
             } catch (Throwable t) {
                 err = t.getClass().getSimpleName() + ": " + t.getMessage();
             } finally {
@@ -791,6 +794,12 @@ public final class Speaker {
             });
             p.setOnErrorListener(new MediaPlayer.OnErrorListener() {
                 public boolean onError(MediaPlayer m, int what, int extra) {
+                    // 是我们自己把流掐断的（合成中途出错/被打断），播放器当然会报错，
+                    // 那不是毛病，别刷一屏吓人。真正的问题上面已经记过了。
+                    if (clip.live != null && clip.live.wasCut()) {
+                        postAfter(null, null);
+                        return true;
+                    }
                     postAfter(null, "流播放出错 what=" + what + " extra=" + extra);
                     return true;
                 }

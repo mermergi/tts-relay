@@ -76,11 +76,26 @@ public final class JsTtsEngine implements TtsEngine {
      * 直接弃掉：那条线程连同它的 Rhino 运行时一起留在后台，下次合成重建。
      */
     public static void abandonHosts() {
-        int n = HOSTS.size();
-        DEAD.addAll(HOSTS.values());
+        final java.util.List<PluginBridge> dead =
+                new java.util.ArrayList<PluginBridge>(HOSTS.values());
+        DEAD.addAll(dead);
         HOSTS.clear();
-        VOICES_CACHE.clear();
-        if (n > 0) LogBus.add("插件宿主已被丢弃 " + n + " 个（有线程吊在它里面，不再复用）");
+        // 注意：**必须让它自己收摊（关掉 WebSocket）**，不能只从表里划掉。
+        // 只划掉的话那条 WS 还连着 —— 僵尸会话 + 新开的会话两条并存，
+        // 服务端会互相踢，下一句又开始"没有任何动静"，于是又丢一次宿主……级联。
+        // 收摊可能卡（插件正吊着），所以丢给一条一次性线程去做，绝不挡路。
+        for (final PluginBridge b : dead) {
+            Thread t = new Thread(new Runnable() {
+                public void run() {
+                    try { b.destroy(); } catch (Throwable ignored) { }
+                }
+            }, "plugin-stop");
+            t.setDaemon(true);
+            t.start();
+        }
+        if (!dead.isEmpty()) {
+            LogBus.add("插件宿主丢弃 " + dead.size() + " 个，并让它关掉旧连接（免得两条会话互相踢）");
+        }
     }
 
     /** 这个宿主是不是已经被丢掉了？（僵尸线程用来自查） */
