@@ -38,8 +38,25 @@ public final class JsTtsEngine implements TtsEngine {
     private static final java.util.Map<String, PluginBridge> HOSTS =
             new java.util.concurrent.ConcurrentHashMap<String, PluginBridge>();
 
+    /**
+     * 被丢弃的宿主（有线程还吊在它里面）。僵尸线程回来之后要能认出"我已经被丢了"，
+     * 别再接着重试、别再往日志里喷 —— 不然日志会被它搅乱（真机上见过：
+     * 超时跳过后，被丢弃的那条线程又打出一行"插件第 1 次没给音频"）。
+     */
+    private static final java.util.Set<PluginBridge> DEAD =
+            java.util.Collections.newSetFromMap(
+                    new java.util.concurrent.ConcurrentHashMap<PluginBridge, Boolean>());
+
+    /**
+     * 宿主键 —— <b>只按插件</b>，不带 locale/voice：这才是它那边的粒度
+     * （`TtsManager` 按 `PluginTtsSource.getKey()` 缓存，一个插件一个 provider）。
+     *
+     * 以前我按 locale|voice 各缓存一个宿主 → 分角色朗读时**每个音色一条 WebSocket、
+     * 一份 Rhino 运行时**：豆包那种长连接插件三条里就有一条会吊死（真机实测第 4 句卡 30 秒）。
+     * 音色不用建宿主区分 —— 每次合成前都会 `setSource` + `onVoiceChanged`（照它们的做法）。
+     */
     private String hostKey(String locale, String voice) {
-        return cacheKey() + "|" + locale + "|" + voice;
+        return cacheKey();
     }
 
     /** 配置改了（存过引擎）就把缓存清掉，别拿旧源码跑。 */
@@ -49,7 +66,24 @@ public final class JsTtsEngine implements TtsEngine {
         }
         HOSTS.clear();
         VOICES_CACHE.clear();
+        DEAD.clear();
     }
+
+    /**
+     * 把宿主整个丢掉，但**不去 destroy** —— 里面可能还有合成线程吊在
+     * `PipedInputStream.read()` 上，`destroy()` 会顺着它的生命周期再卡一次。
+     * 直接弃掉：那条线程连同它的 Rhino 运行时一起留在后台，下次合成重建。
+     */
+    public static void abandonHosts() {
+        int n = HOSTS.size();
+        DEAD.addAll(HOSTS.values());
+        HOSTS.clear();
+        VOICES_CACHE.clear();
+        if (n > 0) LogBus.add("插件宿主已被丢弃 " + n + " 个（有线程吊在它里面，不再复用）");
+    }
+
+    /** 这个宿主是不是已经被丢掉了？（僵尸线程用来自查） */
+    static boolean isDead(PluginBridge h) { return h != null && DEAD.contains(h); }
 
     /** 拿一个（可能已经建好的）插件宿主。 */
     private PluginBridge hostFor(Context c, String locale, String voice) throws Exception {
@@ -73,6 +107,11 @@ public final class JsTtsEngine implements TtsEngine {
     }
 
     @Override public String kind() { return EngineStore.KIND_JS; }
+
+    /** 插件配置里的合成超时（毫秒）—— 播放链拿它当硬超时。 */
+    public int timeoutMs(int def) {
+        return it == null ? def : it.i("timeout", def);
+    }
 
     @Override public String label() {
         return it != null && it.label.length() > 0 ? it.label : "JS 插件";
@@ -184,6 +223,11 @@ public final class JsTtsEngine implements TtsEngine {
 
             Throwable first = null;
             for (int attempt = 0; attempt < 3; attempt++) {
+                // 已经因为硬超时被丢掉了：这条线程是"僵尸"，别再重试、别再刷日志。
+                if (isDead(h)) {
+                    first = new IllegalStateException("宿主已被丢弃（这一句超时跳过了）");
+                    break;
+                }
                 try {
                     byte[] out = h.audioBytes(text, s.rate, s.volume, s.pitch,
                             it == null ? 30000L : (long) Math.min(30000, it.i("timeout", 30000)));
@@ -192,6 +236,7 @@ public final class JsTtsEngine implements TtsEngine {
                 } catch (Throwable t) {
                     first = t;
                 }
+                if (isDead(h)) break;      // 这次尝试期间被丢弃了 → 不吭声地收工
                 // 第一次常撞在"插件正异步拉音色表/上一句刚结束"上；后面两次是给突发留的余地
                 LogBus.error("插件第 " + (attempt + 1) + " 次没给音频（" + first.getMessage() + "），等一下再试");
                 try {
@@ -203,7 +248,7 @@ public final class JsTtsEngine implements TtsEngine {
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
                 h.onVoiceChanged(locale(), v);
             }
-            saveData(c, h);
+            if (!isDead(h)) saveData(c, h);
             throw new IllegalStateException(first == null ? "插件没给音频" : first.getMessage());
         }
     }

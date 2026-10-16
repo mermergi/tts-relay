@@ -514,7 +514,35 @@ public final class EngineStore {
         } catch (Throwable ignored) { }
     }
 
+    /**
+     * voices_url 失败后的冷却（引擎 id + url → 失败时刻）。
+     *
+     * 为什么要有它：老引擎（比如指向已经关掉的 127.0.0.1:1221 那条）会**每次开界面、
+     * 每次刷音色表都去撞一堵死墙**，连不上还要等 8 秒，日志里反复刷同一行报错。
+     * 死地址就该记住"它是死的"，隔几分钟再试一次就够了。
+     */
+    private static final java.util.Map<String, Long> VOICES_FAIL =
+            new java.util.concurrent.ConcurrentHashMap<String, Long>();
+    private static final long VOICES_FAIL_COOL = 5 * 60 * 1000L;
+
+    /** 这个音色源现在是不是在冷却里（界面可以据此显示"上次失败，5 分钟内不再试"）。 */
+    public static boolean voicesUrlCooling(Item it) {
+        if (it == null) return false;
+        String k = it.id + "|" + it.s("voices_url", "").trim();
+        Long t = VOICES_FAIL.get(k);
+        return t != null && System.currentTimeMillis() - t < VOICES_FAIL_COOL;
+    }
+
+    /**
+     * 拉音色。失败**不抛**（返回空表），并且带冷却：
+     * 只在这一轮失败时打一行日志，之后 5 分钟内不再请求、也不再刷日志。
+     */
     private static List<String> fetchFromUrl(Item it, String url) throws Exception {
+        final String fk = it.id + "|" + url;
+        Long bad = VOICES_FAIL.get(fk);
+        if (bad != null && System.currentTimeMillis() - bad < VOICES_FAIL_COOL) {
+            return new ArrayList<String>();      // 冷却中：不请求、不报错
+        }
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(url).openConnection();
@@ -559,7 +587,18 @@ public final class EngineStore {
                 if (id.length() == 0) continue;
                 out.add(id.equals(name) ? name : name + SEP + id);
             }
+            VOICES_FAIL.remove(fk);
             return out;
+        } catch (Throwable t) {
+            long now = System.currentTimeMillis();
+            boolean first = bad == null || now - bad >= VOICES_FAIL_COOL;
+            VOICES_FAIL.put(fk, now);
+            if (first) {
+                LogBus.error("从 voices_url 拉音色失败：" + t.getMessage()
+                        + "（" + (VOICES_FAIL_COOL / 60000) + " 分钟内不再试；"
+                        + "要改成别的地址就在这条引擎的配置里改，或者删掉这条引擎）");
+            }
+            return new ArrayList<String>();
         } finally {
             if (conn != null) conn.disconnect();
         }
@@ -706,6 +745,51 @@ public final class EngineStore {
             }
         }
         return activeEngine(c);
+    }
+
+    /**
+     * 这个音色该给多久 —— 插件配置里的 {@code timeout}（它那套引擎文件里有这个键）。
+     * 播放链拿它做**硬超时**：到点就丢线程，不能让插件把整条流水线拖死。
+     */
+    /**
+     * 最近一次**成功**的合成耗时（按音色记）。
+     * 硬超时按它自适应：快引擎 8 秒就该回来了，慢引擎才配等更久。
+     */
+    private static final java.util.Map<String, Long> SYNTH_MS =
+            new java.util.concurrent.ConcurrentHashMap<String, Long>();
+
+    /** 合成成功时记一笔，给 {@link #synthDeadlineMs} 当依据。 */
+    public static void noteSynthOk(String voice, long ms) {
+        if (voice == null || voice.length() == 0) return;
+        if (ms <= 0 || ms > 120000L) return;
+        SYNTH_MS.put(voice, ms);
+    }
+
+    /**
+     * 这个音色合成时最多等多久。
+     *
+     * <p>以前是照插件声明的 {@code timeout}（豆包那条是 30 秒）—— 真机上插件一旦吊住，
+     * 就是**整整 30 秒没声**，谁等得了。现在按实测自适应：最近一次成功用了几毫秒，
+     * 就给它的 3 倍 + 2 秒，下限 8 秒、上限 60 秒；插件声明的 timeout 只当上限用。
+     * 正常一句 1~3 秒的插件，8 秒没回来就判定"这次是吊住了"，不是"慢"。
+     */
+    public static long synthDeadlineMs(Context c, String voice) {
+        long base = 5000L;
+        Long last = SYNTH_MS.get(voice == null ? "" : voice);
+        if (last != null) base = Math.max(5000L, Math.min(60000L, last * 2L + 1500L));
+        try {
+            TtsEngine e = engineForVoice(c, voice);
+            if (e instanceof JsTtsEngine) {
+                int t = ((JsTtsEngine) e).timeoutMs(30000);
+                base = Math.min(base, Math.max(5000L, Math.min(60000L, (long) t)));
+            }
+        } catch (Throwable ignored) { }
+        return base;
+    }
+
+    /** 插件宿主吊住了（合成硬超时了）：整个丢掉，下一句重新建，别再用那个抱死的运行时。 */
+    public static void abandonPluginHosts() {
+        try { JsTtsEngine.abandonHosts(); } catch (Throwable ignored) { }
     }
 
     /** 播放链只调这一个：按音色挑引擎，再合成。 */

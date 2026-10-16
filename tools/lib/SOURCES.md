@@ -25,10 +25,13 @@ savedstate / core / core-ktx / activity / fragment / lifecycle-runtime /
 lifecycle-viewmodel-savedstate / annotation-experimental —— 全部
 [AndroidX](https://github.com/androidx/androidx)，**Apache-2.0**。
 
-## media3（只用来读音频采样率：`ttsrv.getAudioSampleRate`）
+## media3 —— 已移除（原来写错了）
 
-media3-common / media3-datasource / media3-exoplayer / media3-ui 1.5.1 ——
-[androidx/media](https://github.com/androidx/media)，**Apache-2.0**。
+曾有 `media3-common / datasource / exoplayer / ui 1.5.1`，理由是"读音频采样率要用"。
+其实 `ttsrv.getAudioSampleRate` 走的是 `AudioDecoder` → **平台自己的
+`android.media.MediaExtractor`**（见 `kt/ttsrv/com/github/jing332/common/audio/AudioDecoder.kt`），
+跟 media3 没关系；我们自己的代码也一处没引用（`grep -rn media3 src/ kt/` 为空）。
+再挂着它纯粹是白占 APK（四个 jar 全被 d8 打进 dex），所以删掉。
 
 ## 代码编辑器 —— 这是 TTS Server 的插件编辑器用的那个
 

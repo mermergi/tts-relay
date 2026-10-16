@@ -72,11 +72,7 @@ get_aar "$GM/androidx/lifecycle/lifecycle-runtime/2.8.7/lifecycle-runtime-2.8.7"
 get_aar "$GM/androidx/lifecycle/lifecycle-viewmodel-savedstate/2.8.7/lifecycle-viewmodel-savedstate-2.8.7" lifecycle-viewmodel-savedstate-2.8.7.jar
 get_aar "$GM/androidx/annotation/annotation-experimental/1.4.1/annotation-experimental-1.4.1" annotation-experimental-1.4.1.jar
 
-echo "==> media3（读音频采样率用）"
-get_aar "$GM/androidx/media3/media3-common/1.5.1/media3-common-1.5.1" media3-common-1.5.1.jar
-get_aar "$GM/androidx/media3/media3-datasource/1.5.1/media3-datasource-1.5.1" media3-datasource-1.5.1.jar
-get_aar "$GM/androidx/media3/media3-exoplayer/1.5.1/media3-exoplayer-1.5.1" media3-exoplayer-1.5.1.jar
-get_aar "$GM/androidx/media3/media3-ui/1.5.1/media3-ui-1.5.1" media3-ui-1.5.1.jar
+echo "==> media3 不下了（读采样率走平台 MediaExtractor，用不着它；详见 tools/lib/SOURCES.md）"
 
 echo "==> 代码编辑器（TTS Server 的插件编辑器用的就是它）"
 keep_aar "$MC/io/github/Rosemoe/sora-editor/editor/0.23.5/editor-0.23.5.aar" sora-editor-0.23.5.aar
