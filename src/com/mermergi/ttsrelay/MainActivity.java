@@ -773,18 +773,13 @@ public class MainActivity extends Activity {
     }
 
     private void pickTheme() {
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("主题")
-                .setSingleChoiceItems(Palette.THEME_NAMES, Prefs.themeMode(this),
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int which) {
-                                Prefs.setThemeMode(MainActivity.this, which);
-                                d.dismiss();
-                                recreate();
-                            }
-                        })
-                .setNegativeButton("取消", null)
-                .show();
+        ChoiceSheet.show(this, ui, p, sheetTheme(), "主题", null,
+                Palette.THEME_NAMES, null, Prefs.themeMode(this), new ChoiceSheet.OnPick() {
+                    public void onPick(int which) {
+                        Prefs.setThemeMode(MainActivity.this, which);
+                        recreate();
+                    }
+                });
     }
 
     // ══════════════════════════ 引擎 ══════════════════════════
@@ -905,12 +900,13 @@ public class MainActivity extends Activity {
     }
 
     private void exportMenu() {
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("导出/分享")
-                .setItems(new String[]{"复制成本 App 格式（换机能原样恢复）",
-                        "复制成阅读(Legado)格式（别人/TTS Server 都能用）",
-                        "导出到文件…"}, new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int which) {
+        ChoiceSheet.show(this, ui, p, sheetTheme(), "导出 / 分享", null,
+                new String[]{"复制本 App 格式", "复制成阅读(Legado)格式", "导出到文件…"},
+                new String[]{"换机能原样恢复（含插件脚本）",
+                        "别人 / TTS Server 都能直接导入",
+                        "存成 .json，自己挑位置"},
+                -1, new ChoiceSheet.OnPick() {
+                    public void onPick(int which) {
                         if (which == 0) {
                             copy(EngineImport.exportOurs(EngineStore.all(MainActivity.this)));
                         } else if (which == 1) {
@@ -919,9 +915,7 @@ public class MainActivity extends Activity {
                             exportToFile();
                         }
                     }
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     private void exportToFile() {
@@ -1256,93 +1250,88 @@ public class MainActivity extends Activity {
     }
 
     private void engineMenu(final EngineStore.Item it) {
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle(it.label)
-                .setItems(new String[]{"设为当前引擎", "编辑配置", "设置变量", "导出配置",
-                                "清除缓存", "看看音色列表", "测试这个引擎", "删除"},
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int which) {
-                                if (which == 0) {
-                                    EngineStore.setActive(MainActivity.this, it.id);
-                                    renderEngines();
-                                    toast("当前引擎：" + it.label);
-                                } else if (which == 1) {
-                                    editEngine(it);
-                                } else if (which == 2) {
-                                    openPluginEditor(it, true);
-                                } else if (which == 3) {
-                                    exportEngineConfig(it);
-                                } else if (which == 4) {
-                                    if (EngineStore.hasCache(MainActivity.this, it)) {
-                                        EngineStore.clearCache(MainActivity.this, it);
-                                        toast("缓存清了");
-                                    } else {
-                                        toast("这个插件没缓存");
-                                    }
-                                } else if (which == 5) {
-                                    showEngineVoices(it);
-                                } else if (which == 6) {
-                                    EngineStore.setActive(MainActivity.this, it.id);
-                                    renderEngines();
-                                    testEngine();
-                                } else if (which == 7) {
-                                    EngineStore.remove(MainActivity.this, it.id);
-                                    renderEngines();
-                                    toast("已删除");
-                                }
+        ChoiceSheet.show(this, ui, p, sheetTheme(), it.label, null,
+                new String[]{"设为当前引擎", "编辑配置", "设置变量", "导出配置",
+                        "清除缓存", "看看音色列表", "测试这个引擎", "删除"},
+                null, -1, new ChoiceSheet.OnPick() {
+                    public void onPick(int which) {
+                        if (which == 0) {
+                            EngineStore.setActive(MainActivity.this, it.id);
+                            renderEngines();
+                        } else if (which == 1) {
+                            editEngine(it);
+                        } else if (which == 2) {
+                            openPluginEditor(it, true);
+                        } else if (which == 3) {
+                            exportEngineConfig(it);
+                        } else if (which == 4) {
+                            if (EngineStore.hasCache(MainActivity.this, it)) {
+                                EngineStore.clearCache(MainActivity.this, it);
+                                toast("缓存清了");
+                            } else {
+                                toast("这个插件没缓存");
                             }
-                        })
-                .setNegativeButton("取消", null)
-                .show();
+                        } else if (which == 5) {
+                            showEngineVoices(it);
+                        } else if (which == 6) {
+                            EngineStore.setActive(MainActivity.this, it.id);
+                            renderEngines();
+                            testEngine();
+                        } else if (which == 7) {
+                            EngineStore.remove(MainActivity.this, it.id);
+                            renderEngines();
+                        }
+                    }
+                });
     }
 
     private void addEngine() {
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("添加引擎")
-                .setItems(new String[]{"系统语音（本地、离线）", "HTTP 接口（任意云服务）",
-                                "豆包 VoiceGenie", "TTS Server 的 JS 插件"},
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int which) {
-                                EngineStore.Item it = new EngineStore.Item();
-                                if (which == 0) {
-                                    it.kind = EngineStore.KIND_SYSTEM;
-                                    it.label = "系统语音";
-                                    it.put("pkg", "");
-                                    it.put("lang", "zh-CN");
-                                } else if (which == 1) {
-                                    it.kind = EngineStore.KIND_HTTP;
-                                    it.label = "HTTP 引擎";
-                                    it.put("url", "https://example.com/tts?text={{text}}&voice={{voice}}");
-                                    it.put("method", "GET");
-                                    it.put("headers", "");
-                                    it.put("body", "");
-                                    it.put("timeout", 60000);
-                                    it.put("json_key", "");
-                                    it.put("voices", "");
-                                } else if (which == 2) {
-                                    it.kind = EngineStore.KIND_DOUBAO;
-                                    it.label = "豆包 VoiceGenie";
-                                    it.put("cookie", "");
-                                    it.put("appkey", "GOqQpfo1fO7slHv8");
-                                    it.put("speaker", "");
-                                    it.put("format", "mp3");
-                                    it.put("sample_rate", 24000);
-                                } else if (which == 3) {
-                                    it.kind = EngineStore.KIND_JS;
-                                    it.label = "JS 插件";
-                                    it.put("src", "");
-                                    it.put("lang", "zh-CN");
-                                    it.put("headers", "");
-                                    it.put("voices", "");
-                                }
-                                it.id = EngineStore.newId(it.kind);
-                                EngineStore.put(MainActivity.this, it);
-                                renderEngines();
-                                editEngine(it);
-                            }
-                        })
-                .setNegativeButton("取消", null)
-                .show();
+        ChoiceSheet.show(this, ui, p, sheetTheme(), "添加引擎", null,
+                new String[]{"系统语音", "HTTP 接口", "豆包 VoiceGenie", "TTS Server 的 JS 插件"},
+                new String[]{"本地离线，系统装了什么用什么",
+                        "任意云服务，自己拼 URL",
+                        "官方链路（需要自己的 cookie）",
+                        "TTS Server 那套插件脚本"},
+                -1, new ChoiceSheet.OnPick() {
+                    public void onPick(int which) {
+                        EngineStore.Item it = new EngineStore.Item();
+                        if (which == 0) {
+                            it.kind = EngineStore.KIND_SYSTEM;
+                            it.label = "系统语音";
+                            it.put("pkg", "");
+                            it.put("lang", "zh-CN");
+                        } else if (which == 1) {
+                            it.kind = EngineStore.KIND_HTTP;
+                            it.label = "HTTP 引擎";
+                            it.put("url", "https://example.com/tts?text={{text}}&voice={{voice}}");
+                            it.put("method", "GET");
+                            it.put("headers", "");
+                            it.put("body", "");
+                            it.put("timeout", 60000);
+                            it.put("json_key", "");
+                            it.put("voices", "");
+                        } else if (which == 2) {
+                            it.kind = EngineStore.KIND_DOUBAO;
+                            it.label = "豆包 VoiceGenie";
+                            it.put("cookie", "");
+                            it.put("appkey", "GOqQpfo1fO7slHv8");
+                            it.put("speaker", "");
+                            it.put("format", "mp3");
+                            it.put("sample_rate", 24000);
+                        } else if (which == 3) {
+                            it.kind = EngineStore.KIND_JS;
+                            it.label = "JS 插件";
+                            it.put("src", "");
+                            it.put("lang", "zh-CN");
+                            it.put("headers", "");
+                            it.put("voices", "");
+                        }
+                        it.id = EngineStore.newId(it.kind);
+                        EngineStore.put(MainActivity.this, it);
+                        renderEngines();
+                        editEngine(it);
+                    }
+                });
     }
 
     // ── 配置表单 ──
@@ -2080,24 +2069,20 @@ public class MainActivity extends Activity {
     }
 
     private void pickSplitMode() {
-        final String[] items = new String[Splitter.MODE_COUNT];
+        String[] names = new String[Splitter.MODE_COUNT];
+        String[] descs = new String[Splitter.MODE_COUNT];
         for (int i = 0; i < Splitter.MODE_COUNT; i++) {
-            items[i] = Splitter.modeName(i) + "\n" + Splitter.modeDesc(i);
+            names[i] = Splitter.modeName(i);
+            descs[i] = Splitter.modeDesc(i);
         }
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("断句方案")
-                .setSingleChoiceItems(items, Prefs.splitMode(this),
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int which) {
-                                Prefs.setSplitMode(MainActivity.this, which);
-                                syncInputs();
-                                refresh();
-                                toast("已切到「" + Splitter.modeName(which) + "」，立刻生效");
-                                d.dismiss();
-                            }
-                        })
-                .setNegativeButton("取消", null)
-                .show();
+        ChoiceSheet.show(this, ui, p, sheetTheme(), "断句方案", null,
+                names, descs, Prefs.splitMode(this), new ChoiceSheet.OnPick() {
+                    public void onPick(int which) {
+                        Prefs.setSplitMode(MainActivity.this, which);
+                        syncInputs();
+                        refresh();
+                    }
+                });
     }
 
     private void pickVoice() { fetchVoicesAnd(null); }
@@ -2666,23 +2651,14 @@ public class MainActivity extends Activity {
 
 
     private void pickParseMode() {
-        String[] items = new String[MultiVoice.MODE_COUNT];
-        for (int i = 0; i < MultiVoice.MODE_COUNT; i++) {
-            items[i] = MultiVoice.MODE_NAMES[i] + "\n" + MultiVoice.MODE_DESCS[i];
-        }
-        new AlertDialog.Builder(this, dialogTheme())
-                .setTitle("解析模式")
-                .setSingleChoiceItems(items, Prefs.parseMode(this),
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int which) {
-                                Prefs.setParseMode(MainActivity.this, which);
-                                syncInputs();
-                                toast("已切到「" + MultiVoice.MODE_NAMES[which] + "」，立刻生效");
-                                d.dismiss();
-                            }
-                        })
-                .setNegativeButton("取消", null)
-                .show();
+        ChoiceSheet.show(this, ui, p, sheetTheme(), "解析模式", null,
+                MultiVoice.MODE_NAMES, MultiVoice.MODE_DESCS, Prefs.parseMode(this),
+                new ChoiceSheet.OnPick() {
+                    public void onPick(int which) {
+                        Prefs.setParseMode(MainActivity.this, which);
+                        syncInputs();
+                    }
+                });
     }
 
     /** 丢给酒馆的格式规范 —— 照搬插件那段，模型按 [角色名] 输出才能分角色。 */

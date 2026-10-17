@@ -34,7 +34,6 @@
         <item name="android:navigationBarColor">#FF0D0E13</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="bottomSheetDialogTheme">@style/AppBottomSheet</item>
-        <item name="materialAlertDialogTheme">@style/AppDialog</item>
     </style>
 
     <!-- ══════════════ 浅色 ══════════════ -->
@@ -60,7 +59,6 @@
         <item name="android:navigationBarColor">#FFF2F3F8</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="bottomSheetDialogTheme">@style/AppBottomSheet.Light</item>
-        <item name="materialAlertDialogTheme">@style/AppDialog.Light</item>
     </style>
 
     <!-- ══════════════ 底部抽屉（它的 ModalBottomSheet） ══════════════ -->
@@ -113,20 +111,16 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
-    <!-- ══════════════ 弹窗壳 ══════════════ -->
-    <style name="AppDialog" parent="Theme.MaterialComponents.Dialog.Alert">
-        <item name="colorPrimary">#FF6C8CFF</item>
-        <item name="colorSurface">#FF161822</item>
-        <item name="colorOnSurface">#FFE9ECF6</item>
-        <item name="android:textColorPrimary">#FFE9ECF6</item>
-        <item name="android:textColorHint">#FF6E7386</item>
+    <!-- ══════════════ 弹窗壳 ══════════════
+         别挂 Theme.MaterialComponents.Dialog.*：那是 Material 的弹窗主题，
+         里面内容排版又回去用平台的 AlertDialog 布局，两边主题一混
+         就是白底白字（断句方案那一坨）。这里直接用**平台**的 dialog 主题，
+         只把强调色换成我们的蓝。 -->
+    <style name="AppDialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#FF6C8CFF</item>
     </style>
 
-    <style name="AppDialog.Light" parent="Theme.MaterialComponents.Light.Dialog.Alert">
-        <item name="colorPrimary">#FF4F6BFF</item>
-        <item name="colorSurface">#FFFFFFFF</item>
-        <item name="colorOnSurface">#FF14161C</item>
-        <item name="android:textColorPrimary">#FF14161C</item>
-        <item name="android:textColorHint">#FF8A90A2</item>
+    <style name="AppDialog.Light" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#FF4F6BFF</item>
     </style>
 </resources>
