@@ -431,6 +431,11 @@ public final class MultiVoice {
 
     public List<Seg> flush() {
         out = new ArrayList<Seg>();
+        // 这一回合结束了，可还有几个字卡在「这行是不是『角色名:』」的试探里 ——
+        // 必须把它们还回去，否则没标点、没换行的短消息会被整条吞掉。
+        // （用户消息最常撞这个：发一句「今晚一起吃饭吗」，一个字都没念。）
+        if (prefixState == 0) giveUp();
+        else if (prefixState == 1) giveUpAfterColon('\0');
         if (mode == MODE_GAL && lineBuf.length() > 0) {
             String line = lineBuf.toString();
             lineBuf.setLength(0);

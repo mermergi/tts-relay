@@ -426,6 +426,51 @@ public final class HttpServer {
             }
             return;
         }
+        if ("/_usertext".equals(path)) {
+            // 干跑「用户消息」解析：把 client 的请求体 POST 进来，返回会念的文字，
+            // 以及每一段识别出来的角色 —— 内容块有没有解开，一眼就能看见。
+            try {
+                String raw = body == null ? "" : new String(body, java.nio.charset.StandardCharsets.UTF_8);
+                JSONObject o = new JSONObject(raw);
+                JSONArray msgs = o.optJSONArray("messages");
+                JSONObject um = pickUserMessage(msgs);
+                String rawText = um == null ? null : plainContent(um.opt("content"));
+                // 和真正念的路径完全一致：先剥注入块
+                String text = rawText == null ? null : Injected.strip(rawText);
+                StringBuilder sb = new StringBuilder();
+                sb.append("{\"ok\":true");
+                sb.append(",\"found\":").append(um != null);
+                sb.append(",\"raw\":\"").append(esc(rawText == null ? "" : rawText)).append('"');
+                sb.append(",\"text\":\"").append(esc(text == null ? "" : text)).append('"');
+                if (text != null && text.length() > 0) {
+                    MultiVoice mv = newMultiVoice();
+                    java.util.List<MultiVoice.Seg> segs = new java.util.ArrayList<MultiVoice.Seg>();
+                    java.util.List<MultiVoice.Seg> got = mv.feed(text);
+                    if (got != null) segs.addAll(got);
+                    java.util.List<MultiVoice.Seg> tail = mv.flush();
+                    if (tail != null) segs.addAll(tail);
+                    sb.append(",\"segs\":[");
+                    for (int i = 0; i < segs.size(); i++) {
+                        MultiVoice.Seg sg = segs.get(i);
+                        if (i > 0) sb.append(',');
+                        String uv = Prefs.userVoice(ctx);
+                        if (uv == null || uv.trim().length() == 0) uv = Prefs.voice(ctx);
+                        String v = sg == null ? null : uv;
+                        if (v != null && Prefs.mvEnabled(ctx) && MultiVoice.voiceFor(ctx, sg) == null) v = null;
+                        sb.append("{\"text\":\"").append(esc(sg.text)).append('"')
+                          .append(",\"role\":\"").append(esc(sg.role)).append('"')
+                          .append(",\"voice\":\"").append(esc(v == null ? "（不念）" : TtsEngine.shortVoice(v)))
+                          .append("\"}");
+                    }
+                    sb.append(']');
+                }
+                sb.append('}');
+                json(out, 200, sb.toString());
+            } catch (Throwable t) {
+                json(out, 400, "{\"ok\":false,\"err\":\"" + esc(String.valueOf(t.getMessage())) + "\"}");
+            }
+            return;
+        }
         if ("/_voice".equals(path)) {
             String v = qs.get("v");
             if (v != null && v.length() > 0) Prefs.setVoice(ctx, v);
@@ -807,12 +852,18 @@ public final class HttpServer {
             JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
             JSONArray msgs = o.optJSONArray("messages");
             if (msgs == null || msgs.length() == 0) return false;
-            JSONObject last = msgs.optJSONObject(msgs.length() - 1);
-            if (last == null || !"user".equals(last.optString("role"))) return false;
+            JSONObject last = pickUserMessage(msgs);
+            if (last == null) return false;
             String text = plainContent(last.opt("content"));
+            if (text == null) return false;
+            // 客户端会往用户消息里拼 <system-reminder> / 日期上下文 这类注入块，
+            // 那不是用户说的话，念出来还会把尖括号一起念、插件直接合成失败。
+            boolean cut = Injected.has(text);
+            text = Injected.strip(text);
             if (text == null) return false;
             text = text.trim();
             if (text.length() == 0) return false;
+            if (cut) LogBus.add("↳ 用户消息里剥掉了注入块（system-reminder 之类）");
 
             long now = System.currentTimeMillis();
             if (text.equals(lastUserText) && now - lastUserAt < 120000L) return false;
@@ -836,11 +887,12 @@ public final class HttpServer {
             int n = 0;
             for (MultiVoice.Seg seg : segs) {
                 if (seg == null || seg.text == null || seg.text.trim().length() == 0) continue;
-                // 和多语音那套完全一样的识别：分角色 / 段类型 / 「音色 → 名称」都对得上，
-                // 角色设成「不念」的整句丢掉。多语音关着才用「用户消息」那个音色。
-                String v = multi ? MultiVoice.voiceFor(ctx, seg) : voice;
-                if (v == null) continue;
-                speaker.feed(seg.text, v);
+                // 识别只决定「念不念这一段」（角色设成「不念」的整句丢掉），
+                // 音色一律用「用户消息」自己配的那个 —— 没配才跟全局。
+                // 别拿 voiceFor() 的结果当音色：它对不上名字时会返回全局音色，
+                // 表现就是"用户消息又变回默认音色了"。
+                if (multi && MultiVoice.voiceFor(ctx, seg) == null) continue;
+                speaker.feed(seg.text, voice);
                 n++;
             }
             if (n > 0) LogBus.add("↳ 用户消息念出 " + n + " 句");
@@ -850,24 +902,93 @@ public final class HttpServer {
         }
     }
 
-    /** content 可能是一段文字，也可能是 [{type:text,text:...}, ...] 这种多段结构。 */
-    private static String plainContent(Object c) {
+    /**
+     * 把消息 content 拆成要念的文字。客户端发来的 content 有好几种形状，都得认：
+     *
+     * <pre>
+     * "你好"                                       纯字符串
+     * [{"type":"text","text":"你好"}]               OpenAI 多段（图文）
+     * [{"type":"input_text","text":"你好"}]         Responses 那套
+     * [{"text":"你好"}] / [{"content":"你好"}]      变体
+     * ["你好","再见"]                               数组里直接是字符串
+     * {"text":"你好"}                               对象形式
+     * </pre>
+     *
+     * 图片、音频、文件这些块直接跳过（本来也没法念）。
+     */
+    static String plainContent(Object c) {
         if (c == null) return null;
         if (c instanceof String) return (String) c;
         if (c instanceof JSONArray) {
             StringBuilder sb = new StringBuilder();
             JSONArray a = (JSONArray) c;
             for (int i = 0; i < a.length(); i++) {
-                JSONObject p = a.optJSONObject(i);
-                if (p == null) continue;
-                String t = p.optString("text", "");
-                if (t.length() == 0) continue;
-                if (sb.length() > 0) sb.append('\n');
-                sb.append(t);
+                Object el = a.opt(i);
+                if (el == null) continue;
+                if (el instanceof String) {
+                    appendLine(sb, (String) el);
+                    continue;
+                }
+                JSONObject part = (el instanceof JSONObject) ? (JSONObject) el : null;
+                if (part == null) continue;
+                String type = part.optString("type", "");
+                if (type.endsWith("image") || type.endsWith("image_url") || "input_image".equals(type)
+                        || "image_url".equals(type) || type.endsWith("audio") || "input_audio".equals(type)
+                        || type.endsWith("file") || "input_file".equals(type)) {
+                    continue;                       // 这些块没有可念的文字
+                }
+                String t = part.optString("text", "");
+                if (t.length() == 0) t = part.optString("content", "");
+                if (t.length() == 0) {
+                    Object nested = part.opt("text");
+                    if (nested instanceof JSONObject) t = ((JSONObject) nested).optString("value", "");
+                    if (t.length() == 0) {
+                        Object inner = part.opt("content");
+                        if (inner != null && !(inner instanceof String)) t = plainContent(inner);
+                        else if (inner instanceof String) t = (String) inner;
+                    }
+                }
+                if (t != null && t.length() > 0) appendLine(sb, t);
             }
             return sb.toString();
         }
+        if (c instanceof JSONObject) {
+            JSONObject o = (JSONObject) c;
+            String t = o.optString("text", "");
+            if (t.length() == 0) t = o.optString("content", "");
+            return t.length() > 0 ? t : null;
+        }
         return String.valueOf(c);
+    }
+
+    private static void appendLine(StringBuilder sb, String t) {
+        if (t == null) return;
+        String s = t.trim();
+        if (s.length() == 0) return;
+        if (sb.length() > 0) sb.append('\n');
+        sb.append(s);
+    }
+
+    /**
+     * 这一发要念的「用户消息」是哪条。
+     *
+     * 不直接取最后一条：客户端做 prefill 时会在末尾塞一条空的 assistant，
+     * 群聊里末尾也可能是 system 提醒 —— 所以从后往前找最后一条 role=user，
+     * 但中途要是有 assistant 已经带正文了，说明这不是新一轮的发消息，就不念。
+     */
+    static JSONObject pickUserMessage(JSONArray msgs) {
+        if (msgs == null) return null;
+        for (int i = msgs.length() - 1; i >= 0; i--) {
+            JSONObject m = msgs.optJSONObject(i);
+            if (m == null) continue;
+            String role = m.optString("role", "");
+            if ("user".equals(role)) return m;
+            if ("assistant".equals(role)) {
+                String t = plainContent(m.opt("content"));
+                if (t != null && t.trim().length() > 0) return null;   // 已经是回合后半截
+            }
+        }
+        return null;
     }
 
     private MultiVoice newMultiVoice() { return newMultiVoice(""); }
