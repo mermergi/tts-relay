@@ -1395,7 +1395,7 @@ public class MainActivity extends Activity {
 
     private void engineMenu(final EngineStore.Item it) {
         ChoiceSheet.show(this, ui, p, sheetTheme(), it.label, null,
-                new String[]{"设为当前引擎", "编辑配置", "设置变量", "导出配置",
+                new String[]{"设为当前引擎", "编辑配置", "设置变量", "插件界面", "导出配置",
                         "清除缓存", "看看音色列表", "测试这个引擎", "删除"},
                 null, -1, new ChoiceSheet.OnPick() {
                     public void onPick(int which) {
@@ -1407,26 +1407,88 @@ public class MainActivity extends Activity {
                         } else if (which == 2) {
                             openPluginEditor(it, true);
                         } else if (which == 3) {
-                            exportEngineConfig(it);
+                            pluginSheet(it);
                         } else if (which == 4) {
+                            exportEngineConfig(it);
+                        } else if (which == 5) {
                             if (EngineStore.hasCache(MainActivity.this, it)) {
                                 EngineStore.clearCache(MainActivity.this, it);
                                 toast("缓存清了");
                             } else {
                                 toast("这个插件没缓存");
                             }
-                        } else if (which == 5) {
-                            showEngineVoices(it);
                         } else if (which == 6) {
+                            showEngineVoices(it);
+                        } else if (which == 7) {
                             EngineStore.setActive(MainActivity.this, it.id);
                             renderEngines();
                             testEngine();
-                        } else if (which == 7) {
+                        } else if (which == 8) {
                             EngineStore.remove(MainActivity.this, it.id);
                             renderEngines();
                         }
                     }
                 });
+    }
+
+    /**
+     * 「插件界面」：把插件自己在 {@code onLoadUI} 里画的那一坨原样显示出来。
+     *
+     * 这就是 TTS Server 那个编辑页的做法 —— 它没有为某个插件写死表单，
+     * 页面上那些下拉/输入框/滑杆都是<强>插件自己的代码</strong>建出来的
+     * （JSpinner / JTextInput / JSeekBar）。我们这边插件宿主已经把界面建好了
+     * （PluginBridge.uiContainer），只需要找个地方摆出来。
+     */
+    private void pluginSheet(final EngineStore.Item it) {
+        if (!EngineStore.KIND_JS.equals(it.kind) && it.s("src", "").trim().length() == 0) {
+            toast("这个引擎没有插件界面");
+            return;
+        }
+        LinearLayout box = ui.col();
+        box.setBackground(ui.sheetBg());
+        box.setPadding(ui.dp(16), 0, ui.dp(16), ui.dp(16));
+
+        ImageView handle = new ImageView(this);
+        handle.setImageResource(R.drawable.mtrl_bottomsheet_drag_handle);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui.dp(32), ui.dp(4));
+        hlp.gravity = Gravity.CENTER_HORIZONTAL;
+        hlp.topMargin = ui.dp(10);
+        box.addView(handle, hlp);
+
+        TextView title = new TextView(this);
+        title.setText(it.label == null || it.label.length() == 0 ? "插件界面" : it.label);
+        title.setTextColor(p.textPrimary);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, ui.topGap(10));
+
+        final LinearLayout host = ui.col();
+        ScrollView sc = new ScrollView(this);
+        sc.setClipToPadding(false);
+        sc.addView(host);
+        box.addView(sc, ui.topGap(10));
+
+        roleSheet = sheet(box);
+
+        // 起插件要 eval 整个脚本，慢 —— 别卡界面
+        new Thread(new Runnable() {
+            public void run() {
+                final android.view.View v = JsTtsEngine.pluginUi(MainActivity.this, it);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (v == null) { toast("插件没画界面，或者没跑起来"); return; }
+                        try {
+                            android.view.ViewGroup parent = (android.view.ViewGroup) v.getParent();
+                            if (parent != null) parent.removeView(v);   // 之前挂过就先摘下来
+                        } catch (Throwable ignored) { }
+                        host.removeAllViews();
+                        host.addView(v, new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT));
+                    }
+                });
+            }
+        }).start();
     }
 
     private void addEngine() {

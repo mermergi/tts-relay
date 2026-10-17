@@ -144,7 +144,70 @@ public final class JsTtsEngine implements TtsEngine {
 
     private PluginBridge open(Context c) throws Exception { return open(c, locale(), ""); }
 
+    /**
+     * 界面用：<b>插件自己画出来的界面</b>（它在 {@code onLoadUI(context, container)} 里
+     * 往容器里塞的那些控件 —— JSpinner / JTextInput / JSeekBar，TTS Server 的插件都是这么写的）。
+     *
+     * <p>关键点：<b>不针对任何插件写死</b>。容器里的东西是插件自己建的，我们只是把它显示出来；
+     * 换一个插件，界面自动就是那个插件的。
+     *
+     * <p>复用同一个缓存宿主（同一个 key），所以界面上改的东西和合成用的是同一份状态。
+     *
+     * @return 插件画的容器；插件没有界面 / 起不来就 null
+     */
+    public static android.view.View pluginUi(Context c, EngineStore.Item item) {
+        if (c == null || item == null) return null;
+        String key = item.id + "|" + item.s("src", "").hashCode();
+        try {
+            PluginBridge h = HOSTS.get(key);
+            if (h == null) {
+                h = openFor(c, item, item.s("lang", "zh-CN"), item.s("voice", ""));
+                HOSTS.put(key, h);
+            }
+            return h.getUiContainer();
+        } catch (Throwable t) {
+            LogBus.error("打开插件界面失败：" + t.getMessage());
+            return null;
+        }
+    }
+
+    /** 界面用：问插件有哪几种语言（和 TTS Server 那个编辑页一样，列表是问插件要的）。 */
+    public static java.util.LinkedHashMap<String, String> localesOf(Context c, EngineStore.Item item) {
+        PluginBridge h = null;
+        try {
+            h = openFor(c, item, item.s("lang", "zh-CN"), "");
+            return new java.util.LinkedHashMap<String, String>(h.locales());
+        } catch (Throwable t) {
+            LogBus.error("问插件语言列表失败：" + t.getMessage());
+            return new java.util.LinkedHashMap<String, String>();
+        } finally {
+            if (h != null) try { h.destroy(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 界面用：问插件这个语言下有哪些声音。 */
+    public static java.util.List<String[]> voicesOf(Context c, EngineStore.Item item, String locale) {
+        PluginBridge h = null;
+        try {
+            h = openFor(c, item, locale == null || locale.length() == 0 ? "zh-CN" : locale, "");
+            return h.voices(locale == null || locale.length() == 0 ? "zh-CN" : locale);
+        } catch (Throwable t) {
+            LogBus.error("问插件声音列表失败：" + t.getMessage());
+            return new java.util.ArrayList<String[]>();
+        } finally {
+            if (h != null) try { h.destroy(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 音色表缓存清掉（换了语言 / 声音之后要用一次）。 */
+    public static void clearVoices() { VOICES_CACHE.clear(); }
+
     private PluginBridge open(Context c, String locale, String voice) throws Exception {
+        return openFor(c, it, locale, voice);
+    }
+
+    /** 按某份引擎配置开一个插件宿主（界面上问语言/声音也走这里，保证参数一模一样）。 */
+    public static PluginBridge openFor(Context c, EngineStore.Item it, String locale, String voice) throws Exception {
         // 变量值：优先读 `user_vars`（别人那套引擎文件的模型），没有就退回"cfg 里非保留键都当变量"
         Map<String, String> vars = new LinkedHashMap<String, String>();
         String uv = it == null ? "" : it.s("user_vars", "");
