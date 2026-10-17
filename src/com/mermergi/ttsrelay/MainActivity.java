@@ -2104,7 +2104,6 @@ public class MainActivity extends Activity {
 
     /** 拉音色列表；role 为 null = 选全局音色，否则选某个角色的音色。 */
     private void fetchVoicesAnd(final String role) {
-        toast("正在拉取音色…");
         new Thread(new Runnable() {
             public void run() {
                 final List<VoiceItem> names = new ArrayList<VoiceItem>();
