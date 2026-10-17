@@ -1,10 +1,128 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  界面本身是代码搭的、颜色全走 Palette；这里只给"系统托管的那层"配主题：
+  ● 窗口底色 / 状态栏 / 导航栏
+  ● 弹窗（AlertDialog 用什么壳）
+  ● Material Components 的控件（底部抽屉、输入框、按钮）取色
+
+  以前 AppTheme 直接挂平台 Theme.Material.NoActionBar；现在挂
+  Theme.MaterialComponents（AppCompat 那套的官方 Material 版），
+  这样 BottomSheetDialog / TextInputLayout / Chip 这些现成控件才有皮可穿。
+-->
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/background_dark</item>
-        <item name="android:colorAccent">#FF7A9EFF</item>
-        <item name="android:statusBarColor">#FF121218</item>
-        <item name="android:navigationBarColor">#FF121218</item>
+
+    <!-- ══════════════ 深色（默认） ══════════════ -->
+    <style name="AppTheme" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">#FF6C8CFF</item>
+        <item name="colorPrimaryVariant">#FF5566CC</item>
+        <item name="colorOnPrimary">#FF0D0E13</item>
+        <item name="colorSecondary">#FF6C8CFF</item>
+        <item name="colorSecondaryVariant">#FF5566CC</item>
+        <item name="colorOnSecondary">#FF0D0E13</item>
+        <item name="colorSurface">#FF161822</item>
+        <item name="colorOnSurface">#FFE9ECF6</item>
+        <item name="colorOnSurfaceVariant">#FF9AA0B4</item>
+        <item name="colorError">#FFF87171</item>
+        <item name="colorOnError">#FF0D0E13</item>
+        <item name="android:colorBackground">#FF0D0E13</item>
+        <item name="colorOnBackground">#FFE9ECF6</item>
+        <item name="android:textColorPrimary">#FFE9ECF6</item>
+        <item name="android:textColorSecondary">#FF9AA0B4</item>
+        <item name="android:textColorHint">#FF6E7386</item>
+        <item name="android:windowBackground">#FF0D0E13</item>
+        <item name="android:statusBarColor">#FF0D0E13</item>
+        <item name="android:navigationBarColor">#FF0D0E13</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="bottomSheetDialogTheme">@style/AppBottomSheet</item>
+        <item name="android:buttonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item>
+    </style>
+
+    <!-- ══════════════ 浅色 ══════════════ -->
+    <style name="AppTheme.Light" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">#FF4F6BFF</item>
+        <item name="colorPrimaryVariant">#FF3B52C4</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorSecondary">#FF4F6BFF</item>
+        <item name="colorSecondaryVariant">#FF3B52C4</item>
+        <item name="colorOnSecondary">#FFFFFFFF</item>
+        <item name="colorSurface">#FFFFFFFF</item>
+        <item name="colorOnSurface">#FF14161C</item>
+        <item name="colorOnSurfaceVariant">#FF5A6072</item>
+        <item name="colorError">#FFDC2626</item>
+        <item name="colorOnError">#FFFFFFFF</item>
+        <item name="android:colorBackground">#FFF2F3F8</item>
+        <item name="colorOnBackground">#FF14161C</item>
+        <item name="android:textColorPrimary">#FF14161C</item>
+        <item name="android:textColorSecondary">#FF5A6072</item>
+        <item name="android:textColorHint">#FF8A90A2</item>
+        <item name="android:windowBackground">#FFF2F3F8</item>
+        <item name="android:statusBarColor">#FFF2F3F8</item>
+        <item name="android:navigationBarColor">#FFF2F3F8</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="bottomSheetDialogTheme">@style/AppBottomSheet.Light</item>
+        <item name="android:buttonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item>
+    </style>
+
+    <!-- ══════════════ 底部抽屉（它的 ModalBottomSheet） ══════════════ -->
+    <style name="AppBottomSheet" parent="Theme.MaterialComponents.BottomSheetDialog">
+        <item name="colorPrimary">#FF6C8CFF</item>
+        <item name="colorOnPrimary">#FF0D0E13</item>
+        <item name="colorSurface">#FF161822</item>
+        <item name="colorOnSurface">#FFE9ECF6</item>
+        <item name="colorOnSurfaceVariant">#FF9AA0B4</item>
+        <item name="android:colorBackground">#FF161822</item>
+        <item name="colorOnBackground">#FFE9ECF6</item>
+        <item name="android:textColorPrimary">#FFE9ECF6</item>
+        <item name="android:textColorHint">#FF6E7386</item>
+        <item name="bottomSheetStyle">@style/AppBottomSheetStyle</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:navigationBarColor">#00000000</item>
+    </style>
+
+    <style name="AppBottomSheet.Light" parent="Theme.MaterialComponents.Light.BottomSheetDialog">
+        <item name="colorPrimary">#FF4F6BFF</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorSurface">#FFFFFFFF</item>
+        <item name="colorOnSurface">#FF14161C</item>
+        <item name="colorOnSurfaceVariant">#FF5A6072</item>
+        <item name="android:colorBackground">#FFFFFFFF</item>
+        <item name="colorOnBackground">#FF14161C</item>
+        <item name="android:textColorPrimary">#FF14161C</item>
+        <item name="android:textColorHint">#FF8A90A2</item>
+        <item name="bottomSheetStyle">@style/AppBottomSheetStyle.Light</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:navigationBarColor">#00000000</item>
+    </style>
+
+    <!-- 容器自己透明：圆角和底色由代码里那个 sheetBg() 画（只圆上面两个角），
+         不然 MDC 会给底板再叠一层 elevation 提亮，跟卡片颜色对不上 -->
+    <style name="AppBottomSheetStyle" parent="Widget.MaterialComponents.BottomSheet.Modal">
+        <item name="backgroundTint">@android:color/transparent</item>
+    </style>
+
+    <style name="AppBottomSheetStyle.Light" parent="Widget.MaterialComponents.BottomSheet.Modal">
+        <item name="backgroundTint">@android:color/transparent</item>
+    </style>
+
+    <!-- 只有上面两个角是圆的（从底下升起来的那块） -->
+    <style name="AppSheetShape" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">22dp</item>
+        <item name="cornerSizeTopRight">22dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
+    <!-- ══════════════ 弹窗壳 ══════════════
+         别挂 Theme.MaterialComponents.Dialog.*：那是 Material 的弹窗主题，
+         里面内容排版又回去用平台的 AlertDialog 布局，两边主题一混
+         就是白底白字（断句方案那一坨）。这里直接用**平台**的 dialog 主题，
+         只把强调色换成我们的蓝。 -->
+    <style name="AppDialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#FF6C8CFF</item>
+    </style>
+
+    <style name="AppDialog.Light" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#FF4F6BFF</item>
     </style>
 </resources>

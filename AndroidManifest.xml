@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.mermergi.ttsrelay"
-    android:versionCode="31"
-    android:versionName="2.8.8">
+    android:versionCode="32"
+    android:versionName="2.8.9">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
 
@@ -76,5 +76,12 @@
             android:name=".PluginEditorActivity"
             android:exported="false"
             android:label="插件编辑器" />
+        <!-- 编辑插件 TTS：内容和 TTS Server 那个页面同一套加载逻辑，字段全问插件要 -->
+        <activity
+            android:name=".PluginTtsActivity"
+            android:exported="false"
+            android:label="编辑插件 TTS"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

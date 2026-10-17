@@ -6,6 +6,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.FrameLayout
 import android.widget.Spinner
+import android.util.TypedValue
 
 /**
  * TTS Server 的插件界面控件之一（原版是 Compose，这儿是 View 版，包名/API 与它一致）。
@@ -47,9 +48,18 @@ class JSpinner(context: Context, val hint: CharSequence) : FrameLayout(context) 
             if (i >= 0) selectedPosition = i
         }
 
+    /** 上游 AppSpinner 上面有 labelText；这里画成一行小字标签。 */
+    private val label = android.widget.TextView(context)
+
     init {
-        bar.contentDescription = hint
-        addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        label.text = hint
+        label.textSize = 12.5f
+        label.setTextColor(0xFF9AA0B4.toInt())
+        label.setPadding(0, dp(8), 0, dp(2))
+        addView(label, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        val lp = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        lp.topMargin = dp(20)
+        addView(bar, lp)
         bar.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 mSelectedPosition = position
@@ -67,4 +77,8 @@ class JSpinner(context: Context, val hint: CharSequence) : FrameLayout(context) 
     fun setOnItemSelected(listener: OnItemSelectedListener?) {
         mListener = listener
     }
+
+    private fun dp(v: Int): Int = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
+    ).toInt()
 }

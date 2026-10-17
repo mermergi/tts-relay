@@ -2,21 +2,16 @@
 out/
 *.apk
 *.idsig
-*.log
 
-# 依赖 jar / aar：不进仓库，用 tools/fetch-deps.sh 拉（出处见 tools/lib/SOURCES.md）
-tools/lib/*
-!tools/lib/SOURCES.md
+# 不进仓库的大文件 / 敏感文件
 tools/android.jar
-
-# 签名密钥：绝不进仓库
 keystore.jks
 *.jks
 *.keystore
 
 # 杂项
 .DS_Store
+*.log
 __pycache__/
-*.swp
-local.properties
-.idea/
+tools/lib/*.jar
+tools/lib/aar/*.aar
