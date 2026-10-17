@@ -793,7 +793,7 @@ public class MainActivity extends Activity {
         title.setTextColor(p.textPrimary);
         title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(title);
+        box.addView(title, ui.topGap(14));
 
         final EditText name = ui.field(null, "", InputType.TYPE_CLASS_TEXT);
         name.setHint("名字，比如「公司网关」");
@@ -2243,6 +2243,7 @@ public class MainActivity extends Activity {
         String who = role == null ? "选择音色" : "给「" + role + "」选音色";
 
         LinearLayout box = ui.col();
+        box.setBackground(ui.sheetBg());
         box.setPadding(ui.dp(16), 0, ui.dp(16), ui.dp(10));
 
         TextView title = new TextView(this);
@@ -2251,12 +2252,6 @@ public class MainActivity extends Activity {
         title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(title);
-        TextView count = new TextView(this);
-        count.setText("共 " + all.size() + " 个");
-        count.setTextColor(p.textMuted);
-        count.setTextSize(12);
-        count.setPadding(0, ui.dp(2), 0, ui.dp(10));
-        box.addView(count);
 
         final EditText filter = new EditText(this);
         filter.setHint("搜：名字 / 女声 / 青年 / 温柔…");
@@ -2388,22 +2383,22 @@ public class MainActivity extends Activity {
                                   final List<VoiceItem> all, final String[] src,
                                   final Runnable refill, final RecyclerView rv) {
         rail.removeAllViews();
-        List<String[]> items = new ArrayList<String[]>();
-        items.add(new String[]{"", "全部来源 " + all.size()});   // 上面性别那排已经有「全部」了，这里换个名字
-        for (EngineStore.SourceGroup g : groups) {
+        for (final EngineStore.SourceGroup g : groups) {
             if (g.voices.isEmpty()) continue;
-            items.add(new String[]{g.id, shortSrc(g.label) + " " + g.voices.size()});
-        }
-        for (final String[] it : items) {
-            boolean on = it[0].equals(src[0]) || (it[0].length() == 0 && src[0].length() == 0);
-            TextView c = ui.chip(it[1], on, new View.OnClickListener() {
-                public void onClick(View v) {
-                    src[0] = it[0];
-                    renderSourceRail(rail, groups, all, src, refill, rv);
-                    refill.run();
-                    rv.scrollToPosition(0);
-                }
-            });
+            final boolean on = g.id.equals(src[0]);
+            TextView c = ui.chip(shortSrc(g.label) + " " + g.voices.size(), on,
+                    new View.OnClickListener() {
+                        public void onClick(View v) {
+                            src[0] = on ? "" : g.id;      // 再点一下 = 不过滤
+                            renderSourceRail(rail, groups, all, src, refill, rv);
+                            refill.run();
+                            rv.scrollToPosition(0);
+                        }
+                    });
+            c.setTextSize(11.5f);
+            c.setSingleLine(true);
+            c.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            c.setPadding(ui.dp(8), ui.dp(7), ui.dp(8), ui.dp(7));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.bottomMargin = ui.dp(6);
@@ -2425,32 +2420,24 @@ public class MainActivity extends Activity {
     private void fillVoiceList(List<VoiceItem> out, List<VoiceItem> all,
                                String kw, String gen, String srcId) {
         out.clear();
-        String[] secs = {"女声", "男声", "未标注"};
-        for (String sec : secs) {
-            if (gen.length() > 0 && !gen.equals(sec)) continue;
-            List<VoiceItem> hits = new ArrayList<VoiceItem>();
-            for (VoiceItem v : all) {
-                if (!sec.equals(v.gender)) continue;
-                if (srcId.length() > 0 && !srcId.equals(v.srcId)) continue;
-                if (kw.length() > 0 && !v.name.contains(kw) && !v.tagLine.contains(kw)
-                        && !v.raw.contains(kw)) continue;
-                hits.add(v);
-            }
-            if (hits.isEmpty()) continue;
-            out.add(VoiceItem.header(sec + "  ·  " + hits.size() + " 个"));
-            out.addAll(hits);
+        for (VoiceItem v : all) {
+            if (gen.length() > 0 && !gen.equals(v.gender)) continue;
+            if (srcId.length() > 0 && !srcId.equals(v.srcId)) continue;
+            if (kw.length() > 0 && !v.name.contains(kw) && !v.tagLine.contains(kw)
+                    && !v.raw.contains(kw)) continue;
+            out.add(v);
         }
     }
 
     private void renderGenderChips(final LinearLayout chips, final String[] gen,
                                    final Runnable refill) {
         chips.removeAllViews();
-        final String[] opts = {"全部", "女声", "男声", "未标注"};
+        final String[] opts = {"女声", "男声", "未标注"};
         for (final String o : opts) {
-            boolean on = ("全部".equals(o) && gen[0].length() == 0) || o.equals(gen[0]);
+            final boolean on = o.equals(gen[0]);
             TextView c = ui.chip(o, on, new View.OnClickListener() {
                 public void onClick(View v) {
-                    gen[0] = "全部".equals(o) ? "" : o;
+                    gen[0] = on ? "" : o;        // 再点一下 = 不过滤
                     renderGenderChips(chips, gen, refill);
                     refill.run();
                 }

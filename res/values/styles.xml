@@ -92,14 +92,14 @@
         <item name="android:navigationBarColor">#00000000</item>
     </style>
 
+    <!-- 容器自己透明：圆角和底色由代码里那个 sheetBg() 画（只圆上面两个角），
+         不然 MDC 会给底板再叠一层 elevation 提亮，跟卡片颜色对不上 -->
     <style name="AppBottomSheetStyle" parent="Widget.MaterialComponents.BottomSheet.Modal">
-        <item name="backgroundTint">#FF161822</item>
-        <item name="shapeAppearanceOverlay">@style/AppSheetShape</item>
+        <item name="backgroundTint">@android:color/transparent</item>
     </style>
 
     <style name="AppBottomSheetStyle.Light" parent="Widget.MaterialComponents.BottomSheet.Modal">
-        <item name="backgroundTint">#FFFFFFFF</item>
-        <item name="shapeAppearanceOverlay">@style/AppSheetShape</item>
+        <item name="backgroundTint">@android:color/transparent</item>
     </style>
 
     <!-- 只有上面两个角是圆的（从底下升起来的那块） -->

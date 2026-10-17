@@ -26,6 +26,8 @@
 | [Drake Net](https://github.com/liangjingkanji/Net) | Apache-2.0 | 插件的 http 走它 |
 | hutool / commons-text / commons-lang3 / snakeyaml-engine / gson | MPL-2.0 / Apache-2.0 | |
 | joni / jcodings / TextMate 语法与主题（`assets/textmate/`） | MIT | 代码高亮 |
+| [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict) 衍生的性别词表（`assets/gender_words.txt`） | **CC BY-SA 4.0** | 判断音色名男女；衍生数据同样以 CC BY-SA 4.0 提供 |
+| [Chinese-Names-Corpus](https://github.com/wainshine/Chinese-Names-Corpus) 统计出的字级性别表（`assets/gender_table.txt`） | Apache-2.0 | 同上，兜底用 |
 
 ## 再分发时
 

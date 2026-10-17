@@ -96,3 +96,18 @@ annotation-experimental —— 全部 [AndroidX](https://github.com/androidx/and
 4. `splitties-appctx` 发布出来的包是空壳 jar → 用一个六行的全局 Context 取值器顶上。
 
 除这四处，插件语义一个字节没改。
+
+## 性别识别的两张数据表（`assets/`，不是代码）
+
+音色列表里很多音色只有名字，没有 `zh_male` / `female` 这种标记；靠名字判断男女时
+不再手写词库，用两份开放数据离线算出来，随 APK 打包：
+
+| 文件 | 来源 | 许可 | 生成脚本 |
+|---|---|---|---|
+| `assets/gender_words.txt` | [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict) 的英文释义（释义里写了 girl/woman/sister/male/boy 等） | **CC BY-SA 4.0** | `tools/build-gender-words.py` |
+| `assets/gender_table.txt` | [wainshine/Chinese-Names-Corpus](https://github.com/wainshine/Chinese-Names-Corpus)（105 万条「名字,性别」）统计出的字 / 双字倾向 | Apache-2.0 | `tools/build-gender-table.py` |
+
+判断顺序：① 值里写明的标记（`female` / `_male_` / `女` / `男`）→ ② CC-CEDICT 词表里最长匹配
+（萝莉、御姐、一姐、老铁、学长、闺蜜…）→ ③ 字表兜底（要两个字以上、且倾向明显）。
+
+`gender_words.txt` 是 CC-CEDICT 的衍生数据，按 CC BY-SA 4.0 同样开放，可用上面那个脚本重算。
