@@ -18,12 +18,41 @@
 | kotlinx-serialization-{core,json}-jvm-1.8.0.jar | [Kotlin/kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) | Apache-2.0 |
 | commons-text-1.13.0.jar / commons-lang3-3.17.0.jar | [apache/commons-text](https://github.com/apache/commons-text) | Apache-2.0 |
 
-## androidx（插件实体 + 插件引擎用得着的那些）
+## androidx（插件实体 + 插件引擎 + 界面用得着的那些）
 
-annotation-jvm / collection-jvm / room-common-jvm / lifecycle-common / versionedparcelable /
-savedstate / core / core-ktx / activity / fragment / lifecycle-runtime /
-lifecycle-viewmodel-savedstate / annotation-experimental —— 全部
-[AndroidX](https://github.com/androidx/androidx)，**Apache-2.0**。
+annotation-jvm / collection-jvm / room-common / lifecycle-common / lifecycle-runtime /
+lifecycle-viewmodel / lifecycle-viewmodel-savedstate / versionedparcelable / savedstate /
+annotation-experimental —— 全部 [AndroidX](https://github.com/androidx/androidx)，**Apache-2.0**。
+
+> core / core-ktx / activity / fragment 这四个原来是从 aar 里抽 `classes.jar` 单独放的，
+> 现在界面这层要用它们的**资源**，所以改成整包放在 `aar/` 里（见下）。
+
+## 界面这一层 —— Material Components（整包 aar，资源要编进去）
+
+| 文件 | 出处 | 许可证 |
+|---|---|---|
+| aar/material-1.12.0.aar | [material-components-android](https://github.com/material-components/material-components-android) | Apache-2.0 |
+| aar/appcompat-1.7.0.aar / appcompat-resources-1.7.0.aar | [androidx.appcompat](https://developer.android.com/jetpack/androidx/releases/appcompat) | Apache-2.0 |
+| aar/recyclerview-1.3.2.aar | [androidx.recyclerview](https://developer.android.com/jetpack/androidx/releases/recyclerview) | Apache-2.0 |
+| aar/core-1.13.1.aar / core-ktx-1.13.1.aar | [androidx.core](https://developer.android.com/jetpack/androidx/releases/core) | Apache-2.0 |
+| aar/activity-1.9.3.aar / fragment-1.8.5.aar | androidx.activity / fragment | Apache-2.0 |
+| aar/cardview-1.0.0.aar / coordinatorlayout-1.2.0.aar / drawerlayout-1.2.0.aar | androidx | Apache-2.0 |
+| aar/dynamicanimation-1.1.0.aar / transition-1.5.0.aar | androidx | Apache-2.0 |
+| aar/vectordrawable-1.2.0.aar / vectordrawable-animated-1.2.0.aar | androidx | Apache-2.0 |
+| aar/cursoradapter-1.0.0.aar / customview-1.1.0.aar / loader-1.1.0.aar | androidx | Apache-2.0 |
+| aar/viewpager-1.0.0.aar / viewpager2-1.1.0.aar | androidx | Apache-2.0 |
+| aar/constraintlayout-2.1.4.aar + constraintlayout-core-1.0.4.jar | [androidx.constraintlayout](https://developer.android.com/jetpack/androidx/releases/constraintlayout) | Apache-2.0 |
+
+界面为什么挂这一整套：以前每个控件（片子 / 抽屉 / 弹窗 / 列表）都是手画的，
+现在是
+* **BottomSheetDialog** —— 音色面板 / 「音色 → 名称」面板；遮罩、拖动、下滑关闭是库里的；
+* **RecyclerView + ListAdapter(DiffUtil)** —— 音色库列表（`VoiceListAdapter.java`），
+  分组的两种视图类型 + 行内 🎧；
+* **MaterialCardView / Material 弹窗壳** —— 行和弹窗的圆角、水波、描边。
+
+`build.sh` 会把 `aar/` 下所有包的 `res/` 合并后一起编（同名 `values.xml` 按
+"并 children"的规矩合，见 `tools/merge-aar-res.py`），并用 `--extra-packages`
+给每个库生成它自己的 `R` 类。
 
 ## media3 —— 已移除（原来写错了）
 

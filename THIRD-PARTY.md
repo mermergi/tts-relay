@@ -18,7 +18,8 @@
 | [TTS Server 插件运行时](https://github.com/jing332/tts-server-android)（`kt/ttsrv/`） | MIT | 源码原样搬入，改动逐处写在文件注释里 |
 | [sora-editor](https://github.com/Rosemoe/sora-editor) 0.23.5 | **LGPL-2.1** | 未修改、作为独立库链接；可替换为同版本或更新版本 |
 | [Mozilla Rhino](https://github.com/mozilla/rhino) 1.8.0 | MPL-2.0 | |
-| AndroidX（annotation / collection / room-common / lifecycle / core / activity / fragment / savedstate / versionedparcelable） | Apache-2.0 | |
+| [Material Components for Android](https://github.com/material-components/material-components-android) 1.12.0 | Apache-2.0 | 底部抽屉 / 弹窗 / 卡片 |
+| AndroidX（annotation / collection / room-common / lifecycle / core / core-ktx / activity / fragment / savedstate / versionedparcelable / appcompat / recyclerview / cardview / coordinatorlayout / drawerlayout / dynamicanimation / transition / vectordrawable / cursoradapter / customview / loader / viewpager / viewpager2 / constraintlayout） | Apache-2.0 | 界面与插件宿主共用 |
 | OkHttp / Okio | Apache-2.0 | |
 | KotlinX Coroutines / Serialization | Apache-2.0 | |
 | kotlin-logging / kotlin-result | Apache-2.0 / MIT | |

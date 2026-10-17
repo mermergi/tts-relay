@@ -23,19 +23,21 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -87,6 +89,18 @@ public class MainActivity extends Activity {
     private LinearLayout roleBox;
     /** 这次开音色库，是为了给新音色填名字（先选音色，再填名字）。 */
     private boolean pickForBind = false;
+    /**
+     * 「音色 → 名称」那张表里，面板正在编辑的是哪一条：
+     * sheetOrig = 这条原来记在哪个音色名下（新加一条时是 null），
+     * sheetVoice = 面板上现在选中的音色。换音色时要把<b>这一条</b>搬过去，
+     * 不能两个音色各留一条 —— 那才是"新开一条"。
+     */
+    private String sheetOrig = null;
+    private String sheetVoice = null;
+    /** 换音色途中面板被关掉了，刚填的名字先存在这儿带过去。 */
+    private String bindCarry = null;
+    /** 正在把设置值写回控件（这期间控件的变化不算用户操作）。 */
+    private boolean syncing = false;
 
     // ── 引擎页 ──
     private LinearLayout engineBox;
@@ -127,8 +141,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         App.install(this);
-        super.onCreate(b);
         p = Palette.of(this);
+        // 先把主题定下来：Material 的控件（底部抽屉 / 输入框 / 按钮）在 inflate 时读的就是它
+        setTheme(p.light ? R.style.AppTheme_Light : R.style.AppTheme);
+        super.onCreate(b);
         ui = new Ui(this, p);
         applyWindow();
         buildShell();
@@ -524,6 +540,7 @@ public class MainActivity extends Activity {
         mvSwitch = ui.switchBox("启用多语音\n关着就是一个音色念到底");
         mvSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton b, boolean checked) {
+                if (syncing) return;
                 Prefs.setMvEnabled(MainActivity.this, checked);
                 renderVoiceTable();
                 toast(checked ? "已开启：下一句起按角色换音色" : "已关闭：回到单音色");
@@ -541,7 +558,13 @@ public class MainActivity extends Activity {
         roleBox = ui.col();
         mc.addView(roleBox, topGap(8));
         mc.addView(ui.btn("＋ 加一个音色", true, new View.OnClickListener() {
-            public void onClick(View v) { pickForBind = true; fetchVoicesAnd(null); }
+            public void onClick(View v) {
+                sheetOrig = null;          // 新的一条，跟表里已有的无关
+                sheetVoice = null;
+                bindCarry = null;
+                pickForBind = true;
+                fetchVoicesAnd(null);
+            }
         }), topGap(8));
         renderVoiceTable();
         mc.addView(ui.btn("复制引导提示词（丢给酒馆）", false, new View.OnClickListener() {
@@ -746,8 +769,7 @@ public class MainActivity extends Activity {
     }
 
     private int dialogTheme() {
-        return p.light ? android.R.style.Theme_Material_Light_Dialog_Alert
-                : android.R.style.Theme_Material_Dialog_Alert;
+        return p.light ? R.style.AppDialog_Light : R.style.AppDialog;
     }
 
     private void pickTheme() {
@@ -1951,6 +1973,7 @@ public class MainActivity extends Activity {
     }
 
     private void syncInputs() {
+        syncing = true;                      // 这一轮是"程序往控件里填值"，别当用户操作
         for (EditText e : fields()) {
             Object tag = e.getTag();
             if (!(tag instanceof String)) continue;
@@ -1985,6 +2008,7 @@ public class MainActivity extends Activity {
         if (themeBtn != null) themeBtn.setText("主题：" + Palette.THEME_NAMES[Prefs.themeMode(this)] + "  ▸");
         renderPresets();
         renderPreview();
+        syncing = false;
     }
 
     // ══════════════════════════ 断句预览 ══════════════════════════
@@ -2076,71 +2100,6 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    /**
-     * 一条音色。原值里本来就带标签，比如 TTS Server 的
-     * {@code 成熟姐姐 女|青年|成熟_1792090364247} —— 名字、性别、年龄、风格都在这儿。
-     * 解析出来，界面才能按男女分组、把标签单独摆一行。
-     */
-    static final class VoiceItem {
-        boolean header;
-        String name = "";      // 显示名（不含标签）
-        String raw = "";       // 存下去的原值
-        String gender = "未标注";
-        String age = "";
-        String style = "";
-        String tagLine = "";
-        String srcId = "";     // 这个音色是谁家的（引擎 id）
-        String srcLabel = "";  // 引擎显示名
-        String usedBy = "";    // 已经绑了哪些角色（一个音色可以绑多个）
-
-        VoiceItem() { }
-        VoiceItem(String display, String value) { name = display; raw = value; tagLine = display; }
-
-        static VoiceItem parse(String value) {
-            VoiceItem it = new VoiceItem();
-            it.raw = value == null ? "" : value;
-            String v = it.raw;
-            int sep = v.indexOf(EngineStore.SEP);          // 豆包：名字‖style_id
-            if (sep > 0) v = v.substring(0, sep);
-            v = v.replaceAll("_\\d+$", "").trim();
-            it.name = v;
-            int sp = v.lastIndexOf(' ');
-            if (sp > 0) {
-                String tail = v.substring(sp + 1);
-                if (tail.contains("|")) {
-                    it.name = v.substring(0, sp);
-                    String[] parts = tail.split("\\|");
-                    List<String> rest = new ArrayList<String>();
-                    for (String p : parts) {
-                        String t = p.trim();
-                        if (t.length() == 0) continue;
-                        if ("女".equals(t) || "女性".equals(t) || "女声".equals(t)) {
-                            it.gender = "女声";
-                        } else if ("男".equals(t) || "男性".equals(t) || "男声".equals(t)) {
-                            it.gender = "男声";
-                        } else if ("少年".equals(t) || "青年".equals(t) || "中年".equals(t)
-                                || "老年".equals(t) || "儿童".equals(t) || "少女".equals(t)) {
-                            it.age = t;
-                        } else {
-                            rest.add(t);
-                        }
-                    }
-                    StringBuilder sb = new StringBuilder();
-                    if (!"未标注".equals(it.gender)) sb.append(it.gender);
-                    if (it.age.length() > 0) { if (sb.length() > 0) sb.append(" · "); sb.append(it.age); }
-                    for (String t : rest) { if (sb.length() > 0) sb.append(" · "); sb.append(t); }
-                    it.tagLine = sb.toString();
-                    it.style = rest.isEmpty() ? "" : rest.get(0);
-                    return it;
-                }
-            }
-            it.tagLine = "";
-            return it;
-        }
-
-        @Override public String toString() { return name; }
-    }
-
     private void pickVoice() { fetchVoicesAnd(null); }
 
     /** 拉音色列表；role 为 null = 选全局音色，否则选某个角色的音色。 */
@@ -2184,65 +2143,117 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /**
+     * 音色库 —— 它的 ModalBottomSheet + 左边的来源栏 + 可搜的 RecyclerView。
+     * 点一行 = 选它（或给它填名字）；行尾 🎧 = 只试听。
+     */
     private void showVoiceDialog(final List<VoiceItem> all, final List<EngineStore.SourceGroup> groups,
                                  final String role) {
         if (all.isEmpty()) { toast("没拿到音色"); return; }
         String who = role == null ? "选择音色" : "给「" + role + "」选音色";
 
         LinearLayout box = ui.col();
-        box.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(6));
+        box.setPadding(ui.dp(16), 0, ui.dp(16), ui.dp(10));
+
+        TextView title = new TextView(this);
+        title.setText(who);
+        title.setTextColor(p.textPrimary);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title);
+        TextView count = new TextView(this);
+        count.setText("共 " + all.size() + " 个");
+        count.setTextColor(p.textMuted);
+        count.setTextSize(12);
+        count.setPadding(0, ui.dp(2), 0, ui.dp(10));
+        box.addView(count);
 
         final EditText filter = new EditText(this);
         filter.setHint("搜：名字 / 女声 / 青年 / 温柔…");
         filter.setSingleLine(true);
         filter.setTextColor(p.textPrimary);
         filter.setHintTextColor(p.textMuted);
+        filter.setTextSize(14);
         filter.setBackground(ui.round(p.cardHi, p.border, 12));
         filter.setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10));
         box.addView(filter);
 
         final LinearLayout chips = ui.row();
-        chips.setPadding(0, ui.dp(10), 0, ui.dp(4));
+        chips.setPadding(0, ui.dp(10), 0, ui.dp(2));
         box.addView(chips);
 
-        final ListView lv = new ListView(this);
-        final ArrayAdapter<VoiceItem> ad = voiceAdapter();
-        lv.setAdapter(ad);
+        final RecyclerView rv = new RecyclerView(this);
+        rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setClipToPadding(false);
+        rv.setPadding(0, ui.dp(2), 0, ui.dp(6));
 
         // ── 左边那一栏：按来源引擎分类 ──
         final LinearLayout rail = ui.col();
-        rail.setPadding(0, ui.dp(6), ui.dp(8), 0);
+        rail.setPadding(0, ui.dp(4), ui.dp(8), 0);
         ScrollView railScroll = new ScrollView(this);
         railScroll.addView(rail);
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ui.dp(104),
                 ViewGroup.LayoutParams.MATCH_PARENT);
         railScroll.setLayoutParams(rlp);
 
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(
-                0, ui.dp(400), 1f);
-        vlp.topMargin = ui.dp(6);
-        lv.setLayoutParams(vlp);
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(0, ui.dp(430), 1f);
+        vlp.topMargin = ui.dp(4);
+        rv.setLayoutParams(vlp);
 
         LinearLayout mid = ui.row();
         mid.addView(railScroll);
-        mid.addView(lv);
+        mid.addView(rv);
         box.addView(mid);
 
         final String[] kw = new String[]{""};
         final String[] gen = new String[]{""};
         final String[] src = new String[]{""};
+        final List<VoiceItem> rows = new ArrayList<VoiceItem>();
+
+        final com.google.android.material.bottomsheet.BottomSheetDialog dlg =
+                new com.google.android.material.bottomsheet.BottomSheetDialog(this, sheetTheme());
+        dlg.setContentView(box);
+
+        VoiceListAdapter ad = new VoiceListAdapter(p, ui, new VoiceListAdapter.Listener() {
+            public void onPick(VoiceItem vi) {
+                if (vi == null || vi.header) return;
+                if (pickForBind) {
+                    pickForBind = false;
+                    dlg.dismiss();
+                    String carry = bindCarry;
+                    bindCarry = null;
+                    if (sheetOrig == null) {
+                        newBinding(vi.raw);         // ＋ 加一个音色：先选音色 → 紧接着填名字
+                    } else {
+                        sheetVoice = vi.raw;        // 换音色：还是这一条，只是换个嗓子
+                        showBindSheet(carry);
+                    }
+                    return;
+                }
+                Prefs.setVoiceEngine(MainActivity.this, vi.raw,
+                        EngineStore.ownerOfVoice(MainActivity.this, vi.raw));
+                Prefs.setVoice(MainActivity.this, vi.raw);
+                dlg.dismiss();
+                audition(vi.raw);
+                refresh();
+            }
+
+            public void onAudition(VoiceItem vi) {
+                if (vi == null || vi.header) return;
+                auditionQuiet(vi.raw);
+            }
+        });
+        rv.setAdapter(ad);
+
         final Runnable refill = new Runnable() {
-            public void run() { fillVoiceList(ad, all, kw[0], gen[0], src[0]); }
+            public void run() {
+                fillVoiceList(rows, all, kw[0], gen[0], src[0]);
+                ad.submitList(new ArrayList<VoiceItem>(rows));
+            }
         };
         renderGenderChips(chips, gen, refill);
-        renderSourceRail(rail, groups, all, src, refill, lv);
+        renderSourceRail(rail, groups, all, src, refill, rv);
         refill.run();
-
-        final AlertDialog dlg = new AlertDialog.Builder(this, dialogTheme())
-                .setTitle(who + "（共 " + all.size() + " 个）")
-                .setView(box)
-                .setNegativeButton("取消", null)
-                .create();
 
         filter.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
@@ -2253,26 +2264,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-            public void onItemClick(AdapterView<?> par, View v, int pos, long id) {
-                VoiceItem vi = (VoiceItem) par.getItemAtPosition(pos);
-                if (vi == null || vi.header) return;
-                if (pickForBind) {
-                    pickForBind = false;
-                    dlg.dismiss();
-                    bindingSheet(vi.raw);       // 先选音色 → 紧接着填名字
-                    return;
-                } else {
-                    Prefs.setVoiceEngine(MainActivity.this, vi.raw,
-                            EngineStore.ownerOfVoice(MainActivity.this, vi.raw));
-                    Prefs.setVoice(MainActivity.this, vi.raw);
-                    audition(vi.raw);
-                    refresh();
-                }
-                dlg.dismiss();
-            }
-        });
         dlg.show();
+        try {   // 起来就是全展开（不是先露出一个 peek）
+            dlg.getBehavior().setSkipCollapsed(true);
+            dlg.getBehavior().setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
+        } catch (Throwable ignored) { }
     }
 
     /** 角色名怎么切：换行 / 顿号 / 逗号 / 分号 / 竖线，都能当分隔符（空格不算，名字里可能有空格）。 */
@@ -2300,7 +2296,7 @@ public class MainActivity extends Activity {
     /** 左侧音色来源栏：「全部」+ 每条引擎一行（带数量）。点一下只留那一家的音色。 */
     private void renderSourceRail(final LinearLayout rail, final List<EngineStore.SourceGroup> groups,
                                   final List<VoiceItem> all, final String[] src,
-                                  final Runnable refill, final ListView lv) {
+                                  final Runnable refill, final RecyclerView rv) {
         rail.removeAllViews();
         List<String[]> items = new ArrayList<String[]>();
         items.add(new String[]{"", "全部 " + all.size()});
@@ -2313,9 +2309,9 @@ public class MainActivity extends Activity {
             TextView c = ui.chip(it[1], on, new View.OnClickListener() {
                 public void onClick(View v) {
                     src[0] = it[0];
-                    renderSourceRail(rail, groups, all, src, refill, lv);
+                    renderSourceRail(rail, groups, all, src, refill, rv);
                     refill.run();
-                    if (lv.getAdapter() != null) lv.setSelection(0);
+                    rv.scrollToPosition(0);
                 }
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -2335,59 +2331,10 @@ public class MainActivity extends Activity {
         return s.length() > 6 ? s.substring(0, 6) : s;
     }
 
-    /** 两行式列表：分组标题加粗变色，音色行「名字 / 标签」+ 共用它的角色。 */
-    private ArrayAdapter<VoiceItem> voiceAdapter() {
-        return new ArrayAdapter<VoiceItem>(this, 0, new ArrayList<VoiceItem>()) {
-            @Override public View getView(int pos, View cv, ViewGroup parent) {
-                VoiceItem it = getItem(pos);
-                if (it == null) return new TextView(MainActivity.this);
-                if (it.header) {
-                    LinearLayout row = ui.col();
-                    row.setPadding(ui.dp(4), ui.dp(11), ui.dp(4), ui.dp(11));
-                    TextView h = new TextView(MainActivity.this);
-                    h.setText(it.name);
-                    h.setTextColor(p.accent);
-                    h.setTextSize(12);
-                    h.setTypeface(Typeface.DEFAULT_BOLD);
-                    row.addView(h);
-                    return row;
-                }
-
-                LinearLayout row = ui.row();
-                row.setPadding(ui.dp(4), ui.dp(9), ui.dp(4), ui.dp(9));
-                row.setGravity(Gravity.CENTER_VERTICAL);
-
-                LinearLayout text = ui.col();
-                TextView n = new TextView(MainActivity.this);
-                n.setText(it.name);
-                n.setTextColor(p.textPrimary);
-                n.setTextSize(15);
-                text.addView(n);
-                String sub = it.tagLine;
-                // 一个音色可以绑多个角色：这里直接写出来（点一下是"再加一个角色用它"）
-                if (it.usedBy.length() > 0) {
-                    sub = (sub.length() > 0 ? sub + "  ·  " : "") + "已用于 " + it.usedBy;
-                } else if (it.srcLabel.length() > 0) {
-                    sub = (sub.length() > 0 ? sub + "  ·  " : "") + it.srcLabel;
-                }
-                if (sub.length() > 0) {
-                    TextView t = new TextView(MainActivity.this);
-                    t.setText(sub);
-                    t.setTextColor(it.usedBy.length() > 0 ? p.accent : p.textMuted);
-                    t.setTextSize(11.5f);
-                    t.setPadding(0, ui.dp(3), 0, 0);
-                    text.addView(t);
-                }
-                row.addView(text, ui.weightGap(1f, 0));
-                return row;
-            }
-        };
-    }
-
     /** 按性别分组填表：女声 / 男声 / 未标注，各带一条分组标题；可再按来源引擎过滤。 */
-    private void fillVoiceList(ArrayAdapter<VoiceItem> ad, List<VoiceItem> all,
+    private void fillVoiceList(List<VoiceItem> out, List<VoiceItem> all,
                                String kw, String gen, String srcId) {
-        ad.clear();
+        out.clear();
         String[] secs = {"女声", "男声", "未标注"};
         for (String sec : secs) {
             if (gen.length() > 0 && !gen.equals(sec)) continue;
@@ -2400,13 +2347,9 @@ public class MainActivity extends Activity {
                 hits.add(v);
             }
             if (hits.isEmpty()) continue;
-            VoiceItem h = new VoiceItem();
-            h.header = true;
-            h.name = sec + "  ·  " + hits.size() + " 个";
-            ad.add(h);
-            for (VoiceItem v : hits) ad.add(v);
+            out.add(VoiceItem.header(sec + "  ·  " + hits.size() + " 个"));
+            out.addAll(hits);
         }
-        ad.notifyDataSetChanged();
     }
 
     private void renderGenderChips(final LinearLayout chips, final String[] gen,
@@ -2463,7 +2406,7 @@ public class MainActivity extends Activity {
 
             TextView play = ui.chip("🎧", false, null);
             play.setOnClickListener(new View.OnClickListener() {
-                public void onClick(View x) { audition(voice); }
+                public void onClick(View x) { auditionQuiet(voice); }
             });
             LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -2480,19 +2423,43 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 这个音色绑给谁：名字一栏 + 试听（它的 QuickEditBottomSheet + AuditionTextField）。 */
-    private void bindingSheet(final String voice) {
-        String cur = Prefs.voiceNamesMap(this).get(voice);
+    /** 编辑表里已有的这一条：姓名一栏 + 试听（它的 QuickEditBottomSheet + AuditionTextField）。 */
+    private void bindingSheet(String voice) {
+        sheetOrig = voice;                    // 原来是记在这个音色名下的
+        sheetVoice = voice;
+        showBindSheet(null);
+    }
+
+    /** 新加一条：名字先空着，音色是刚从库里选的。 */
+    private void newBinding(String voice) {
+        sheetOrig = null;
+        sheetVoice = voice;
+        showBindSheet(null);
+    }
+
+    /**
+     * 画「音色 → 名称」这一条的编辑面板。
+     *
+     * @param carry 换音色途中被关掉时手里已经填好的名字；null = 用这个音色已存的
+     */
+    private void showBindSheet(String carry) {
+        final String voice = sheetVoice;
+        String cur = (carry != null) ? carry : Prefs.voiceNamesMap(this).get(voice);
         LinearLayout box = ui.col();
         box.setPadding(ui.dp(18), ui.dp(2), ui.dp(18), ui.dp(22));
 
+        LinearLayout head = ui.row();
+        head.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = new TextView(this);
         title.setText(TtsEngine.shortVoice(voice));
         title.setTextColor(p.textPrimary);
         title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(title);
-
+        head.addView(title, ui.weightGap(1f, 8));
+        head.addView(ui.chip("🎧", false, new View.OnClickListener() {
+            public void onClick(View x) { auditionQuiet(voice); }
+        }));
+        box.addView(head);
 
         final EditText names = new EditText(this);
         names.setHint("名称：杨幂|刘亦菲");
@@ -2502,34 +2469,43 @@ public class MainActivity extends Activity {
         names.setHintTextColor(p.textMuted);
         names.setBackground(ui.round(p.cardHi, p.border, 12));
         names.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12));
-        box.addView(names);
-
-        box.addView(auditionField(voice), ui.topGap(12));
+        box.addView(names, ui.topGap(10));
 
         LinearLayout rr = ui.row();
         rr.addView(ui.btn("保存", true, new View.OnClickListener() {
             public void onClick(View v) {
-                String raw = names.getText().toString();
-                java.util.List<String> list = MultiVoice.splitNames(raw);
+                java.util.List<String> list = MultiVoice.splitNames(names.getText().toString());
                 if (list.isEmpty()) { toast("名字不能空着"); return; }
                 StringBuilder sb = new StringBuilder();
                 for (String n : list) { if (sb.length() > 0) sb.append('|'); sb.append(n); }
-                Prefs.putVoiceNames(MainActivity.this, voice, sb.toString());
+                if (sheetOrig != null && !sheetOrig.equals(voice)) {
+                    // 换过音色：这一条整体搬过去，旧音色那条不留
+                    Prefs.moveVoiceNames(MainActivity.this, sheetOrig, voice, sb.toString());
+                } else {
+                    Prefs.putVoiceNames(MainActivity.this, voice, sb.toString());
+                }
                 Prefs.setVoiceEngine(MainActivity.this, voice,
                         EngineStore.ownerOfVoice(MainActivity.this, voice));
+                sheetOrig = voice;
                 renderVoiceTable();
                 dismissSheet();
                 toast("「" + TtsEngine.shortVoice(voice) + "」→ " + sb);
             }
         }), ui.weightGap(1f, 8));
         rr.addView(ui.btn("换个音色", false, new View.OnClickListener() {
-            public void onClick(View v) { dismissSheet(); pickForBind = true; fetchVoicesAnd(null); }
+            public void onClick(View v) {
+                bindCarry = names.getText().toString();   // 刚填的名字带着走
+                dismissSheet();
+                pickForBind = true;
+                fetchVoicesAnd(null);
+            }
         }), ui.weightGap(1f, 0));
         box.addView(rr, ui.topGap(12));
 
         box.addView(ui.btn("删掉这一条", false, new View.OnClickListener() {
             public void onClick(View v) {
-                Prefs.putVoiceNames(MainActivity.this, voice, null);
+                Prefs.putVoiceNames(MainActivity.this,
+                        sheetOrig != null ? sheetOrig : voice, null);
                 renderVoiceTable();
                 dismissSheet();
             }
@@ -2539,41 +2515,37 @@ public class MainActivity extends Activity {
     }
 
     /** 底部升起来的面板（它那边是 ModalBottomSheet；我们没引 material，就自己摆一个 Dialog）。 */
+    /**
+     * 底部抽屉的壳 —— 用的是 Material 的 BottomSheetDialog（它的 ModalBottomSheet 同一套）：
+     * 遮罩、从下滑走、拖动、圆角、导航栏避让全是库里的，不用自己摆假把手。
+     */
     private Dialog sheet(View content) {
-        Dialog d = new Dialog(this);
-        d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        com.google.android.material.bottomsheet.BottomSheetDialog d =
+                new com.google.android.material.bottomsheet.BottomSheetDialog(this, sheetTheme());
 
         LinearLayout wrap = ui.col();
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(p.card);
-        float r = ui.dp(20);
-        bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
-        bg.setStroke(Math.max(1, ui.dp(1)), p.border);
-        wrap.setBackground(bg);
-
-        View handle = new View(this);              // 顶部那根小横条（它的 drag handle）
-        GradientDrawable hb = new GradientDrawable();
-        hb.setColor(p.border);
-        hb.setCornerRadius(ui.dp(2));
-        handle.setBackground(hb);
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui.dp(36), ui.dp(4));
+        ImageView handle = new ImageView(this);          // 库里那根真的 drag handle
+        handle.setImageResource(R.drawable.mtrl_bottomsheet_drag_handle);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui.dp(32), ui.dp(4));
         hlp.gravity = Gravity.CENTER_HORIZONTAL;
         hlp.topMargin = ui.dp(10);
+        hlp.bottomMargin = ui.dp(2);
         wrap.addView(handle, hlp);
 
         ScrollView sc = new ScrollView(this);
+        sc.setClipToPadding(false);
         sc.addView(content);
         wrap.addView(sc);
 
         d.setContentView(wrap);
-        Window w = d.getWindow();
-        if (w != null) {
-            w.setBackgroundDrawable(new ColorDrawable(0x00000000));
-            w.setGravity(Gravity.BOTTOM);
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        }
         d.show();
+        try { d.getBehavior().setSkipCollapsed(true); } catch (Throwable ignored) { }
         return d;
+    }
+
+    /** 底部抽屉那层的主题（深色 / 浅色各一套，都在 styles.xml 里）。 */
+    private int sheetTheme() {
+        return p.light ? R.style.AppBottomSheet_Light : R.style.AppBottomSheet;
     }
 
     /** 它的 AppSpinner：上面小字标签，下面当前值，右边一个 ▾，整行可点。 */
@@ -2633,10 +2605,25 @@ public class MainActivity extends Activity {
 
         TextView ear = ui.chip("🎧", false, null);
         ear.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View x) { audition(voice); }
+            public void onClick(View x) { auditionQuiet(voice); }
         });
         row.addView(ear);
         return row;
+    }
+
+    /**
+     * 直接出声、不弹窗 —— 列表里那个 🎧 用它：挑音色的时候弹窗会挡住列表。
+     * 再点一次就是换这一句重念（先掐掉上一句）。
+     */
+    private void auditionQuiet(final String voice) {
+        final Speaker spk = RelayService.speakerOrNull();
+        if (spk == null) { toast("朗读没在跑（先打开中转）"); return; }
+        String use = voice;
+        if (use == null || use.length() == 0) use = Prefs.voice(this);
+        if (use == null || use.length() == 0) { toast("还没选音色"); return; }
+        Prefs.setVoiceEngine(this, use, EngineStore.ownerOfVoice(this, use));
+        spk.interrupt();
+        spk.feed(Prefs.tryText(this), use);
     }
 
     /** 试听（它的 AuditionDialog）：弹个小窗，出声后自己关掉。 */

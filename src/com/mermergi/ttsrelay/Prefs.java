@@ -196,6 +196,52 @@ public final class Prefs {
         setVoiceNames(c, sb.toString());
     }
 
+    /**
+     * <b>换音色</b>：把 {@code from} 这一条搬到 {@code to} 名下 —— 位置不变、旧的删掉。
+     * 目标音色本来就有一条名字的，两边的名字合起来（一个音色可以有好几个名字）。
+     * 这就是"换音色不应该新开一条"的那一步。
+     */
+    public static void moveVoiceNames(Context c, String from, String to, String names) {
+        if (from == null || to == null) return;
+        from = from.trim(); to = to.trim();
+        if (from.length() == 0 || to.length() == 0) return;
+        java.util.LinkedHashMap<String, String> m = voiceNamesMap(c);
+        if (from.equals(to)) { putVoiceNames(c, to, names); return; }
+        String carried = (names == null) ? m.get(from) : names.trim();
+        if (carried == null) carried = m.get(from);
+        if (carried == null) carried = "";
+        if (m.containsKey(to)) carried = mergeNames(carried, m.get(to));   // 目标已经绑了名字 → 合起来，别丢
+
+        java.util.LinkedHashMap<String, String> out = new java.util.LinkedHashMap<String, String>();
+        boolean moved = false;
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            String k = e.getKey();
+            if (k.equals(to)) continue;                    // 已经并进去了
+            if (k.equals(from)) { out.put(to, carried); moved = true; }
+            else out.put(k, e.getValue());
+        }
+        if (!moved) out.put(to, carried);
+        putAll(c, out);
+    }
+
+    private static String mergeNames(String a, String b) {
+        java.util.LinkedHashMap<String, Boolean> seen = new java.util.LinkedHashMap<String, Boolean>();
+        for (String s : MultiVoice.splitNames(a)) seen.put(s, Boolean.TRUE);
+        for (String s : MultiVoice.splitNames(b)) seen.put(s, Boolean.TRUE);
+        StringBuilder sb = new StringBuilder();
+        for (String s : seen.keySet()) { if (sb.length() > 0) sb.append('|'); sb.append(s); }
+        return sb.toString();
+    }
+
+    private static void putAll(Context c, java.util.LinkedHashMap<String, String> m) {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(e.getKey()).append('\t').append(e.getValue());
+        }
+        setVoiceNames(c, sb.toString());
+    }
+
     public static java.util.LinkedHashMap<String, String> voiceTableMap(Context c) {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
         String raw = voiceTable(c);
