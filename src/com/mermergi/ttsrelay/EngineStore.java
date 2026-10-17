@@ -832,9 +832,7 @@ public final class EngineStore {
         TtsEngine e = engineForVoice(c, voice);
         TtsEngine.Say say = new TtsEngine.Say();
         say.voice = voice == null ? "" : voice;
-        say.rate = num(Prefs.rate(c), 1f);
-        say.pitch = num(Prefs.pitch(c), 1f);
-        say.volume = Prefs.volume(c);
+        applyAudioParams(c, say, voice);
         if (e instanceof JsTtsEngine) {
             ((JsTtsEngine) e).synthTo(c, text, say, sink);
             return;
@@ -848,10 +846,29 @@ public final class EngineStore {
         TtsEngine e = engineForVoice(c, voice);
         TtsEngine.Say say = new TtsEngine.Say();
         say.voice = voice == null ? "" : voice;
+        applyAudioParams(c, say, voice);
+        return e.synth(c, text, say);
+    }
+
+    /**
+     * 语速 / 音量 / 音高：先看这个音色所属引擎自己有没有单独设（插件页那三个滑杆），
+     * 没设就跟随全局。照 TTS Server 的 model：{@code speed=0} 就是「跟随」。
+     */
+    public static void applyAudioParams(Context c, TtsEngine.Say say, String voice) {
         say.rate = num(Prefs.rate(c), 1f);
         say.pitch = num(Prefs.pitch(c), 1f);
         say.volume = Prefs.volume(c);
-        return e.synth(c, text, say);
+        try {
+            String owner = ownerOfVoice(c, voice);
+            Item it = owner == null ? null : get(c, owner);
+            if (it == null) return;
+            float sp = num(it.s("speed", ""), 0f);
+            float vo = num(it.s("vol", ""), 0f);
+            float pi = num(it.s("pitch_", ""), 0f);
+            if (sp > 0f) say.rate = sp;
+            if (vo > 0f) say.volume = vo;
+            if (pi > 0f) say.pitch = pi;
+        } catch (Throwable ignored) { }
     }
 
     private static float num(String s, float def) {

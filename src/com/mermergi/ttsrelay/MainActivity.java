@@ -1432,19 +1432,25 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * 「插件界面」：把插件自己在 {@code onLoadUI} 里画的那一坨原样显示出来。
+     * 「插件 TTS」：照 TTS Server 那个编辑页的<b>加载逻辑</b>搭的，页面不认识任何插件：
      *
-     * 这就是 TTS Server 那个编辑页的做法 —— 它没有为某个插件写死表单，
-     * 页面上那些下拉/输入框/滑杆都是<强>插件自己的代码</strong>建出来的
-     * （JSpinner / JTextInput / JSeekBar）。我们这边插件宿主已经把界面建好了
-     * （PluginBridge.uiContainer），只需要找个地方摆出来。
+     * <ol>
+     *   <li>显示名称 / 试听文本 —— 通用字段</li>
+     *   <li>语言 ← {@code engine.getLocales()}（问插件的）</li>
+     *   <li>声音 ← {@code engine.getVoices(locale)}（换语言就重问）</li>
+     *   <li><b>插件自己那块界面</b> ← {@code engine.onLoadData()} + {@code engine.onLoadUI(context, 容器)}，
+     *       插件往容器里塞什么就显示什么（JSpinner / JTextInput / JSeekBar）</li>
+     *   <li>语速 / 音量 / 音高 —— 这个引擎自己的，0 = 跟随全局</li>
+     * </ol>
+     *
+     * 换声音之后要调 {@code onVoiceChanged(locale, voice)}，插件会把它自己那坨控件跟着更新。
      */
     private void pluginSheet(final EngineStore.Item it) {
         if (!EngineStore.KIND_JS.equals(it.kind) && it.s("src", "").trim().length() == 0) {
             toast("这个引擎没有插件界面");
             return;
         }
-        LinearLayout box = ui.col();
+        final LinearLayout box = ui.col();
         box.setBackground(ui.sheetBg());
         box.setPadding(ui.dp(16), 0, ui.dp(16), ui.dp(16));
 
@@ -1455,40 +1461,228 @@ public class MainActivity extends Activity {
         hlp.topMargin = ui.dp(10);
         box.addView(handle, hlp);
 
-        TextView title = new TextView(this);
-        title.setText(it.label == null || it.label.length() == 0 ? "插件界面" : it.label);
-        title.setTextColor(p.textPrimary);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(title, ui.topGap(10));
+        final EditText nameBox = ui.field(null, it.label == null ? "" : it.label, InputType.TYPE_CLASS_TEXT);
+        nameBox.setHint("显示名称");
+        box.addView(nameBox, ui.topGap(12));
 
+        final EditText tryBox = ui.field(null, Prefs.tryText(this), InputType.TYPE_CLASS_TEXT);
+        tryBox.setHint("试听文本");
+        final String[] curVoice = new String[]{it.s("voice", "")};
+        LinearLayout tr = ui.row();
+        tr.setGravity(Gravity.CENTER_VERTICAL);
+        tr.addView(tryBox, ui.weightGap(1f, 8));
+        tr.addView(ui.chip("🎧", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                String t = tryBox.getText().toString().trim();
+                if (t.length() == 0) return;
+                Prefs.setTryText(MainActivity.this, t);
+                Speaker spk = RelayService.speakerOrNull();
+                if (spk == null) { toast("朗读没在跑"); return; }
+                spk.interrupt();
+                spk.feed(t, TtsEngine.shortVoice(curVoice[0]));
+            }
+        }));
+        box.addView(tr, ui.topGap(10));
+
+        // ── 语言 / 声音：选项都是问插件要的 ──
+        final TextView langVal = new TextView(this);
+        final TextView voiceVal = new TextView(this);
+        final String[] lang = new String[]{it.s("lang", "zh-CN")};
+        langVal.setText(lang[0]);
+        voiceVal.setText(TtsEngine.shortVoice(curVoice[0]));
+        final LinearLayout langRow = kvRow("语言", langVal);
+        final LinearLayout voiceRow = kvRow("声音", voiceVal);
+        box.addView(langRow, ui.topGap(10));
+        box.addView(voiceRow, ui.topGap(8));
+
+        // ── 插件自己画的界面挂这儿 ──
         final LinearLayout host = ui.col();
-        ScrollView sc = new ScrollView(this);
-        sc.setClipToPadding(false);
-        sc.addView(host);
-        box.addView(sc, ui.topGap(10));
+        box.addView(host, ui.topGap(10));
+
+        // ── 这个引擎自己的语速 / 音量 / 音高 ──
+        box.addView(paramSlider("语速", "speed", it), ui.topGap(6));
+        box.addView(paramSlider("音量", "vol", it));
+        box.addView(paramSlider("音高", "pitch_", it));
+
+        box.addView(ui.btn("保存", true, new View.OnClickListener() {
+            public void onClick(View v) {
+                String nm = nameBox.getText().toString().trim();
+                it.label = nm.length() == 0 ? "插件 TTS" : nm;
+                it.put("lang", lang[0]);
+                it.put("voice", curVoice[0]);
+                EngineStore.put(MainActivity.this, it);
+                JsTtsEngine.clearVoices();
+                renderEngines();
+                dismissSheet();
+            }
+        }), ui.topGap(16));
 
         roleSheet = sheet(box);
 
-        // 起插件要 eval 整个脚本，慢 —— 别卡界面
+        // 起插件慢（要 eval 整个脚本），后台跑完再填
         new Thread(new Runnable() {
             public void run() {
-                final android.view.View v = JsTtsEngine.pluginUi(MainActivity.this, it);
+                final com.mermergi.ttsrelay.js.PluginBridge h =
+                        JsTtsEngine.sharedBridge(MainActivity.this, it);
+                if (h == null) return;
+                final java.util.LinkedHashMap<String, String> locs;
+                final java.util.List<String[]> vs;
+                try {
+                    locs = new java.util.LinkedHashMap<String, String>(h.locales());
+                    vs = h.voices(lang[0]);
+                } catch (Throwable t) {
+                    return;
+                }
                 runOnUiThread(new Runnable() {
                     public void run() {
-                        if (v == null) { toast("插件没画界面，或者没跑起来"); return; }
+                        bindLangRow(langRow, locs, lang, langVal, voiceRow, voiceVal, curVoice, h, it);
+                        bindVoiceRow(voiceRow, vs, curVoice, voiceVal, lang, h, it);
                         try {
-                            android.view.ViewGroup parent = (android.view.ViewGroup) v.getParent();
-                            if (parent != null) parent.removeView(v);   // 之前挂过就先摘下来
+                            android.view.View v = h.getUiContainer();
+                            if (v != null) {
+                                android.view.ViewGroup par = (android.view.ViewGroup) v.getParent();
+                                if (par != null) par.removeView(v);
+                                host.removeAllViews();
+                                host.addView(v, new LinearLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT));
+                            }
                         } catch (Throwable ignored) { }
-                        host.removeAllViews();
-                        host.addView(v, new LinearLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.WRAP_CONTENT));
                     }
                 });
             }
         }).start();
+    }
+
+    /** 语言下拉：选项来自插件 getLocales()；换语言要重新问一遍声音列表。 */
+    private void bindLangRow(final LinearLayout row, final java.util.LinkedHashMap<String, String> locs,
+                             final String[] lang, final TextView langVal,
+                             final LinearLayout voiceRow, final TextView voiceVal,
+                             final String[] curVoice, final com.mermergi.ttsrelay.js.PluginBridge h,
+                             final EngineStore.Item it) {
+        if (locs.isEmpty()) return;
+        row.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                final String[] codes = locs.keySet().toArray(new String[0]);
+                String[] names = locs.values().toArray(new String[0]);
+                int cur = 0;
+                for (int i = 0; i < codes.length; i++) if (codes[i].equals(lang[0])) cur = i;
+                ChoiceSheet.show(MainActivity.this, ui, p, sheetTheme(), "语言", null,
+                        names, null, cur, new ChoiceSheet.OnPick() {
+                            public void onPick(int i) {
+                                lang[0] = codes[i];
+                                langVal.setText(locs.get(codes[i]));
+                                new Thread(new Runnable() {
+                                    public void run() {
+                                        final java.util.List<String[]> nv;
+                                        try { nv = h.voices(lang[0]); } catch (Throwable t) { return; }
+                                        runOnUiThread(new Runnable() {
+                                            public void run() {
+                                                bindVoiceRow(voiceRow, nv, curVoice, voiceVal, lang, h, it);
+                                                if (!nv.isEmpty()) {
+                                                    curVoice[0] = nv.get(0)[1];
+                                                    voiceVal.setText(nv.get(0)[0]);
+                                                }
+                                            }
+                                        });
+                                    }
+                                }).start();
+                            }
+                        });
+            }
+        });
+    }
+
+    /** 声音下拉：选项来自插件 getVoices(locale)；选完通知插件换声音。 */
+    private void bindVoiceRow(final LinearLayout row, final java.util.List<String[]> vs,
+                              final String[] curVoice, final TextView voiceVal,
+                              final String[] lang, final com.mermergi.ttsrelay.js.PluginBridge h,
+                              final EngineStore.Item it) {
+        if (vs == null || vs.isEmpty()) return;
+        row.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                String[] names = new String[vs.size()];
+                int cur = 0;
+                for (int i = 0; i < vs.size(); i++) {
+                    names[i] = vs.get(i)[0];
+                    if (vs.get(i)[1].equals(curVoice[0])) cur = i;
+                }
+                ChoiceSheet.show(MainActivity.this, ui, p, sheetTheme(), "声音", null,
+                        names, null, cur, new ChoiceSheet.OnPick() {
+                            public void onPick(int i) {
+                                curVoice[0] = vs.get(i)[1];
+                                voiceVal.setText(vs.get(i)[0]);
+                                try { h.onVoiceChanged(lang[0], curVoice[0]); } catch (Throwable ignored) { }
+                            }
+                        });
+            }
+        });
+    }
+
+    /** 一行「名字 ▸ 值」（插件页里的下拉）。 */
+    private LinearLayout kvRow(String label, TextView val) {
+        LinearLayout row = ui.row();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(ui.dp(14), ui.dp(12), ui.dp(12), ui.dp(12));
+        row.setBackground(ui.pressable(p.cardHi, p.ripple, 12, p.border));
+        row.setClickable(true);
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextColor(p.textMuted);
+        l.setTextSize(12.5f);
+        row.addView(l);
+        val.setTextSize(14);
+        val.setTextColor(p.textPrimary);
+        val.setPadding(ui.dp(12), 0, 0, 0);
+        val.setSingleLine(true);
+        val.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(val, ui.weight(1f));
+        TextView arrow = new TextView(this);
+        arrow.setText("▾");
+        arrow.setTextColor(p.textSecondary);
+        arrow.setTextSize(14);
+        row.addView(arrow);
+        return row;
+    }
+
+    /** 这个引擎自己的语速/音量/音高（0 = 跟随全局，照 TTS Server 的 model）。 */
+    private LinearLayout paramSlider(final String label, final String key, final EngineStore.Item it) {
+        LinearLayout box = ui.col();
+        box.setPadding(0, ui.dp(8), 0, 0);
+        LinearLayout head = ui.row();
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextColor(p.textSecondary);
+        l.setTextSize(12.5f);
+        head.addView(l, ui.weight(1f));
+        final TextView val = new TextView(this);
+        val.setTextColor(p.accent);
+        val.setTextSize(12.5f);
+        head.addView(val);
+        box.addView(head);
+
+        final SeekBar bar = new SeekBar(this);
+        bar.setMax(300);
+        float cur = 0f;
+        try { cur = Float.parseFloat(it.s(key, "")); } catch (Throwable ignored) { }
+        final int init = Math.round(cur * 100f);
+        bar.setProgress(init);
+        val.setText(init == 0 ? "跟随全局" : String.format(Locale.US, "%.2f", init / 100f));
+        ui.tint(bar);
+        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar b, int prog, boolean fromUser) {
+                if (!fromUser) return;
+                val.setText(prog == 0 ? "跟随全局" : String.format(Locale.US, "%.2f", prog / 100f));
+            }
+            public void onStartTrackingTouch(SeekBar b) { }
+            public void onStopTrackingTouch(SeekBar b) {
+                int prog = b.getProgress();
+                it.put(key, prog == 0 ? "" : String.format(Locale.US, "%.2f", prog / 100f));
+            }
+        });
+        box.addView(bar);
+        return box;
     }
 
     private void addEngine() {

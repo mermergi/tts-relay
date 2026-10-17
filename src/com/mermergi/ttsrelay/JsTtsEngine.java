@@ -156,6 +156,15 @@ public final class JsTtsEngine implements TtsEngine {
      * @return 插件画的容器；插件没有界面 / 起不来就 null
      */
     public static android.view.View pluginUi(Context c, EngineStore.Item item) {
+        PluginBridge h = sharedBridge(c, item);
+        return h == null ? null : h.getUiContainer();
+    }
+
+    /**
+     * 这个引擎<b>共用的那个宿主</b>（合成和界面同一个）：界面上换语言/声音之后直接对
+     * 同一个宿主 {@code onVoiceChanged}，插件自己那坨控件就跟着变。
+     */
+    public static PluginBridge sharedBridge(Context c, EngineStore.Item item) {
         if (c == null || item == null) return null;
         String key = item.id + "|" + item.s("src", "").hashCode();
         try {
@@ -164,9 +173,9 @@ public final class JsTtsEngine implements TtsEngine {
                 h = openFor(c, item, item.s("lang", "zh-CN"), item.s("voice", ""));
                 HOSTS.put(key, h);
             }
-            return h.getUiContainer();
+            return h;
         } catch (Throwable t) {
-            LogBus.error("打开插件界面失败：" + t.getMessage());
+            LogBus.error("打开插件宿主失败：" + t.getMessage());
             return null;
         }
     }
