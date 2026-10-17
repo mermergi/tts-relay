@@ -76,5 +76,12 @@
             android:name=".PluginEditorActivity"
             android:exported="false"
             android:label="插件编辑器" />
+        <!-- 编辑插件 TTS：内容和 TTS Server 那个页面同一套加载逻辑，字段全问插件要 -->
+        <activity
+            android:name=".PluginTtsActivity"
+            android:exported="false"
+            android:label="编辑插件 TTS"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

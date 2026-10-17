@@ -1407,7 +1407,7 @@ public class MainActivity extends Activity {
                         } else if (which == 2) {
                             openPluginEditor(it, true);
                         } else if (which == 3) {
-                            pluginSheet(it);
+                            openVoiceEditor(TtsEngine.shortVoice(it.s("voice", "")));
                         } else if (which == 4) {
                             exportEngineConfig(it);
                         } else if (which == 5) {
@@ -2809,13 +2809,30 @@ public class MainActivity extends Activity {
             row.addView(play, plp);
 
             row.addView(ui.chip("编辑", false, new View.OnClickListener() {
-                public void onClick(View x) { bindingSheet(e.getKey()); }
+                public void onClick(View x) { openVoiceEditor(e.getKey()); }
             }));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = ui.dp(6);
             roleBox.addView(row, lp);
         }
+    }
+
+    /**
+     * 点「编辑」：这条音色属于哪个插件引擎，就开那个插件的整页（TTS Server 那种「编辑插件 TTS」）。
+     * 系统语音 / HTTP 这些没有插件的引擎，还是用原来的小抽屉。
+     */
+    private void openVoiceEditor(String voice) {
+        String owner = EngineStore.ownerOfVoice(this, voice);
+        EngineStore.Item eng = owner == null ? null : EngineStore.get(this, owner);
+        boolean hasPlugin = eng != null
+                && (EngineStore.KIND_JS.equals(eng.kind) || eng.s("src", "").trim().length() > 0);
+        if (!hasPlugin) { bindingSheet(voice); return; }
+        Intent i = new Intent(this, PluginTtsActivity.class);
+        i.putExtra(PluginTtsActivity.EXTRA_ID, eng.id);
+        i.putExtra(PluginTtsActivity.EXTRA_VOICE, voice);
+        i.putExtra(PluginTtsActivity.EXTRA_NAMES, Prefs.voiceNamesMap(this).get(voice));
+        try { startActivity(i); } catch (Throwable t) { toast("打不开：" + t.getMessage()); }
     }
 
     /** 编辑表里已有的这一条：姓名一栏 + 试听（它的 QuickEditBottomSheet + AuditionTextField）。 */
