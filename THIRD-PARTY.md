@@ -18,13 +18,16 @@
 | [TTS Server 插件运行时](https://github.com/jing332/tts-server-android)（`kt/ttsrv/`） | MIT | 源码原样搬入，改动逐处写在文件注释里 |
 | [sora-editor](https://github.com/Rosemoe/sora-editor) 0.23.5 | **LGPL-2.1** | 未修改、作为独立库链接；可替换为同版本或更新版本 |
 | [Mozilla Rhino](https://github.com/mozilla/rhino) 1.8.0 | MPL-2.0 | |
-| AndroidX（annotation / collection / room-common / lifecycle / core / activity / fragment / savedstate / versionedparcelable） | Apache-2.0 | |
+| [Material Components for Android](https://github.com/material-components/material-components-android) 1.12.0 | Apache-2.0 | 底部抽屉 / 弹窗 / 卡片 |
+| AndroidX（annotation / collection / room-common / lifecycle / core / core-ktx / activity / fragment / savedstate / versionedparcelable / appcompat / recyclerview / cardview / coordinatorlayout / drawerlayout / dynamicanimation / transition / vectordrawable / cursoradapter / customview / loader / viewpager / viewpager2 / constraintlayout） | Apache-2.0 | 界面与插件宿主共用 |
 | OkHttp / Okio | Apache-2.0 | |
 | KotlinX Coroutines / Serialization | Apache-2.0 | |
 | kotlin-logging / kotlin-result | Apache-2.0 / MIT | |
 | [Drake Net](https://github.com/liangjingkanji/Net) | Apache-2.0 | 插件的 http 走它 |
 | hutool / commons-text / commons-lang3 / snakeyaml-engine / gson | MPL-2.0 / Apache-2.0 | |
 | joni / jcodings / TextMate 语法与主题（`assets/textmate/`） | MIT | 代码高亮 |
+| [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict) 衍生的性别词表（`assets/gender_words.txt`） | **CC BY-SA 4.0** | 判断音色名男女；衍生数据同样以 CC BY-SA 4.0 提供 |
+| [Chinese-Names-Corpus](https://github.com/wainshine/Chinese-Names-Corpus) 统计出的字级性别表（`assets/gender_table.txt`） | Apache-2.0 | 同上，兜底用 |
 
 ## 再分发时
 

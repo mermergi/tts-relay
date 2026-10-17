@@ -196,6 +196,129 @@ public final class Prefs {
         setVoiceNames(c, sb.toString());
     }
 
+    // ───────────────────────── 念不念用户自己发的话 ─────────────────────────
+
+    /** 念不念用户自己发出去的那条消息（默认不念）。 */
+    public static boolean speakUser(Context c) { return sp(c).getBoolean("speak_user", false); }
+    public static void setSpeakUser(Context c, boolean v) {
+        sp(c).edit().putBoolean("speak_user", v).apply();
+    }
+
+    /** 用户消息用哪个音色；空 = 跟全局音色走。 */
+    public static String userVoice(Context c) { return sp(c).getString("user_voice", ""); }
+    public static void setUserVoice(Context c, String v) {
+        sp(c).edit().putString("user_voice", v == null ? "" : v).apply();
+    }
+
+    // ───────────────────────── 自定义上游 ─────────────────────────
+
+    /**
+     * 自己加的「常用上游」：一行一条 {@code 名称<TAB>地址}。
+     * 内置的那几个（DeepSeek / OpenAI / 硅基流动 / 本地 Ollama）在 MainActivity.PRESETS。
+     */
+    public static String upstreamCustomRaw(Context c) {
+        return sp(c).getString("upstream_custom", "");
+    }
+    public static void setUpstreamCustomRaw(Context c, String v) {
+        sp(c).edit().putString("upstream_custom", v == null ? "" : v).apply();
+    }
+
+    /** 自定义上游列表：{名称, 地址}。 */
+    public static java.util.List<String[]> upstreamCustom(Context c) {
+        java.util.List<String[]> out = new java.util.ArrayList<String[]>();
+        String raw = upstreamCustomRaw(c);
+        if (raw == null) return out;
+        for (String line : raw.split("\n")) {
+            String s = line.trim();
+            if (s.length() == 0) continue;
+            int tab = s.indexOf('\t');
+            if (tab <= 0) continue;
+            String n = s.substring(0, tab).trim();
+            String u = s.substring(tab + 1).trim();
+            if (n.length() > 0 && u.length() > 0) out.add(new String[]{n, u});
+        }
+        return out;
+    }
+
+    /** 加一条（地址一样的就改名，不重复堆）。 */
+    public static void putUpstreamCustom(Context c, String name, String url) {
+        if (name == null || url == null) return;
+        name = name.trim();
+        url = url.trim();
+        if (name.length() == 0 || url.length() == 0) return;
+        java.util.List<String[]> list = upstreamCustom(c);
+        StringBuilder sb = new StringBuilder();
+        boolean hit = false;
+        for (String[] e : list) {
+            String n = e[1].equals(url) ? name : e[0];
+            if (e[1].equals(url)) hit = true;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(n).append('\t').append(e[1]);
+        }
+        if (!hit) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(name).append('\t').append(url);
+        }
+        setUpstreamCustomRaw(c, sb.toString());
+    }
+
+    public static void removeUpstreamCustom(Context c, String url) {
+        if (url == null) return;
+        StringBuilder sb = new StringBuilder();
+        for (String[] e : upstreamCustom(c)) {
+            if (e[1].equals(url.trim())) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(e[0]).append('\t').append(e[1]);
+        }
+        setUpstreamCustomRaw(c, sb.toString());
+    }
+
+    /**
+     * <b>换音色</b>：把 {@code from} 这一条搬到 {@code to} 名下 —— 位置不变、旧的删掉。
+     * 目标音色本来就有一条名字的，两边的名字合起来（一个音色可以有好几个名字）。
+     * 这就是"换音色不应该新开一条"的那一步。
+     */
+    public static void moveVoiceNames(Context c, String from, String to, String names) {
+        if (from == null || to == null) return;
+        from = from.trim(); to = to.trim();
+        if (from.length() == 0 || to.length() == 0) return;
+        java.util.LinkedHashMap<String, String> m = voiceNamesMap(c);
+        if (from.equals(to)) { putVoiceNames(c, to, names); return; }
+        String carried = (names == null) ? m.get(from) : names.trim();
+        if (carried == null) carried = m.get(from);
+        if (carried == null) carried = "";
+        if (m.containsKey(to)) carried = mergeNames(carried, m.get(to));   // 目标已经绑了名字 → 合起来，别丢
+
+        java.util.LinkedHashMap<String, String> out = new java.util.LinkedHashMap<String, String>();
+        boolean moved = false;
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            String k = e.getKey();
+            if (k.equals(to)) continue;                    // 已经并进去了
+            if (k.equals(from)) { out.put(to, carried); moved = true; }
+            else out.put(k, e.getValue());
+        }
+        if (!moved) out.put(to, carried);
+        putAll(c, out);
+    }
+
+    private static String mergeNames(String a, String b) {
+        java.util.LinkedHashMap<String, Boolean> seen = new java.util.LinkedHashMap<String, Boolean>();
+        for (String s : MultiVoice.splitNames(a)) seen.put(s, Boolean.TRUE);
+        for (String s : MultiVoice.splitNames(b)) seen.put(s, Boolean.TRUE);
+        StringBuilder sb = new StringBuilder();
+        for (String s : seen.keySet()) { if (sb.length() > 0) sb.append('|'); sb.append(s); }
+        return sb.toString();
+    }
+
+    private static void putAll(Context c, java.util.LinkedHashMap<String, String> m) {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(e.getKey()).append('\t').append(e.getValue());
+        }
+        setVoiceNames(c, sb.toString());
+    }
+
     public static java.util.LinkedHashMap<String, String> voiceTableMap(Context c) {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
         String raw = voiceTable(c);

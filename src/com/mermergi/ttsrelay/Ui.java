@@ -59,6 +59,15 @@ public final class Ui {
         return new RippleDrawable(ColorStateList.valueOf(rippleColor), shape, mask);
     }
 
+    /** 底部抽屉那层的底：只有上面两个角是圆的（和 Material 的 ModalBottomSheet 一样）。 */
+    public GradientDrawable sheetBg() {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(p.card);
+        float r = dp(22);
+        g.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+        return g;
+    }
+
     // ───────────────────────── 布局 ─────────────────────────
 
     public LinearLayout col() {

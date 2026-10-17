@@ -270,7 +270,7 @@ public final class EngineStore {
      * <ol>
      *   <li>手工填的 voices</li>
      *   <li>voices_url 拉的 JSON 目录（路径 / 字段名都是配置项）</li>
-     *   <li>引擎自己知道的（系统 TTS 的语音列表、插件自己报的推荐列表）</li>
+     *   <li>引擎自己知道的（系统 TTS 的语音列表、插件给的推荐列表）</li>
      * </ol>
      */
     public static List<String> fetchVoices(Context c, Item it) {
@@ -337,7 +337,7 @@ public final class EngineStore {
                     }
                 }
                 // 插件声明的默认值（vars 里的 value）—— TTS Server 会拿它预填。
-                // 不填的话插件读 userVars 拿到 undefined，请求就会缺字段（服务端就是这么拒的）。
+                // 不填的话插件读 userVars 拿到 undefined，请求就会缺字段（插件会直接报 app key not found）。
                 String dv = def == null ? "" : nn(def.get("value"));
                 if (dv.length() > 0 && it.s(key, "").trim().length() == 0) it.put(key, dv);
                 try { defs.put(key, d); } catch (Throwable ignored) { }
@@ -352,7 +352,7 @@ public final class EngineStore {
                     it.put("ua", "mobile");
                 }
             }
-            // 插件没声明"要登录"的变量 → 原来那套 Cookie 登录键清干净，
+            // 插件没声明"要登录"的变量 → 之前那套 Cookie 登录键清干净，
             // 否则 JS 引擎编辑框里会冒出一个 Cookie 框，让人把 API 密钥填错地方
             if (loginKey.length() == 0) {
                 it.cfg.remove("login_key");
@@ -384,7 +384,7 @@ public final class EngineStore {
     /**
      * 把「别处已经抓过的登录信息」搬到插件声明的变量上。
      *
-     * 典型场景：以前用的是原生那套引擎（Cookie 存在 cfg 里），现在改用插件版 ——
+     * 典型场景：以前用的是原生引擎（Cookie 存在 cfg 里），现在改用插件版 ——
      * 插件声明的变量也叫 cookie，没必要让用户再登一次。任何一个引擎里存着的
      * cookie / cred 都能当来源，谁先有值用谁。
      */
@@ -756,7 +756,7 @@ public final class EngineStore {
         try { JsTtsEngine.abandonHosts(); } catch (Throwable ignored) { }
     }
 
-    /** 音色库按「来源引擎」分组 —— 选音色时左侧那一栏就是它（各家插件 / HTTP 模板 / 系统语音）。 */
+    /** 音色库按「来源引擎」分组 —— 选音色时左侧那一栏就是它（原神 / 火山…）。 */
     public static final class SourceGroup {
         public final String id;
         public final String label;
@@ -815,9 +815,7 @@ public final class EngineStore {
         TtsEngine e = engineForVoice(c, voice);
         TtsEngine.Say say = new TtsEngine.Say();
         say.voice = voice == null ? "" : voice;
-        say.rate = num(Prefs.rate(c), 1f);
-        say.pitch = num(Prefs.pitch(c), 1f);
-        say.volume = Prefs.volume(c);
+        applyAudioParams(c, say, voice);
         if (e instanceof JsTtsEngine) {
             ((JsTtsEngine) e).synthTo(c, text, say, sink);
             return;
@@ -831,10 +829,29 @@ public final class EngineStore {
         TtsEngine e = engineForVoice(c, voice);
         TtsEngine.Say say = new TtsEngine.Say();
         say.voice = voice == null ? "" : voice;
+        applyAudioParams(c, say, voice);
+        return e.synth(c, text, say);
+    }
+
+    /**
+     * 语速 / 音量 / 音高：先看这个音色所属引擎自己有没有单独设（插件页那三个滑杆），
+     * 没设就跟随全局。照 TTS Server 的 model：{@code speed=0} 就是「跟随」。
+     */
+    public static void applyAudioParams(Context c, TtsEngine.Say say, String voice) {
         say.rate = num(Prefs.rate(c), 1f);
         say.pitch = num(Prefs.pitch(c), 1f);
         say.volume = Prefs.volume(c);
-        return e.synth(c, text, say);
+        try {
+            String owner = ownerOfVoice(c, voice);
+            Item it = owner == null ? null : get(c, owner);
+            if (it == null) return;
+            float sp = num(it.s("speed", ""), 0f);
+            float vo = num(it.s("vol", ""), 0f);
+            float pi = num(it.s("pitch_", ""), 0f);
+            if (sp > 0f) say.rate = sp;
+            if (vo > 0f) say.volume = vo;
+            if (pi > 0f) say.pitch = pi;
+        } catch (Throwable ignored) { }
     }
 
     private static float num(String s, float def) {

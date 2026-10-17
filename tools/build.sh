@@ -45,17 +45,27 @@ rm -rf "$out"; mkdir -p "$gen" "$obj" "$dex"
 echo "==> aapt2 compile"; stamp "aapt2 compile"
 aapt2 compile --dir "$root/res" -o "$out/res.zip"
 
-# 带资源的三方库（.aar，比如 sora-editor 代码编辑器）：res 也得编进来，
-# 并用 --extra-packages 给它生成自己的 R 类，否则运行时 NoClassDefFoundError: io.github.rosemoe.sora.R
+# 带资源的三方库（.aar：sora-editor 编辑器、Material Components、AppCompat…）：
+# res 也得编进来，并用 --extra-packages 给每个库生成自己的 R 类，
+# 否则运行时 NoClassDefFoundError: io.github.rosemoe.sora.R / com.google.android.material.R
 aar_res=""
 extra_pkgs=()
+aar_libs=()
 if compgen -G "$root/tools/lib/aar/*.aar" >/dev/null 2>&1; then
-    rm -rf "$out/aarres"; mkdir -p "$out/aarres"
+    rm -rf "$out/aarres" "$out/aarclass"; mkdir -p "$out/aarres" "$out/aarclass"
     for a in "$root"/tools/lib/aar/*.aar; do
+        base=$(basename "$a" .aar)
         pkg=$(unzip -p "$a" AndroidManifest.xml 2>/dev/null | strings | grep -oE 'package="[^"]+"' | head -1 | sed 's/package="//;s/"$//')
         [ -n "$pkg" ] && extra_pkgs+=("$pkg")
-        unzip -o -q "$a" 'res/*' -d "$out/aarres" || true
+        # 每个 aar 的 classes.jar 各放一个目录 —— 共用一个名字会互相覆盖，
+        # 结果只有最后一个库的类能编进来
+        if unzip -o -q "$a" classes.jar -d "$out/aarclass/$base" 2>/dev/null; then
+            [ -f "$out/aarclass/$base/classes.jar" ] && aar_libs+=("$out/aarclass/$base/classes.jar")
+        fi
     done
+    # 同名 values/values.xml 要按 AGP 的规矩合并 children，
+    # 直接解压到一个目录会互相覆盖（丢 string/style，aapt2 随后满屏 warning）
+    python3 "$here/merge-aar-res.py" "$root/tools/lib/aar" "$out/aarres"
     if [ -d "$out/aarres/res" ]; then
         aapt2 compile --dir "$out/aarres/res" -o "$out/aarres.zip" 2>/dev/null && aar_res="$out/aarres.zip"
         echo "    aar 资源：${extra_pkgs[*]:-无}"
@@ -81,10 +91,10 @@ libs=()
 for j in "$root"/tools/lib/*.jar; do
     [ -f "$j" ] && libs+=("$j")
 done
-# AAR 里的 classes.jar 也当依赖（sora-editor 这种只发 .aar 的）
-for a in "$root"/tools/lib/aar/*.aar; do
-    [ -f "$a" ] || continue
-    unzip -o -q "$a" classes.jar -d "$out/aarclass" && libs+=("$out/aarclass/classes.jar")
+# AAR 里的 classes.jar 也当依赖（sora-editor / Material / AppCompat 这种只发 .aar 的）
+# —— 上面遍历 aar 时已经各自解到独立目录了，见 aar_libs
+for j in "${aar_libs[@]:-}"; do
+    [ -n "$j" ] && libs+=("$j")
 done
 if [ "${#libs[@]}" -eq 0 ]; then
     echo "tools/lib/ 里一个 jar 都没有 —— 先跑：bash tools/fetch-deps.sh" >&2
