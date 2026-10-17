@@ -43,7 +43,7 @@ final class VoiceItem {
         VoiceItem it = new VoiceItem();
         it.raw = value == null ? "" : value;
         String v = it.raw;
-        int sep = v.indexOf(EngineStore.SEP);          // 豆包：名字‖style_id
+        int sep = v.indexOf(EngineStore.SEP);          // 官方链路：名字‖style_id
         if (sep > 0) v = v.substring(0, sep);
         v = v.replaceAll("_\\d+$", "").trim();
         it.name = v;
@@ -78,7 +78,7 @@ final class VoiceItem {
             }
         }
         // ③ 标签块里没有、名字里也没写 → 从整条原值里认通用标记：
-        //    豆包官方链路那半边是 style_id，像 zh_male_rap / zh_female_zhubo，
+        //    官方链路那半边是 style_id，像 zh_male_rap / zh_female_zhubo，
         //    插件那边也可能给 female / male。认出一次，所有引擎都适用。
         if ("未标注".equals(it.gender)) {
             String g = genderOf(it.raw);

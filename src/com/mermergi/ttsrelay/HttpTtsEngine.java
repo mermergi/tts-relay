@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * 万能的 HTTP 引擎：地址是模板，占位符一填就完事。
- * 只要对方给回音频字节，豆包/Edge/Azure/OpenAI/你自己的服务，全都能接。
+ * 只要对方给回音频字节，Edge/Azure/OpenAI/你自己的服务，全都能接。
  *
  * <pre>
  *   {{text}} {{voice}} {{rate}} {{pitch}} {{volume}} {{format}}

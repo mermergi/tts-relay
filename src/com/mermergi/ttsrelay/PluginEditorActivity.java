@@ -432,7 +432,7 @@ public final class PluginEditorActivity extends Activity {
                         i.putExtra(LoginActivity.EXTRA_BINDING,
                                 defs.optJSONObject(k) == null ? "user_input"
                                         : defs.optJSONObject(k).optString("binding", "user_input"));
-                        i.putExtra(LoginActivity.EXTRA_TITLE, "登录完点右上角「抓取」");
+                        i.putExtra(LoginActivity.EXTRA_TITLE, "登录完点右上角那个按钮");
                         try { startActivityForResult(i, REQ_LOGIN); }
                         catch (Throwable t) { toast("打不开登录页：" + t.getMessage()); }
                     }

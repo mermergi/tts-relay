@@ -27,8 +27,8 @@ public final class EngineImport {
         if (looksLikeJsPlugin(t)) {
             List<EngineStore.Item> one = new ArrayList<EngineStore.Item>();
             // 插件就是插件：一律交给 TTS Server 那套运行时真跑（见 kt/ + PluginBridge）。
-            // 以前豆包那两条链路走原生实现，现在按"引擎文件就是 .js"的原样处理 ——
-            // 豆包插件（含 WebSocket/protobuf）用的全局我们都已经搬进来了。
+            // 引擎文件就是 .js：按插件原样处理 —— 插件用的那些全局
+            // （Buffer / WebSocket / http / fs / ttsrv.* …）我们都已经搬进来了。
             one.add(jsEngine(t));
             return one;
         }
@@ -77,7 +77,7 @@ public final class EngineImport {
     /**
      * TTS Server 的 JS 插件 → 我们的一种引擎。
      *
-     * 源码原样存进配置，跑的时候交给 TTS Server 自己的运行时（见 kt/ + PluginHost）—— 同一个引擎，
+     * 源码原样存进配置，跑的时候交给 TTS Server 自己的运行时（见 kt/app/PluginBridge.kt）—— 同一个引擎，
      * 所以插件里的 {@code getAudio} / {@code getVoices} 是什么样，这儿就是什么样，没有"搬不过来"。
      * 顺手把它声明的变量键、变量名、登录方式读出来填好。
      */
@@ -111,64 +111,11 @@ public final class EngineImport {
         return t.contains("ttsrv.userVars") || t.contains("getAudioV2")
                 || (t.contains("EditorJS") && t.contains("PluginJS"));
     }
-
-    /**
-     * JS 插件 → 我们的原生引擎。
-     *
-     * 本 App 跑不了 JS（没有 JS 引擎，也不想塞一个），但插件的配置是<b>声明式</b>的：
-     * 名字、vars（带 label/hint/value 默认值）、以及它连哪个服务。读这几样就够了 ——
-     * 豆包那两条链路我们已经原生实现了，所以豆包插件能真正导进来用。
-     */
+    /** 老配置里那种"原生引擎"的 kind 已经没有了：遇到就按 .js 插件重新导一遍。 */
     private static EngineStore.Item parseJsPlugin(String t) {
-        boolean vg = t.contains("frontier-audio-web-ws.doubao.com");
-        boolean sam = t.contains("ws-samantha.doubao.com");
-        if (!vg && !sam) {
-            throw new IllegalArgumentException(
-                    "这是 TTS Server 的 JS 插件，本 App 不能运行 JS。\n\n"
-                            + "能原生认出的是豆包那两条链路（老 samantha / 新 VoiceGenie）。"
-                            + "这个插件指向别的服务 —— 请改用「HTTP 接口」引擎，把地址填进去。");
-        }
-        EngineStore.Item it = new EngineStore.Item();
-        it.kind = EngineStore.KIND_DOUBAO;
-        it.id = EngineStore.newId(EngineStore.KIND_DOUBAO);
-        String name = rx(t, "\"name\"\\s*:\\s*\"([^\"]+)\"");
-        it.label = name.length() > 0 ? name : "豆包（导入的插件）";
-        it.put("link", sam && !vg ? "samantha" : "voicegenie");
-        it.put("format", "mp3");
-        it.put("sample_rate", 24000);
-        it.put("speaker", "");
-        it.put("prefix", "");
-        it.put("cookie", "");
-        it.put("login_url", "https://www.doubao.com/chat");
-        it.put("binding", "cookies");
-        it.put("ua", "mobile");
-
-        // 老链路在 URL 上写死了格式，跟着它走
-        String f = rx(t, "format=([a-z0-9_]+)");
-        if (sam && !vg && f.length() > 0) it.put("samantha_format", f);
-
-        String vars = varsBlock(t);
-        if (vars.length() == 0) vars = t;      // 兜底：整份文件里找，反正 key:{...} 这种形状只有配置项才有
-        {
-            copyVar(it, vars, "cookie", "cookie");
-            copyVar(it, vars, "prefix", "prefix");
-            copyVar(it, vars, "appkey", "appkey");
-            copyVar(it, vars, "default_speaker", "speaker");
-            copyVar(it, vars, "speaker", "speaker");
-            copyVar(it, vars, "format", "format");
-            copyVar(it, vars, "sample_rate", "sample_rate");
-            copyVar(it, vars, "gap_ms", "gap_ms");
-            // 插件声明的登录方式：loginUrl / binding / ua —— 和 TTS Server 用的是同一组字段
-            copyVarProp(it, vars, "cookie", "loginUrl", "login_url");
-            copyVarProp(it, vars, "cookie", "binding", "binding");
-            copyVarProp(it, vars, "cookie", "ua", "ua");
-        }
-        String ak = rx(t, "userVars\\['appkey'\\]\\s*\\|\\|\\s*\"([^\"]+)\"");
-        if (ak.length() > 0) it.put("appkey", ak);
-        return it;
+        return jsEngine(t);
     }
 
-    /** 抠出插件里 vars:{...} 那一段（大括号配对）。 */
     private static String varsBlock(String t) {
         int at = t.indexOf("vars");
         if (at < 0) return "";

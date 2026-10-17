@@ -53,7 +53,7 @@ public final class JsTtsEngine implements TtsEngine {
      * （`TtsManager` 按 `PluginTtsSource.getKey()` 缓存，一个插件一个 provider）。
      *
      * 以前我按 locale|voice 各缓存一个宿主 → 分角色朗读时**每个音色一条 WebSocket、
-     * 一份 Rhino 运行时**：豆包那种长连接插件三条里就有一条会吊死（真机实测第 4 句卡 30 秒）。
+     * 一份 Rhino 运行时**：长连接插件三条里就有一条会吊死（真机实测第 4 句卡 30 秒）。
      * 音色不用建宿主区分 —— 每次合成前都会 `setSource` + `onVoiceChanged`（照它们的做法）。
      */
     private String hostKey(String locale, String voice) {
@@ -237,7 +237,7 @@ public final class JsTtsEngine implements TtsEngine {
                 if (NOT_VARS.contains(key) || vars.containsKey(key)) continue;
                 String val = it.s(key, "");
                 // 关键：空字符串别当"用户填了空"传给插件 —— 那会让它的默认值失效
-                // （豆包插件就是这么被坑的：appkey 传了空串 → 服务端说 app key not found）
+                // （插件就是这么被坑的：appkey 传了空串 → 服务端说 app key not found）
                 if (val.trim().length() > 0) vars.put(key, val);
             }
         }

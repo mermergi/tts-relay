@@ -72,9 +72,9 @@ public final class LoginActivity extends Activity {
             String bd = in.getStringExtra(EXTRA_BINDING);
             if (bd != null && bd.trim().length() > 0) binding = bd.trim();
         }
-        if (loginUrl.length() == 0) loginUrl = "https://www.doubao.com/chat";
+        if (loginUrl.length() == 0) loginUrl = "about:blank";
         String title = in == null ? null : in.getStringExtra(EXTRA_TITLE);
-        if (title == null || title.length() == 0) title = "登录后点「抓取」";
+        if (title == null || title.length() == 0) title = "登录后点右边的按钮取回";
 
         String uaArg = in == null ? "" : in.getStringExtra(EXTRA_UA);
         String userAgent;
@@ -99,7 +99,7 @@ public final class LoginActivity extends Activity {
         t.setTextSize(12);
         t.setPadding(ui.dp(10), 0, ui.dp(10), 0);
         bar.addView(t, ui.weight(1f));
-        bar.addView(ui.btn("抓取", true, new View.OnClickListener() {
+        bar.addView(ui.btn("取回", true, new View.OnClickListener() {
             public void onClick(View v) { grab(); }
         }));
         root.addView(bar, new LinearLayout.LayoutParams(
@@ -146,7 +146,7 @@ public final class LoginActivity extends Activity {
             if (ck != null) for (String x : ck.split(";")) if (x.trim().length() > 0) n++;
             status.setText(n > 0
                     ? "绑定：" + binding + "  ·  已就绪（" + n + " 条）"
-                    : "绑定：" + binding + "  ·  还没登录 —— 登完再点「抓取」");
+                    : "绑定：" + binding + "  ·  还没登录 —— 登完再点「取回」");
             status.setTextColor(n > 0 ? p.ok : p.textMuted);
         } catch (Throwable ignored) { }
     }
@@ -220,7 +220,7 @@ public final class LoginActivity extends Activity {
         v = v.trim();
         if (v.length() == 0) {
             peek();
-            status.setText("没抓到 —— 先把账号登进去再点「抓取」");
+            status.setText("没取到 —— 先把账号登进去再点「取回」");
             status.setTextColor(p.warn);
             return;
         }

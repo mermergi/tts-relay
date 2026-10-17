@@ -1077,7 +1077,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK) return;
 
-        // 登录抓取回来的是一段字符串，没有文件 Uri ——
+        // 网页登录取回来的是一段字符串，没有文件 Uri ——
         // 千万别拿文件那套 "data.getData()==null 就 return" 的条件把它挡掉（之前就是这么丢的）
         if (req == REQ_PICK_JS) {
             if (res == RESULT_OK && data != null && data.getData() != null && pendingJsPick != null) {
@@ -1104,15 +1104,14 @@ public class MainActivity extends Activity {
         }
         if (req == REQ_LOGIN) {
             String v = data == null ? null : data.getStringExtra(LoginActivity.RESULT_VALUE);
-            if (v == null || v.trim().length() == 0) { toast("没抓到内容，先登录再点抓取"); return; }
+            if (v == null || v.trim().length() == 0) { toast("没取到内容，先登录再点「取回」"); return; }
             EngineStore.Item it = EngineStore.get(this, pendingLoginEngineId);
             if (it == null) { toast("找不到那个引擎了"); return; }
             String val = v.trim();
             it.put(loginTarget(it), val);
             EngineStore.put(this, it);
-            DoubaoEngine.clearVoiceCache();
             renderEngines();
-            LogBus.add("网页登录抓取成功，已写入「" + it.label + "」：" + CookieGrab.summary(val));
+            LogBus.add("网页登录取回成功，已写入「" + it.label + "」：" + CookieGrab.summary(val));
             toast("已写入「" + it.label + "」\n" + CookieGrab.summary(val));
             // 关键：刚才那个编辑框是登录前开的，里面还挂着旧状态（"未设置"）。
             // 不重开的话，用户看到的就是"没写进去"。
@@ -1145,7 +1144,6 @@ public class MainActivity extends Activity {
     }
 
     private static String kindName(String kind) {
-        if (EngineStore.KIND_DOUBAO.equals(kind)) return "豆包 VoiceGenie";
         if (EngineStore.KIND_JS.equals(kind)) return "JS 插件";
         if (EngineStore.KIND_HTTP.equals(kind)) return "HTTP 接口";
         return "系统语音";
@@ -1362,7 +1360,7 @@ public class MainActivity extends Activity {
     }
 
     private void openPluginEditor(final EngineStore.Item it, final boolean openVars) {
-        // 没有插件源码的引擎（系统语音、HTTP 模板、原生豆包）：编辑器只管插件源码，
+        // 没有插件源码的引擎（系统语音、HTTP 模板）：编辑器只管插件源码，
         // 所以这儿给一条「粘源码转成 JS 插件」的路 —— 照 TTS Server：引擎就是插件。
         if (it != null && it.s("src", "").trim().length() == 0
                 && !EngineStore.KIND_JS.equals(it.kind)) {
@@ -1687,10 +1685,9 @@ public class MainActivity extends Activity {
 
     private void addEngine() {
         ChoiceSheet.show(this, ui, p, sheetTheme(), "添加引擎", null,
-                new String[]{"系统语音", "HTTP 接口", "豆包 VoiceGenie", "TTS Server 的 JS 插件"},
+                new String[]{"系统语音", "HTTP 接口", "TTS Server 的 JS 插件"},
                 new String[]{"本地离线，系统装了什么用什么",
                         "任意云服务，自己拼 URL",
-                        "官方链路（需要自己的 cookie）",
                         "TTS Server 那套插件脚本"},
                 -1, new ChoiceSheet.OnPick() {
                     public void onPick(int which) {
@@ -1711,14 +1708,6 @@ public class MainActivity extends Activity {
                             it.put("json_key", "");
                             it.put("voices", "");
                         } else if (which == 2) {
-                            it.kind = EngineStore.KIND_DOUBAO;
-                            it.label = "豆包 VoiceGenie";
-                            it.put("cookie", "");
-                            it.put("appkey", "GOqQpfo1fO7slHv8");
-                            it.put("speaker", "");
-                            it.put("format", "mp3");
-                            it.put("sample_rate", 24000);
-                        } else if (which == 3) {
                             it.kind = EngineStore.KIND_JS;
                             it.label = "JS 插件";
                             it.put("src", "");
@@ -1794,21 +1783,6 @@ public class MainActivity extends Activity {
             spec.add(new String[]{"json_key", "从 JSON 取音频的字段（留空=响应本身就是音频）",
                     it.s("json_key", ""), "single"});
             spec.add(new String[]{"timeout", "超时毫秒", String.valueOf(it.i("timeout", 60000)), "single"});
-        } else if (EngineStore.KIND_DOUBAO.equals(it.kind)) {
-            spec.add(new String[]{"login_url", "登录页地址（点「网页登录」开它）",
-                    it.s("login_url", "https://www.doubao.com/chat"), "single"});
-            spec.add(new String[]{"binding", "绑定什么：cookies / cookies.名字 / locals.键 / sessions.键",
-                    it.s("binding", "cookies"), "single"});
-            spec.add(new String[]{"ua", "登录页 UA：mobile / pc / 自定义", it.s("ua", "mobile"), "single"});
-            spec.add(new String[]{"link", "链路：voicegenie（新，protobuf）/ samantha（老，纯JSON）",
-                    it.s("link", "voicegenie"), "single"});
-            spec.add(new String[]{"appkey", "appkey", it.s("appkey", "GOqQpfo1fO7slHv8"), "single"});
-            spec.add(new String[]{"prefix", "发送前缀（发给引擎前拼在文本前面，可留空）",
-                    it.s("prefix", ""), "single"});
-            spec.add(new String[]{"speaker", "默认音色 style_id（留空自动挑第一个）", it.s("speaker", ""), "single"});
-            spec.add(new String[]{"format", "音频格式 mp3 / wav / ogg_opus", it.s("format", "mp3"), "single"});
-            spec.add(new String[]{"sample_rate", "采样率（mp3 用 24000）",
-                    String.valueOf(it.i("sample_rate", 24000)), "single"});
         } else if (EngineStore.KIND_JS.equals(it.kind)) {
             // 打开编辑框就先从插件源码里把它的变量声明读回来 ——
             // 老引擎（import 那会儿还没读懂 vars 的）也不用重新导入，它的「API密钥」会自己冒出来
@@ -1866,18 +1840,17 @@ public class MainActivity extends Activity {
 
         // Cookie 单独一块：它动辄上千字符，塞进表单里没法看，所以只显示状态
         final String loginKey = loginTarget(it);
-        // 插件引擎只有"真的声明了 loginUrl"才给登录框（豆包引擎本来就走 Cookie）
-        if (EngineStore.KIND_DOUBAO.equals(it.kind)
-                || (loginKey != null && loginKey.length() > 0 && it.cfg.has(loginKey))) {
+        // 引擎只有"真的声明了 loginUrl"才给登录框
+        if (loginKey != null && loginKey.length() > 0 && it.cfg.has(loginKey)) {
             LinearLayout ck = ui.card();
             ck.addView(ui.sectionTitle("Cookie"));
             final TextView st = ui.value("");
-            // 状态跟着数据走：抓完、改完、清完都当场刷，不用关框重进
+            // 状态跟着数据走：取回、改完、清完都当场刷，不用关框重进
             final Runnable refresh = new Runnable() {
                 public void run() {
                     String cur = it.s(loginKey, "");
                     st.setText(cur.length() == 0
-                            ? "未设置 —— 点「网页登录」抓一个，或「查看/修改」自己粘一个"
+                            ? "未设置 —— 点「网页登录」取一个，或「查看/修改」自己粘一个"
                             : CookieGrab.summary(cur));
                     st.setTextColor(cur.length() == 0 ? p.warn : p.ok);
                 }
@@ -1892,11 +1865,11 @@ public class MainActivity extends Activity {
                         pendingLoginEngineId = it.id;
                         Intent i = new Intent(MainActivity.this, LoginActivity.class);
                         i.putExtra(LoginActivity.EXTRA_URL,
-                                it.s("login_url", "https://www.doubao.com/chat"));
+                                it.s("login_url", "about:blank"));
                         i.putExtra(LoginActivity.EXTRA_BINDING, it.s("binding", "cookies"));
                         i.putExtra(LoginActivity.EXTRA_UA, it.s("ua", "mobile"));
                         i.putExtra(LoginActivity.EXTRA_TITLE,
-                                "登录完点右上角「抓取」（绑定：" + it.s("binding", "cookies") + "）");
+                                "登录完点右上角「取回」（绑定：" + it.s("binding", "cookies") + "）");
                         try { startActivityForResult(i, REQ_LOGIN); }
                         catch (Throwable t) { toast("打不开登录页：" + t.getMessage()); }
                     }
@@ -1910,8 +1883,7 @@ public class MainActivity extends Activity {
                 public void onClick(View v) {
                     it.put(loginKey, "");
                     EngineStore.put(MainActivity.this, it);
-                    DoubaoEngine.clearVoiceCache();
-                    refresh.run();
+                            refresh.run();
                     renderEngines();
                     toast("已清空");
                 }
@@ -1973,12 +1945,12 @@ public class MainActivity extends Activity {
      */
     /**
      * 登录抓回来的值写进哪个配置键：JS 插件写它声明的那个变量（和 TTS Server 一样），
-     * 豆包写 cookie，别的写 cred。
+     * 登录拿到的凭证写进哪儿。
      */
     private static String loginTarget(EngineStore.Item it) {
         String k = it.s("login_key", "");
         if (k.length() > 0) return k;
-        return EngineStore.KIND_DOUBAO.equals(it.kind) ? "cookie" : "cred";
+        return "cred";
     }
 
     private void editCookie(final EngineStore.Item it, final Runnable onChange) {
@@ -2017,8 +1989,7 @@ public class MainActivity extends Activity {
                         String v = CookieGrab.tidy(e.getText().toString());
                         it.put(key, v);
                         EngineStore.put(MainActivity.this, it);
-                        DoubaoEngine.clearVoiceCache();
-                        renderEngines();
+                                    renderEngines();
                         if (onChange != null) onChange.run();   // 上面那块状态当场刷新
                         LogBus.add("Cookie 已保存（" + it.label + "）：" + CookieGrab.summary(v));
                         toast(v.length() == 0 ? "已清空" : "已保存（" + v.length() + " 字符）");
@@ -2053,7 +2024,6 @@ public class MainActivity extends Activity {
         if (EngineStore.KIND_JS.equals(it.kind)) EngineStore.syncUserVars(it);
         EngineStore.put(this, it);
         try { com.mermergi.ttsrelay.JsTtsEngine.clearHosts(); } catch (Throwable ignored) { }
-        if (EngineStore.KIND_DOUBAO.equals(it.kind)) DoubaoEngine.clearVoiceCache();
         renderEngines();
     }
 

@@ -339,7 +339,7 @@ public final class HttpServer {
             return;
         }
         if ("/_engine".equals(path)) {
-            // 本地调试：切引擎 / 改某个引擎的配置项。?id=doubao 切过去；?k=cookie&v=xxx 改配置
+            // 本地调试：切引擎 / 改某个引擎的配置项。?id=xxx 切过去；?k=cookie&v=xxx 改配置
             String del = qs.get("del");
             if (del != null && del.trim().length() > 0) {
                 EngineStore.remove(ctx, del.trim());
@@ -359,7 +359,6 @@ public final class HttpServer {
                         it.put(k, v);
                     }
                     EngineStore.put(ctx, it);
-                    if (EngineStore.KIND_DOUBAO.equals(it.kind)) DoubaoEngine.clearVoiceCache();
                 }
             }
             EngineStore.Item cur = EngineStore.get(ctx, EngineStore.activeId(ctx));

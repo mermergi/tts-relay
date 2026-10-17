@@ -8,11 +8,11 @@ import java.util.List;
  * 一个语音引擎：给它文字和参数，它给回音频字节。
  *
  * 这就是从 TTS Server 那儿学来的那套抽象 —— 只不过现在跑在我们自己的进程里：
- * 系统 TTS、HTTP 模板、豆包 VoiceGenie 都是一个 TtsEngine，播放链只认这个接口。
+ * 系统 TTS、HTTP 模板、JS 插件都是一个 TtsEngine，播放链只认这个接口。
  */
 public interface TtsEngine {
 
-    /** 引擎类型：system / http / doubao。 */
+    /** 引擎类型：system / http / js。 */
     String kind();
 
     /** 显示名。 */
@@ -33,7 +33,7 @@ public interface TtsEngine {
         public float rate = 1f;
         public float pitch = 1f;
         public float volume = 1f;
-        /** 语气（豆包的 voice instruction），别的引擎忽略。 */
+        /** 语气（有的插件支持 voice instruction），别的引擎忽略。 */
         public String tone = "";
 
         public Say voice(String v) { voice = v == null ? "" : v; return this; }
@@ -42,7 +42,7 @@ public interface TtsEngine {
     /** 音色名太长时界面要截断 —— 统一在这儿处理。 */
     static String shortVoice(String v) {
         if (v == null) return "";
-        int i = v.indexOf('\u2016');            // 豆包：名字‖style_id
+        int i = v.indexOf('\u2016');            // 插件：名字‖取值
         if (i > 0) v = v.substring(0, i);
         return v.replaceAll("_\\d+$", "");
     }

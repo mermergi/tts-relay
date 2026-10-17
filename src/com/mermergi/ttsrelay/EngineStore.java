@@ -29,13 +29,11 @@ public final class EngineStore {
 
     public static final String KIND_SYSTEM = "system";
     public static final String KIND_HTTP = "http";
-    public static final String KIND_DOUBAO = "doubao";
     /** TTS Server 的 JS 插件 —— 源码存着，用 TTS Server 自己的运行时跑（见 kt/ + PluginHost）。 */
     public static final String KIND_JS = "js";
 
     public static final String ID_SYSTEM = "system";
     public static final String ID_HTTP = "ts-server";
-    public static final String ID_DOUBAO = "doubao";
 
     /** 显示名 与 取值 拼在一起的分隔符（音色名里不会出现）。 */
     public static final String SEP = "\u2016";
@@ -87,16 +85,6 @@ public final class EngineStore {
         sys.put("voices", "");
         list.add(sys);
 
-        Item dou = new Item();
-        dou.id = ID_DOUBAO; dou.kind = KIND_DOUBAO; dou.label = "豆包 VoiceGenie";
-        dou.put("cookie", "");
-        dou.put("appkey", "GOqQpfo1fO7slHv8");
-        dou.put("speaker", "");
-        dou.put("format", "mp3");
-        dou.put("sample_rate", 24000);
-        dou.put("voices", "");
-        list.add(dou);
-
         Item srv = new Item();
         srv.id = ID_HTTP; srv.kind = KIND_HTTP; srv.label = "TTS Server（旧的）";
         srv.put("url", "http://127.0.0.1:1221/api/tts?text={{text}}"
@@ -131,10 +119,6 @@ public final class EngineStore {
                 if (!it.cfg.has("voices_path")) { it.put("voices_path", ""); changed = true; }
                 if (!it.cfg.has("voices_name")) { it.put("voices_name", "name"); changed = true; }
                 if (!it.cfg.has("voices_id")) { it.put("voices_id", "name"); changed = true; }
-            } else if (KIND_DOUBAO.equals(it.kind)) {
-                if (!it.cfg.has("format")) { it.put("format", "mp3"); changed = true; }
-                if (!it.cfg.has("sample_rate")) { it.put("sample_rate", 24000); changed = true; }
-                if (!it.cfg.has("appkey")) { it.put("appkey", "GOqQpfo1fO7slHv8"); changed = true; }
             }
             if (!it.cfg.has("voices")) { it.put("voices", ""); changed = true; }
         }
@@ -275,7 +259,6 @@ public final class EngineStore {
     public static TtsEngine build(Item it) {
         if (it == null) it = new Item();
         if (KIND_HTTP.equals(it.kind)) return new HttpTtsEngine(it);
-        if (KIND_DOUBAO.equals(it.kind)) return new DoubaoEngine(it);
         if (KIND_JS.equals(it.kind)) return new JsTtsEngine(it);
         return new SystemTtsEngine(it);
     }
@@ -287,7 +270,7 @@ public final class EngineStore {
      * <ol>
      *   <li>手工填的 voices</li>
      *   <li>voices_url 拉的 JSON 目录（路径 / 字段名都是配置项）</li>
-     *   <li>引擎自己知道的（系统 TTS 的语音列表、豆包的推荐列表）</li>
+     *   <li>引擎自己知道的（系统 TTS 的语音列表、插件给的推荐列表）</li>
      * </ol>
      */
     public static List<String> fetchVoices(Context c, Item it) {
@@ -354,7 +337,7 @@ public final class EngineStore {
                     }
                 }
                 // 插件声明的默认值（vars 里的 value）—— TTS Server 会拿它预填。
-                // 不填的话插件读 userVars 拿到 undefined，请求就会缺字段（豆包就这么被服务端拒的）。
+                // 不填的话插件读 userVars 拿到 undefined，请求就会缺字段（插件会直接报 app key not found）。
                 String dv = def == null ? "" : nn(def.get("value"));
                 if (dv.length() > 0 && it.s(key, "").trim().length() == 0) it.put(key, dv);
                 try { defs.put(key, d); } catch (Throwable ignored) { }
@@ -369,7 +352,7 @@ public final class EngineStore {
                     it.put("ua", "mobile");
                 }
             }
-            // 插件没声明"要登录"的变量 → 豆包那套 Cookie 登录键清干净，
+            // 插件没声明"要登录"的变量 → 之前那套 Cookie 登录键清干净，
             // 否则 JS 引擎编辑框里会冒出一个 Cookie 框，让人把 API 密钥填错地方
             if (loginKey.length() == 0) {
                 it.cfg.remove("login_key");
@@ -401,7 +384,7 @@ public final class EngineStore {
     /**
      * 把「别处已经抓过的登录信息」搬到插件声明的变量上。
      *
-     * 典型场景：以前用的是原生豆包引擎（Cookie 存在 cfg 里），现在改用插件版 ——
+     * 典型场景：以前用的是原生引擎（Cookie 存在 cfg 里），现在改用插件版 ——
      * 插件声明的变量也叫 cookie，没必要让用户再登一次。任何一个引擎里存着的
      * cookie / cred 都能当来源，谁先有值用谁。
      */
@@ -773,7 +756,7 @@ public final class EngineStore {
         try { JsTtsEngine.abandonHosts(); } catch (Throwable ignored) { }
     }
 
-    /** 音色库按「来源引擎」分组 —— 选音色时左侧那一栏就是它（豆包 / 原神 / 火山…）。 */
+    /** 音色库按「来源引擎」分组 —— 选音色时左侧那一栏就是它（原神 / 火山…）。 */
     public static final class SourceGroup {
         public final String id;
         public final String label;
