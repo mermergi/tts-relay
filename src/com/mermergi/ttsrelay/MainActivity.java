@@ -84,7 +84,10 @@ public class MainActivity extends Activity {
     // ── 设置 ──
     private EditText upstreamField, portField, ttsField, maxChunkField, skipKeyField, smallTokenField;
     private Switch skipSwitch, autoStartSwitch;
-    private Switch mvSwitch;
+    private Switch mvSwitch, speakUserSwitch;
+    private TextView userVoiceView;
+    /** 这次开音色库是给「用户消息」挑音色。 */
+    private boolean pickUserVoice = false;
     private Button modeBtn;
     private LinearLayout roleBox;
     /** 这次开音色库，是为了给新音色填名字（先选音色，再填名字）。 */
@@ -316,6 +319,7 @@ public class MainActivity extends Activity {
         skipKeyField = null; smallTokenField = null;
         skipSwitch = null; autoStartSwitch = null; themeBtn = null;
         mvSwitch = null; modeBtn = null; roleBox = null;
+        speakUserSwitch = null; userVoiceView = null;
         engineBox = null; engineNow = null;
         presetChips.clear(); presetRow = null;
         logView = null;
@@ -561,6 +565,7 @@ public class MainActivity extends Activity {
         mc.addView(roleBox, topGap(8));
         mc.addView(ui.btn("＋ 加一个音色", true, new View.OnClickListener() {
             public void onClick(View v) {
+                pickUserVoice = false;
                 sheetOrig = null;          // 新的一条，跟表里已有的无关
                 sheetVoice = null;
                 bindCarry = null;
@@ -573,6 +578,39 @@ public class MainActivity extends Activity {
             public void onClick(View v) { copy(GAL_PROMPT); }
         }), topGap(8));
         col.addView(mc);
+
+        // ── 朗读用户消息 ──
+        LinearLayout uc = ui.card();
+        uc.addView(ui.sectionTitle("朗读用户消息"));
+        speakUserSwitch = ui.switchBox("念我自己发出去的那条");
+        speakUserSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                if (syncing) return;
+                Prefs.setSpeakUser(MainActivity.this, checked);
+                renderUserVoice();
+            }
+        });
+        uc.addView(speakUserSwitch);
+
+        LinearLayout ur = ui.row();
+        ur.setGravity(Gravity.CENTER_VERTICAL);
+        ur.setPadding(0, ui.dp(8), 0, 0);
+        userVoiceView = new TextView(this);
+        userVoiceView.setTextSize(12.5f);
+        userVoiceView.setTextColor(p.textSecondary);
+        ur.addView(userVoiceView, ui.weightGap(1f, 8));
+        ur.addView(ui.chip("🎧", false, new View.OnClickListener() {
+            public void onClick(View v) { auditionQuiet(userVoiceOf()); }
+        }));
+        ur.addView(ui.chip("选音色", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                pickUserVoice = true;
+                fetchVoicesAnd("用户消息");
+            }
+        }));
+        uc.addView(ur);
+        col.addView(uc);
+        renderUserVoice();
 
         // ── 断句 ──
         LinearLayout pc = ui.card();
@@ -2097,6 +2135,8 @@ public class MainActivity extends Activity {
         if (lanSwitch != null) lanSwitch.setChecked(Prefs.lanAllowed(this));
         if (skipSwitch != null) skipSwitch.setChecked(Prefs.skipSmall(this));
         if (mvSwitch != null) mvSwitch.setChecked(Prefs.mvEnabled(this));
+        if (speakUserSwitch != null) speakUserSwitch.setChecked(Prefs.speakUser(this));
+        renderUserVoice();
         renderVoiceTable();
         renderEngines();          // 只在切页 / 回前台时画，别每秒都画
         if (autoStartSwitch != null) autoStartSwitch.setChecked(Prefs.autoStart(this));
@@ -2191,7 +2231,7 @@ public class MainActivity extends Activity {
                 });
     }
 
-    private void pickVoice() { fetchVoicesAnd(null); }
+    private void pickVoice() { pickUserVoice = false; fetchVoicesAnd(null); }
 
     /** 拉音色列表；role 为 null = 选全局音色，否则选某个角色的音色。 */
     private void fetchVoicesAnd(final String role) {
@@ -2302,6 +2342,14 @@ public class MainActivity extends Activity {
         VoiceListAdapter ad = new VoiceListAdapter(p, ui, new VoiceListAdapter.Listener() {
             public void onPick(VoiceItem vi) {
                 if (vi == null || vi.header) return;
+                if (pickUserVoice) {
+                    pickUserVoice = false;
+                    Prefs.setUserVoice(MainActivity.this, vi.raw);
+                    renderUserVoice();
+                    dlg.dismiss();
+                    auditionQuiet(vi.raw);
+                    return;
+                }
                 if (pickForBind) {
                     pickForBind = false;
                     dlg.dismiss();
@@ -2446,6 +2494,20 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    /** 用户消息用哪个音色：自己配了用自己的，没配就跟全局。 */
+    private String userVoiceOf() {
+        String v = Prefs.userVoice(this);
+        return (v == null || v.length() == 0) ? Prefs.voice(this) : v;
+    }
+
+    private void renderUserVoice() {
+        if (userVoiceView == null) return;
+        String v = Prefs.userVoice(this);
+        boolean own = v != null && v.length() > 0;
+        userVoiceView.setText("音色：" + (own ? TtsEngine.shortVoice(v) : "跟随全局"));
+        userVoiceView.setTextColor(own ? p.textSecondary : p.textMuted);
+    }
 
     /** 画「音色 → 名称」这张表：一行一个音色，下面写着它的名字。 */
     private void renderVoiceTable() {

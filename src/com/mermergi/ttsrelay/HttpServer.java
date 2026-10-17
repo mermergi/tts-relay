@@ -642,6 +642,9 @@ public final class HttpServer {
         boolean chat = path.endsWith("/chat/completions") && "POST".equals(method);
         Decision dec = chat ? decide(body) : new Decision(false, true, "非对话请求");
         boolean speak = dec.speak;
+        // 用户自己发的那条（开关打开时）先念出来；念了的话，这一发的回复就接在后面排队，
+        // 不能反过来把用户消息腰斩。
+        boolean spokeUser = speak && chat && speakUserMessage(body);
         logRequest(method, path, body, dec, chat);
 
         // 不在这里就打断！等这一轮真的吐出第一句可念的正文时再打断。
@@ -697,7 +700,7 @@ public final class HttpServer {
             if (ct != null) outHeaders.put("Content-Type", ct);
 
             if (ct != null && ct.contains("text/event-stream")) {
-                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut, dec.speaker);
+                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut && !spokeUser, dec.speaker);
                 return;
             }
 
@@ -718,8 +721,8 @@ public final class HttpServer {
                             if (c instanceof String) {
                                 MultiVoice mv = newMultiVoice(dec.speaker);
                                 int[] sent = new int[]{0};
-                                emit(mv.feed((String) c), turnStarted, sent, dec.cut);
-                                emit(mv.flush(), turnStarted, sent, dec.cut);
+                                emit(mv.feed((String) c), turnStarted, sent, dec.cut && !spokeUser);
+                                emit(mv.flush(), turnStarted, sent, dec.cut && !spokeUser);
                                 if (sent[0] > 0) LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
                             }
                         }
@@ -753,7 +756,17 @@ public final class HttpServer {
         int n;
         int[] sent = new int[]{0};
         while ((n = in.read(buf)) > 0) {
-            writeChunk(out, buf, 0, n);            // 原样透传
+            try {
+                writeChunk(out, buf, 0, n);        // 原样透传
+            } catch (IOException dead) {
+                // 客户端那头断了 —— 用户点了「停止」、重新生成、或者干脆切走了。
+                // 这一发不用再念：把已经在排队的句子一起作废，别让旧回复自说自话。
+                if (speak) {
+                    speaker.interrupt();
+                    LogBus.add("客户端断开（停止/重新生成）→ 停念，本发念出 " + sent[0] + " 句");
+                }
+                return;
+            }
             if (!speak) continue;
             ByteBuffer bb = ByteBuffer.wrap(buf, 0, n);
             CharBuffer cb = CharBuffer.allocate(n * 2 + 8);
@@ -777,6 +790,81 @@ public final class HttpServer {
     }
 
     /** 断句器：多语音开着就按角色切，关着就跟以前一模一样。 */
+    // 上一条念过的用户消息：客户端「重新生成」会把同样的 messages 再发一遍，
+    // 同一条两分钟内不重复念。
+    private volatile String lastUserText = "";
+    private volatile long lastUserAt = 0L;
+
+    /**
+     * 念用户自己发出去的那条消息（设置里开开关才念）。用单独配的音色，没配就跟全局音色。
+     *
+     * @return true = 这一发已经先念了用户消息，后面回复要接在它后面，不许打断
+     */
+    private boolean speakUserMessage(byte[] body) {
+        if (body == null || body.length == 0) return false;
+        if (!Prefs.speakUser(ctx)) return false;
+        try {
+            JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            JSONArray msgs = o.optJSONArray("messages");
+            if (msgs == null || msgs.length() == 0) return false;
+            JSONObject last = msgs.optJSONObject(msgs.length() - 1);
+            if (last == null || !"user".equals(last.optString("role"))) return false;
+            String text = plainContent(last.opt("content"));
+            if (text == null) return false;
+            text = text.trim();
+            if (text.length() == 0) return false;
+
+            long now = System.currentTimeMillis();
+            if (text.equals(lastUserText) && now - lastUserAt < 120000L) return false;
+            lastUserText = text;
+            lastUserAt = now;
+
+            String voice = Prefs.userVoice(ctx);
+            if (voice == null || voice.trim().length() == 0) voice = Prefs.voice(ctx);
+            if (voice == null || voice.trim().length() == 0) return false;
+
+            MultiVoice mv = newMultiVoice();
+            java.util.List<MultiVoice.Seg> segs = new java.util.ArrayList<MultiVoice.Seg>();
+            java.util.List<MultiVoice.Seg> got = mv.feed(text);
+            if (got != null) segs.addAll(got);
+            java.util.List<MultiVoice.Seg> tail = mv.flush();
+            if (tail != null) segs.addAll(tail);
+            if (segs.isEmpty()) return false;
+
+            speaker.interrupt();          // 新一轮：上一段没念完的先停
+            int n = 0;
+            for (MultiVoice.Seg seg : segs) {
+                if (seg == null || seg.text == null || seg.text.trim().length() == 0) continue;
+                speaker.feed(seg.text, voice);
+                n++;
+            }
+            if (n > 0) LogBus.add("↳ 用户消息念出 " + n + " 句");
+            return n > 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** content 可能是一段文字，也可能是 [{type:text,text:...}, ...] 这种多段结构。 */
+    private static String plainContent(Object c) {
+        if (c == null) return null;
+        if (c instanceof String) return (String) c;
+        if (c instanceof JSONArray) {
+            StringBuilder sb = new StringBuilder();
+            JSONArray a = (JSONArray) c;
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject p = a.optJSONObject(i);
+                if (p == null) continue;
+                String t = p.optString("text", "");
+                if (t.length() == 0) continue;
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(t);
+            }
+            return sb.toString();
+        }
+        return String.valueOf(c);
+    }
+
     private MultiVoice newMultiVoice() { return newMultiVoice(""); }
 
     /** who 非空 = 请求里已经写明这一发是谁在说（群聊提醒），不用再从正文猜。 */

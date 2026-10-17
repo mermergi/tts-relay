@@ -196,6 +196,20 @@ public final class Prefs {
         setVoiceNames(c, sb.toString());
     }
 
+    // ───────────────────────── 念不念用户自己发的话 ─────────────────────────
+
+    /** 念不念用户自己发出去的那条消息（默认不念）。 */
+    public static boolean speakUser(Context c) { return sp(c).getBoolean("speak_user", false); }
+    public static void setSpeakUser(Context c, boolean v) {
+        sp(c).edit().putBoolean("speak_user", v).apply();
+    }
+
+    /** 用户消息用哪个音色；空 = 跟全局音色走。 */
+    public static String userVoice(Context c) { return sp(c).getString("user_voice", ""); }
+    public static void setUserVoice(Context c, String v) {
+        sp(c).edit().putString("user_voice", v == null ? "" : v).apply();
+    }
+
     // ───────────────────────── 自定义上游 ─────────────────────────
 
     /**
