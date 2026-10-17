@@ -34,6 +34,7 @@
         <item name="android:navigationBarColor">#FF0D0E13</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="bottomSheetDialogTheme">@style/AppBottomSheet</item>
+        <item name="android:buttonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item>
     </style>
 
     <!-- ══════════════ 浅色 ══════════════ -->
@@ -59,6 +60,7 @@
         <item name="android:navigationBarColor">#FFF2F3F8</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="bottomSheetDialogTheme">@style/AppBottomSheet.Light</item>
+        <item name="android:buttonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item>
     </style>
 
     <!-- ══════════════ 底部抽屉（它的 ModalBottomSheet） ══════════════ -->

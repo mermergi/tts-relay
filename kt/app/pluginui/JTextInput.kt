@@ -46,10 +46,24 @@ class JTextInput(context: Context, val hint: CharSequence? = null) : FrameLayout
             input.setSingleLine(value == 1)
         }
 
+    /** 上游用的是带浮动 label 的 OutlinedTextField；这里就把 hint 画成上面那行小字标签。 */
+    private val label = android.widget.TextView(context)
+
     init {
-        input.hint = hint?.toString() ?: ""
+        input.hint = ""
         input.setSingleLine(false)
-        addView(input, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        if (hint != null && hint.length > 0) {
+            label.text = hint
+            label.textSize = 12.5f
+            label.setTextColor(0xFF9AA0B4.toInt())
+            label.setPadding(0, dp(8), 0, dp(2))
+            addView(label, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            val lp = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            lp.topMargin = dp(20)
+            addView(input, lp)
+        } else {
+            addView(input, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
@@ -77,4 +91,8 @@ class JTextInput(context: Context, val hint: CharSequence? = null) : FrameLayout
     fun setOnTextChangedListener(listener: OnTextChangedListener) {
         listeners.add(listener)
     }
+
+    private fun dp(v: Int): Int = android.util.TypedValue.applyDimension(
+        android.util.TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
+    ).toInt()
 }
