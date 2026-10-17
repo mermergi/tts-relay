@@ -832,10 +832,15 @@ public final class HttpServer {
             if (segs.isEmpty()) return false;
 
             speaker.interrupt();          // 新一轮：上一段没念完的先停
+            boolean multi = Prefs.mvEnabled(ctx);
             int n = 0;
             for (MultiVoice.Seg seg : segs) {
                 if (seg == null || seg.text == null || seg.text.trim().length() == 0) continue;
-                speaker.feed(seg.text, voice);
+                // 和多语音那套完全一样的识别：分角色 / 段类型 / 「音色 → 名称」都对得上，
+                // 角色设成「不念」的整句丢掉。多语音关着才用「用户消息」那个音色。
+                String v = multi ? MultiVoice.voiceFor(ctx, seg) : voice;
+                if (v == null) continue;
+                speaker.feed(seg.text, v);
                 n++;
             }
             if (n > 0) LogBus.add("↳ 用户消息念出 " + n + " 句");
