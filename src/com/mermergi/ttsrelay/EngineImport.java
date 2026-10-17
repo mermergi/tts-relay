@@ -24,23 +24,35 @@ public final class EngineImport {
     public static List<EngineStore.Item> parse(String text) throws Exception {
         String t = text == null ? "" : text.trim();
         if (t.length() == 0) throw new IllegalArgumentException("内容为空");
+        t = stripFence(t);
+
+        // ① TTS Server 的插件包：.json，数组或单个对象，字段是
+        //    name / pluginId / author / version / iconUrl / code / defVars / userVars
+        //    —— 它那边就是 Json.decodeFromString<List<Plugin>> 直接入库。
+        //    源码在 code 里，所以**不能**把整个 json 当 .js 存进去。
+        if (t.startsWith("[") || t.startsWith("{")) {
+            List<EngineStore.Item> plugins = new ArrayList<EngineStore.Item>();
+            try {
+                if (t.startsWith("[")) {
+                    JSONArray arr = new JSONArray(t);
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject o = arr.optJSONObject(i);
+                        if (isPluginPackage(o)) plugins.add(pluginEngine(o));
+                    }
+                } else {
+                    JSONObject o = new JSONObject(t);
+                    if (isPluginPackage(o)) plugins.add(pluginEngine(o));
+                }
+            } catch (Throwable ignored) { }
+            if (!plugins.isEmpty()) return plugins;
+        }
+
+        // ② 裸的 .js 插件源码
         if (looksLikeJsPlugin(t)) {
             List<EngineStore.Item> one = new ArrayList<EngineStore.Item>();
             // 插件就是插件：一律交给 TTS Server 那套运行时真跑（见 kt/ + PluginBridge）。
-            // 引擎文件就是 .js：按插件原样处理 —— 插件用的那些全局
-            // （Buffer / WebSocket / http / fs / ttsrv.* …）我们都已经搬进来了。
             one.add(jsEngine(t));
             return one;
-        }
-
-        // 去掉可能的 BOM 和 markdown 代码块围栏（从聊天里复制粘贴很常见）
-        if (t.startsWith("\uFEFF")) t = t.substring(1);
-        if (t.startsWith("```")) {
-            int nl = t.indexOf('\n');
-            if (nl > 0) t = t.substring(nl + 1);
-            int end = t.lastIndexOf("```");
-            if (end > 0) t = t.substring(0, end);
-            t = t.trim();
         }
 
         List<JSONObject> objs = new ArrayList<JSONObject>();
@@ -101,6 +113,74 @@ public final class EngineImport {
         EngineStore.syncJsMeta(App.ctx(), it);
         EngineStore.inheritLogin(App.ctx(), it);      // 别处抓过的 Cookie 直接继承过来
         if (it.label == null || it.label.length() == 0) it.label = "JS 插件";
+        return it;
+    }
+
+    /** 去掉 BOM 和 markdown 代码块围栏（从聊天里复制粘贴很常见）。 */
+    private static String stripFence(String t) {
+        if (t.startsWith("\uFEFF")) t = t.substring(1);
+        if (t.startsWith("```")) {
+            int nl = t.indexOf('\n');
+            if (nl > 0) t = t.substring(nl + 1);
+            int end = t.lastIndexOf("```");
+            if (end > 0) t = t.substring(0, end);
+        }
+        return t.trim();
+    }
+
+    /** 这份 json 是不是 TTS Server 的插件包（有 code，且有 pluginId 或 name）。 */
+    private static boolean isPluginPackage(JSONObject o) {
+        if (o == null) return false;
+        if (o.optString("code", "").trim().length() == 0) return false;
+        return o.optString("pluginId", "").trim().length() > 0
+                || o.optString("name", "").trim().length() > 0;
+    }
+
+    /**
+     * 插件包 → 我们的一条 JS 引擎。和 TTS Server 入库同一份数据：
+     * {@code name / pluginId / author / version / iconUrl / code / defVars / userVars}。
+     *
+     * 源码照原样存（跑的时候还是它自己那套运行时），名字用插件声明的不去猜；
+     * defVars 里的 {@code value} 是作者给的默认值，{@code loginUrl / binding / ua}
+     * 是它声明的登录方式 —— 都填进去，用户导进来就能用。
+     */
+    private static EngineStore.Item pluginEngine(JSONObject o) {
+        EngineStore.Item it = jsEngine(o.optString("code", ""));
+        String name = o.optString("name", "").trim();
+        if (name.length() > 0) it.label = name;
+        it.put("author", o.optString("author", ""));
+        it.put("plugin_id", o.optString("pluginId", ""));
+        it.put("icon", o.optString("iconUrl", ""));
+        it.put("plugin_version", String.valueOf(o.optInt("version", 0)));
+
+        JSONObject dv = o.optJSONObject("defVars");
+        if (dv != null) {
+            for (java.util.Iterator<String> k = dv.keys(); k.hasNext(); ) {
+                String key = k.next();
+                JSONObject d = dv.optJSONObject(key);
+                if (d == null) continue;
+                String val = d.optString("value", "");
+                if (val.length() > 0 && it.s(key, "").trim().length() == 0) it.put(key, val);
+                String lu = d.optString("loginUrl", "");
+                if (lu.length() > 0 && it.s("login_url", "").trim().length() == 0) {
+                    it.put("login_url", lu);
+                }
+                String bd = d.optString("binding", "");
+                if (bd.length() > 0 && it.s("binding", "").equals("session")) it.put("binding", bd);
+                String ua = d.optString("ua", "");
+                if (ua.length() > 0) it.put("ua", ua);
+            }
+        }
+
+        // 用户在 TTS Server 里已经填过的值也一起带过来
+        JSONObject uv = o.optJSONObject("userVars");
+        if (uv != null) {
+            for (java.util.Iterator<String> k = uv.keys(); k.hasNext(); ) {
+                String key = k.next();
+                String val = uv.optString(key, "");
+                if (val.trim().length() > 0) it.put(key, val);
+            }
+        }
         return it;
     }
 
