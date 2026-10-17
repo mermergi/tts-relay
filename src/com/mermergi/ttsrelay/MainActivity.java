@@ -115,6 +115,8 @@ public class MainActivity extends Activity {
     private AlertDialog engineDlg = null;
     private Button themeBtn;
     private final List<TextView> presetChips = new ArrayList<TextView>();
+    /** 「常用上游」那一行的容器 —— 加了自定义接口要整行重画。 */
+    private LinearLayout presetRow;
 
     // ── 日志 ──
     private TextView logView;
@@ -315,7 +317,7 @@ public class MainActivity extends Activity {
         skipSwitch = null; autoStartSwitch = null; themeBtn = null;
         mvSwitch = null; modeBtn = null; roleBox = null;
         engineBox = null; engineNow = null;
-        presetChips.clear();
+        presetChips.clear(); presetRow = null;
         logView = null;
         logLen = -1;
     }
@@ -423,7 +425,7 @@ public class MainActivity extends Activity {
         }), ui.weight(1f));
         ac.addView(ab);
 
-        lanSwitch = ui.switchBox("允许局域网访问\n给电脑上的酒馆 / 其它设备用（重启生效）");
+        lanSwitch = ui.switchBox("允许局域网访问");
         lanSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton b, boolean checked) {
                 Prefs.setLanAllowed(MainActivity.this, checked);
@@ -657,26 +659,9 @@ public class MainActivity extends Activity {
         uc.addView(ui.label("常用上游"));
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
-        LinearLayout chips = ui.row();
-        hs.addView(chips);
-        for (int i = 0; i < PRESETS.length; i++) {
-            final String name = PRESETS[i][0];
-            final String url = PRESETS[i][1];
-            TextView chip = ui.chip(name, false, new View.OnClickListener() {
-                public void onClick(View v) {
-                    if (upstreamField == null) return;
-                    upstreamField.setText(url);
-                    saveInputs();
-                    renderPresets();
-                    toast("上游已切到 " + name + "（重启中转生效）");
-                }
-            });
-            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            cp.rightMargin = ui.dp(8);
-            chips.addView(chip, cp);
-            presetChips.add(chip);
-        }
+        presetRow = ui.row();
+        hs.addView(presetRow);
+        buildPresetRow();
         uc.addView(hs);
 
         uc.addView(ui.label("上游 API 地址"));
@@ -750,12 +735,133 @@ public class MainActivity extends Activity {
         return scroll(col);
     }
 
+    /** 重画「常用上游」那一行：内置的 + 自己加的 + 末尾那个「＋ 自定义」。 */
+    private void buildPresetRow() {
+        if (presetRow == null) return;
+        presetRow.removeAllViews();
+        presetChips.clear();
+        for (int i = 0; i < PRESETS.length; i++) {
+            addPresetChip(PRESETS[i][0], PRESETS[i][1], false);
+        }
+        for (String[] e : Prefs.upstreamCustom(this)) {
+            addPresetChip(e[0], e[1], true);
+        }
+        TextView add = ui.chip("＋ 自定义", false, new View.OnClickListener() {
+            public void onClick(View v) { customUpstreamSheet(); }
+        });
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cp.rightMargin = ui.dp(8);
+        presetRow.addView(add, cp);
+        renderPresets();
+    }
+
+    private void addPresetChip(final String name, final String url, final boolean custom) {
+        TextView chip = ui.chip(name, false, new View.OnClickListener() {
+            public void onClick(View v) {
+                if (upstreamField == null) return;
+                upstreamField.setText(url);
+                saveInputs();
+                renderPresets();
+            }
+        });
+        chip.setTag(url);
+        if (custom) {                       // 自己加的：长按删掉
+            chip.setOnLongClickListener(new View.OnLongClickListener() {
+                public boolean onLongClick(View v) {
+                    Prefs.removeUpstreamCustom(MainActivity.this, url);
+                    buildPresetRow();
+                    toast("删掉了「" + name + "」");
+                    return true;
+                }
+            });
+        }
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cp.rightMargin = ui.dp(8);
+        presetRow.addView(chip, cp);
+        presetChips.add(chip);
+    }
+
+    /** 自定义上游：起个名字、填地址存下来，就当常用上游用（长按可删）。 */
+    private void customUpstreamSheet() {
+        LinearLayout box = ui.col();
+        box.setPadding(ui.dp(18), ui.dp(2), ui.dp(18), ui.dp(18));
+
+        TextView title = new TextView(this);
+        title.setText("自定义接口");
+        title.setTextColor(p.textPrimary);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title);
+
+        final EditText name = ui.field(null, "", InputType.TYPE_CLASS_TEXT);
+        name.setHint("名字，比如「公司网关」");
+        final EditText url = ui.field(null, "", InputType.TYPE_TEXT_VARIATION_URI);
+        url.setHint("https://…");
+        box.addView(ui.label("名字"), ui.topGap(12));
+        box.addView(name);
+        box.addView(ui.label("地址"), ui.topGap(10));
+        box.addView(url);
+
+        box.addView(ui.btn("保存", true, new View.OnClickListener() {
+            public void onClick(View v) {
+                String n = name.getText().toString().trim();
+                String u = url.getText().toString().trim();
+                if (n.length() == 0 || u.length() == 0) { toast("名字和地址都要填"); return; }
+                if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
+                Prefs.putUpstreamCustom(MainActivity.this, n, u);
+                buildPresetRow();
+                if (upstreamField != null) {
+                    upstreamField.setText(u);
+                    saveInputs();
+                    renderPresets();
+                }
+                dismissSheet();
+            }
+        }), ui.topGap(14));
+
+        List<String[]> have = Prefs.upstreamCustom(this);
+        if (!have.isEmpty()) {
+            box.addView(ui.label("已保存的（点「删」去掉）"), ui.topGap(16));
+            for (final String[] e : have) {
+                LinearLayout row = ui.row();
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0, ui.dp(8), 0, 0);
+                LinearLayout col = ui.col();
+                TextView n = new TextView(this);
+                n.setText(e[0]);
+                n.setTextColor(p.textPrimary);
+                n.setTextSize(14);
+                TextView u = new TextView(this);
+                u.setText(e[1]);
+                u.setTextColor(p.textMuted);
+                u.setTextSize(11.5f);
+                col.addView(n);
+                col.addView(u);
+                row.addView(col, ui.weightGap(1f, 8));
+                row.addView(ui.chip("删", false, new View.OnClickListener() {
+                    public void onClick(View v) {
+                        Prefs.removeUpstreamCustom(MainActivity.this, e[1]);
+                        dismissSheet();
+                        customUpstreamSheet();
+                    }
+                }));
+                box.addView(row);
+            }
+        }
+
+        roleSheet = sheet(box);
+    }
+
     private void renderPresets() {
-        if (presetChips.isEmpty() || upstreamField == null) return;
+        if (presetRow == null || upstreamField == null) return;
         String cur = upstreamField.getText().toString().trim();
-        for (int i = 0; i < presetChips.size() && i < PRESETS.length; i++) {
-            TextView t = presetChips.get(i);
-            boolean on = PRESETS[i][1].equals(cur);
+        for (int i = 0; i < presetRow.getChildCount(); i++) {
+            View v = presetRow.getChildAt(i);
+            if (!(v instanceof TextView) || v.getTag() == null) continue;
+            TextView t = (TextView) v;
+            boolean on = String.valueOf(v.getTag()).equals(cur);
             if (on) {
                 t.setTextColor(p.onAccent);
                 t.setTypeface(Typeface.DEFAULT_BOLD);
@@ -2283,7 +2389,7 @@ public class MainActivity extends Activity {
                                   final Runnable refill, final RecyclerView rv) {
         rail.removeAllViews();
         List<String[]> items = new ArrayList<String[]>();
-        items.add(new String[]{"", "全部 " + all.size()});
+        items.add(new String[]{"", "全部来源 " + all.size()});   // 上面性别那排已经有「全部」了，这里换个名字
         for (EngineStore.SourceGroup g : groups) {
             if (g.voices.isEmpty()) continue;
             items.add(new String[]{g.id, shortSrc(g.label) + " " + g.voices.size()});
