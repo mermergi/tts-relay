@@ -178,7 +178,24 @@ public final class Speaker {
                 }
             }
         });
-        LogBus.add("⏭ 已跳过当前句");
+        LogBus.add("⏭ 已切到下一句" + caller());
+    }
+
+    /** 谁点的跳过 —— 日志里带上，省得"自己跳了"还是"人点的"分不清。 */
+    private static String caller() {
+        StringBuilder sb = new StringBuilder();
+        try {
+            StackTraceElement[] st = new Throwable().getStackTrace();
+            int n = 0;
+            for (StackTraceElement e : st) {
+                String c = e.getClassName();
+                if (c.endsWith("Speaker") || c.startsWith("java.") || c.startsWith("android.")) continue;
+                sb.append(n == 0 ? "（" : " ← ").append(c.substring(c.lastIndexOf('.') + 1))
+                        .append(':').append(e.getLineNumber());
+                if (++n >= 3) break;
+            }
+        } catch (Throwable ignored) { }
+        return sb.length() == 0 ? "" : sb.append("）").toString();
     }
 
     public void start() {
@@ -560,7 +577,7 @@ public final class Speaker {
                         continue;                          // cur 留着
                     }
                     failed.incrementAndGet();
-                    LogBus.error("⏱ " + err + " —— 换过宿主还是不行，跳过这句：「"
+                    LogBus.error("⏱ " + err + " —— 换过宿主还是不行，略过这句：「"
                             + head(cur.text, 16) + "」");
                     cur = null;
                     curTimeouts = 0;
@@ -580,7 +597,7 @@ public final class Speaker {
                     // （TTS Server 的 SystemTtsService 一遇合成失败就抛 Bad audio format 0 把进程带走）。
                     // 所以连不上超过 3 次，这句直接丢掉，别再喂它。
                     if (conn && curFails >= 3) {
-                        LogBus.error("这句试了 " + curFails + " 次都把引擎打没了，跳过它："
+                        LogBus.error("这句试了 " + curFails + " 次都把引擎打没了，略过它："
                                 + head(cur.text, 24)
                                 + "（是引擎自己的 bug，不是这句的错）");
                         cur = null;

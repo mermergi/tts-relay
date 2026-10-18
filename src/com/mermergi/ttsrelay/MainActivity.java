@@ -376,7 +376,7 @@ public class MainActivity extends Activity {
         muteBtn = ui.btn("静音", false, new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
         });
-        Button skipB = ui.btn("跳过本句", false, new View.OnClickListener() {
+        Button skipB = ui.btn("下一句", false, new View.OnClickListener() {
             public void onClick(View v) { skipCurrent(); }
         });
         quick.addView(pauseBtn, ui.weightGap(1f, 8));
@@ -725,7 +725,7 @@ public class MainActivity extends Activity {
 
         // ── 跳过规则 ──
         LinearLayout sc = ui.card();
-        sc.addView(ui.sectionTitle("跳过规则"));
+        sc.addView(ui.sectionTitle("后台小活判定"));
         skipSwitch = ui.switchBox("检测后台小活\n起标题、写摘要这类请求不朗读");
         skipSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton b, boolean checked) {
@@ -2280,7 +2280,7 @@ public class MainActivity extends Activity {
         Speaker spk = RelayService.speakerOrNull();
         if (spk == null) { toast("先启动中转"); return; }
         spk.skipCurrent();
-        toast("已跳过当前句");
+        toast("已切到下一句");
     }
 
     private void openTtsServer() {
