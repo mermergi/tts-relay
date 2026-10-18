@@ -171,14 +171,46 @@ function fetchVoices(apikey) {
     return list;
 }
 
-/** 音色显示名：音色 ID 里没有名字，只能标出「复刻/设计」和 ID 尾巴，方便区分。 */
+/**
+ * 音色显示名。百炼的 list_voice 不返回名字，只有一个 voice_id，所以按这个顺序取：
+ *   ① 「音色别名」里给它起的名字（`bailian-74e42b76=妈妈`，分号分隔）
+ *   ② 声音设计的 voice_prompt（创建时写的那段描述，本来就像个名字）
+ *   ③ 声音复刻没有描述 → 用 voice_id 认得出的那一截：`前缀-尾巴8位`，例如 bailian-74e42b76
+ */
+function aliasOf(id) {
+    var raw = userVar('voice_aliases');
+    if (raw.length === 0) return '';
+    var lines = raw.split(/[\n;；]+/);
+    var tail = id.substring(id.lastIndexOf('-') + 1);
+    for (var i = 0; i < lines.length; i++) {
+        var line = String(lines[i]).trim();
+        var eq = line.indexOf('=');
+        if (eq < 0) eq = line.indexOf('＝');
+        if (eq <= 0) continue;
+        var key = line.substring(0, eq).trim();
+        var val = line.substring(eq + 1).trim();
+        if (key.length === 0 || val.length === 0) continue;
+        if (id === key || tail === key || id.indexOf(key) >= 0) return val;
+    }
+    return '';
+}
+
 function voiceLabel(v) {
     var id = String(v.voice_id);
+    var alias = aliasOf(id);
+    if (alias.length > 0) return alias;
+
+    var prompt = v.voice_prompt ? String(v.voice_prompt).replace(/[。.\s]+$/, '') : '';
+    if (prompt.length > 0) return prompt;
+
+    // voice_id 形如 {模型}-{prefix}-{唯一标识}；声音设计的中间会多一段 vd
     var core = (id.indexOf(MODEL + '-') === 0) ? id.substring(MODEL.length + 1) : id;
-    var kind = (core.indexOf('vd-') === 0) ? '设计' : '复刻';
+    if (core.indexOf('vd-') === 0) core = core.substring(3);
+    var dash = core.indexOf('-');
+    var prefix = dash > 0 ? core.substring(0, dash) : '';
     var tail = id.substring(id.lastIndexOf('-') + 1);
     if (tail.length > 8) tail = tail.substring(0, 8);
-    return kind + ' · ' + tail;
+    return (prefix.length > 0 ? prefix + '-' : '') + tail;
 }
 
 // ───────────────────────── 合成 ─────────────────────────
@@ -217,6 +249,11 @@ var PluginJS = {
         instruction: {
             label: '合成指令',
             hint: '可选。控制方言、情感、角色，例如「用四川话说」「语气温柔一点」',
+            binding: 'user_input'
+        },
+        voice_aliases: {
+            label: '音色别名',
+            hint: '可选。百炼不返回音色名，只能用 ID 认；在这儿起名，分号分隔，例如 bailian-74e42b76=妈妈; bailian-c7f0c0ec=御姐',
             binding: 'user_input'
         }
     },
