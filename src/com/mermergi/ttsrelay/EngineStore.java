@@ -470,6 +470,54 @@ public final class EngineStore {
         f.delete();
     }
 
+    /** 插件声明的变量表：key → {label, hint, ...}。 */
+    public static JSONObject defVars(Item it) {
+        try { return new JSONObject(it == null ? "" : it.s("def_vars", "")); }
+        catch (Throwable t) { return new JSONObject(); }
+    }
+
+    /**
+     * 这个音色<b>单独覆盖</b>的插件变量。存在 {@code vars_by_voice} 里：
+     * {@code {"<voice>": {"tone_text": "…"}}}。
+     * 没覆盖的键就跟随引擎页那一份（TTS Server 的变量是引擎级的，我们在它上面加一层"每音色"）。
+     */
+    public static java.util.LinkedHashMap<String, String> varsOverride(Item it, String voice) {
+        java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
+        if (it == null || voice == null || voice.trim().length() == 0) return m;
+        try {
+            JSONObject all = new JSONObject(it.s("vars_by_voice", ""));
+            JSONObject one = all.optJSONObject(voice.trim());
+            if (one == null) return m;
+            for (java.util.Iterator<String> k = one.keys(); k.hasNext(); ) {
+                String key = k.next();
+                String v = one.optString(key, "");
+                if (v != null && v.trim().length() > 0) m.put(key, v);
+            }
+        } catch (Throwable ignored) { }
+        return m;
+    }
+
+    /** 写入/清掉某个音色的变量覆盖（空值 = 跟随引擎页）。 */
+    public static void setVarsOverride(Item it, String voice, java.util.Map<String, String> vals) {
+        if (it == null || voice == null || voice.trim().length() == 0) return;
+        try {
+            String key = voice.trim();
+            JSONObject all = new JSONObject(it.s("vars_by_voice", ""));
+            JSONObject one = new JSONObject();
+            if (vals != null) {
+                for (java.util.Map.Entry<String, String> e : vals.entrySet()) {
+                    if (e.getValue() != null && e.getValue().trim().length() > 0) {
+                        one.put(e.getKey(), e.getValue());
+                    }
+                }
+            }
+            if (one.length() == 0) all.remove(key);
+            else all.put(key, one);
+            if (all.length() == 0) it.cfg.remove("vars_by_voice");
+            else it.put("vars_by_voice", all.toString());
+        } catch (Throwable ignored) { }
+    }
+
     /**
      * 插件声明的变量 → {@code user_vars}：TTS Server 是"声明"和"用户填的值"分开存的，
      * 插件读的是 {@code ttsrv.userVars['api_key']}，塞在 cfg 的散键里容易对不上。

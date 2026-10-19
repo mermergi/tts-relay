@@ -54,6 +54,10 @@ public final class PluginTtsActivity extends Activity {
     private LinearLayout langRow;
     private LinearLayout voiceRow;
     private LinearLayout pluginHost;
+    /** 插件声明的变量（每个音色可以各写各的；留空 = 跟随「引擎」页）。 */
+    private LinearLayout varsHost;
+    private final java.util.LinkedHashMap<String, EditText> varBoxes =
+            new java.util.LinkedHashMap<String, EditText>();
 
     private String origVoice = "";
     private String curVoice = "";
@@ -137,6 +141,12 @@ public final class PluginTtsActivity extends Activity {
         voiceRow.setVisibility(View.GONE);
         col.addView(voiceRow, ui.topGap(8));
 
+        // 插件声明的变量：引擎页那份是"全局默认"，这里可以给这个音色单独覆盖
+        // （豆包的「自定义语气指令」就属于这里：每个音色能各写各的语气）
+        varsHost = ui.col();
+        col.addView(varsHost, ui.topGap(10));
+        renderVars();
+
         // 插件自己画的界面
         pluginHost = ui.col();
         col.addView(pluginHost, ui.topGap(8));
@@ -159,6 +169,7 @@ public final class PluginTtsActivity extends Activity {
             public void run() {
                 bridge = JsTtsEngine.sharedBridge(PluginTtsActivity.this, it);
                 if (bridge == null) return;
+                applyVarsForVoice();
                 LinkedHashMap<String, String> locs = null;
                 List<String[]> vs = null;
                 try {
@@ -227,7 +238,9 @@ public final class PluginTtsActivity extends Activity {
                             public void onPick(int i) {
                                 curVoice = vs.get(i)[1];
                                 voiceVal.setText(vs.get(i)[0]);
-                                // 插件自己那块界面跟着换
+                                // 这个音色的变量覆盖 + 插件自己那块界面都跟着换
+                                renderVars();
+                                applyVarsForVoice();
                                 if (bridge != null) {
                                     try { bridge.onVoiceChanged(curLocale, curVoice); } catch (Throwable ignored) { }
                                 }
@@ -248,6 +261,8 @@ public final class PluginTtsActivity extends Activity {
                         if (vs != null && !vs.isEmpty()) {
                             curVoice = vs.get(0)[1];
                             voiceVal.setText(vs.get(0)[0]);
+                            renderVars();
+                            applyVarsForVoice();
                             if (bridge != null) {
                                 try { bridge.onVoiceChanged(curLocale, curVoice); } catch (Throwable ignored) { }
                             }
@@ -285,6 +300,17 @@ public final class PluginTtsActivity extends Activity {
                 Prefs.putVoiceNames(this, curVoice, sb.toString());
             }
         }
+        // 插件变量：只存"和引擎页不一样"的那些键（留空/相同 = 跟随引擎页）
+        java.util.LinkedHashMap<String, String> base = JsTtsEngine.baseVars(it);
+        java.util.LinkedHashMap<String, String> over = new java.util.LinkedHashMap<String, String>();
+        for (Map.Entry<String, EditText> e : varBoxes.entrySet()) {
+            String v = e.getValue().getText().toString();
+            if (v.trim().length() == 0) continue;
+            String b = base.get(e.getKey());
+            if (v.equals(b)) continue;
+            over.put(e.getKey(), v);
+        }
+        EngineStore.setVarsOverride(it, curVoice, over);
         it.put("lang", curLocale);
         it.put("voice", curVoice);
         EngineStore.put(this, it);
@@ -294,6 +320,43 @@ public final class PluginTtsActivity extends Activity {
         JsTtsEngine.clearVoices();
         toast("已保存");
         finish();
+    }
+
+    /** 把插件声明的变量画成输入框（当前值 = 这个音色的覆盖值，空的就提示跟随引擎页）。 */
+    private void renderVars() {
+        if (varsHost == null) return;
+        varsHost.removeAllViews();
+        varBoxes.clear();
+        org.json.JSONObject def = EngineStore.defVars(it);
+        if (def.length() == 0) {
+            varsHost.setVisibility(View.GONE);
+            return;
+        }
+        varsHost.setVisibility(View.VISIBLE);
+        varsHost.addView(ui.label("插件变量（这个音色可以单独写，留空 = 跟随「引擎」页）"));
+        java.util.LinkedHashMap<String, String> base = JsTtsEngine.baseVars(it);
+        java.util.LinkedHashMap<String, String> over = EngineStore.varsOverride(it, curVoice);
+        for (java.util.Iterator<String> k = def.keys(); k.hasNext(); ) {
+            String key = k.next();
+            org.json.JSONObject d = def.optJSONObject(key);
+            String label = d == null ? key : d.optString("label", key);
+            String hint = d == null ? "" : d.optString("hint", "");
+            String cur = over.containsKey(key) ? over.get(key) : "";
+            EditText box = ui.field(null, cur, InputType.TYPE_CLASS_TEXT);
+            String baseVal = base.get(key);
+            box.setHint(baseVal != null && baseVal.length() > 0
+                    ? ("跟随引擎页：" + baseVal)
+                    : (hint.length() > 0 ? hint : key));
+            varsHost.addView(ui.label(label));
+            varsHost.addView(box, ui.topGap(4));
+            varBoxes.put(key, box);
+        }
+    }
+
+    /** 让合成用的那个宿主看到这个音色的变量（插件读 ttsrv.userVars）。 */
+    private void applyVarsForVoice() {
+        if (bridge == null) return;
+        try { bridge.applyVars(JsTtsEngine.varsFor(it, curVoice)); } catch (Throwable ignored) { }
     }
 
     @Override

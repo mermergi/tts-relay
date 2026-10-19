@@ -140,7 +140,7 @@ public final class JsTtsEngine implements TtsEngine {
     /** 我这侧只存数据，不认识的键别往插件里塞。 */
     private static final java.util.Set<String> NOT_VARS = new java.util.HashSet<String>(java.util.Arrays.asList(
             "src", "def_vars", "var_labels", "user_vars", "tts_data", "login_key", "login_url",
-            "binding", "ua", "lang", "voice", "speed", "volume", "pitch"));
+            "binding", "ua", "lang", "voice", "speed", "volume", "pitch", "vars_by_voice"));
 
     private PluginBridge open(Context c) throws Exception { return open(c, locale(), ""); }
 
@@ -217,8 +217,33 @@ public final class JsTtsEngine implements TtsEngine {
 
     /** 按某份引擎配置开一个插件宿主（界面上问语言/声音也走这里，保证参数一模一样）。 */
     public static PluginBridge openFor(Context c, EngineStore.Item it, String locale, String voice) throws Exception {
-        // 变量值：优先读 `user_vars`（别人那套引擎文件的模型），没有就退回"cfg 里非保留键都当变量"
-        Map<String, String> vars = new LinkedHashMap<String, String>();
+        Map<String, String> vars = baseVars(it);
+        // 单音色页/合成时按这个音色再叠一层覆盖（没覆盖的键跟随引擎页）
+        if (voice != null && voice.trim().length() > 0) vars.putAll(EngineStore.varsOverride(it, voice));
+
+        // 每音色的持久数据（插件往 ttsrv.tts.data 里塞的东西）
+        Map<String, String> data = new LinkedHashMap<String, String>();
+        String td = it == null ? "" : it.s("tts_data", "");
+        if (td.trim().length() > 0) {
+            try {
+                org.json.JSONObject o = new org.json.JSONObject(td);
+                for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
+                    String key = k.next();
+                    data.put(key, o.optString(key, ""));
+                }
+            } catch (Throwable ignored) { }
+        }
+
+        String id = it == null || it.id.length() == 0 ? "plugin" : it.id;
+        PluginBridge h = new PluginBridge(c, id, it == null ? "" : it.s("src", ""), vars, data,
+                locale, voice.length() > 0 ? voice : TtsEngine.shortVoice(Prefs.voice(c)));
+        // 构造里已经 eval() + onLoad() + onLoadUI() + onLoadData()（照它的生命周期）
+        return h;
+    }
+
+    /** 引擎级的插件变量（user_vars 优先，其次 cfg 里的散键）。 */
+    public static LinkedHashMap<String, String> baseVars(EngineStore.Item it) {
+        LinkedHashMap<String, String> vars = new LinkedHashMap<String, String>();
         String uv = it == null ? "" : it.s("user_vars", "");
         if (uv.trim().length() > 0) {
             try {
@@ -241,25 +266,16 @@ public final class JsTtsEngine implements TtsEngine {
                 if (val.trim().length() > 0) vars.put(key, val);
             }
         }
+        return vars;
+    }
 
-        // 每音色的持久数据（插件往 ttsrv.tts.data 里塞的东西）
-        Map<String, String> data = new LinkedHashMap<String, String>();
-        String td = it == null ? "" : it.s("tts_data", "");
-        if (td.trim().length() > 0) {
-            try {
-                org.json.JSONObject o = new org.json.JSONObject(td);
-                for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
-                    String key = k.next();
-                    data.put(key, o.optString(key, ""));
-                }
-            } catch (Throwable ignored) { }
+    /** 这个音色最终要用的变量：引擎级 + 该音色的覆盖。 */
+    public static LinkedHashMap<String, String> varsFor(EngineStore.Item it, String voice) {
+        LinkedHashMap<String, String> vars = baseVars(it);
+        if (voice != null && voice.trim().length() > 0) {
+            vars.putAll(EngineStore.varsOverride(it, voice));
         }
-
-        String id = it == null || it.id.length() == 0 ? "plugin" : it.id;
-        PluginBridge h = new PluginBridge(c, id, it == null ? "" : it.s("src", ""), vars, data,
-                locale, voice.length() > 0 ? voice : TtsEngine.shortVoice(Prefs.voice(c)));
-        // 构造里已经 eval() + onLoad() + onLoadUI() + onLoadData()（照它的生命周期）
-        return h;
+        return vars;
     }
 
     /** 把插件改过的 tts.data 存回引擎配置 —— 下次合成接着用（它本来就是持久存储）。 */
@@ -317,6 +333,7 @@ public final class JsTtsEngine implements TtsEngine {
         // 同一个插件运行时同时被两个合成碰，就会互相把会话搅烂 → No data written。
         synchronized (h) {
             String v = pickVoice(c, s.voice);
+            h.applyVars(varsFor(it, v));      // 这个音色单独覆盖的变量（比如豆包的「语气自设」）
             // 音色/参数没变就别再折腾插件一遍 —— 分角色朗读是"一个音色念几句又换下一个"，
             // 每次 setSource + onVoiceChanged 都会让插件重新初始化一回（慢的就是这一下）。
             String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
@@ -371,6 +388,7 @@ public final class JsTtsEngine implements TtsEngine {
 
         synchronized (h) {
             String v = pickVoice(c, s.voice);
+            h.applyVars(varsFor(it, v));
             String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
             if (!sig.equals(h.getAppliedSig())) {
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);

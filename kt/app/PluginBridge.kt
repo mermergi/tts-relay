@@ -117,6 +117,25 @@ class PluginBridge(
     /** 插件改过的每音色数据 —— 调用方负责存起来，下次接着用。 */
     fun ttsData(): Map<String, String> = source.data
 
+    /**
+     * 换一组插件变量（同一个宿主按音色切）。
+     *
+     * <p>插件读的是 {@code ttsrv.userVars} 这个 Map <b>本体</b>（TtsEngineContext 里存的是引用），
+     * 所以必须原地 clear+putAll，不能换个新 Map —— 换了插件那边还是旧的。
+     */
+    @Synchronized
+    fun applyVars(vars: Map<String, String>?) {
+        try {
+            @Suppress("UNCHECKED_CAST")
+            val m = plugin.userVars as? MutableMap<String, String> ?: return
+            m.clear()
+            vars?.forEach { (k, v) ->
+                if (v != null && v.trim().isNotEmpty()) m[k] = v
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     /** 换一路音色/参数。 */
     fun setSource(locale: String, voice: String, speed: Float, volume: Float, pitch: Float) {
         source = PluginTtsSource(
