@@ -227,9 +227,11 @@ class PluginBridge(
     /** 它界面上的音色表：先 `getLocales()`，再逐个 `getVoices(locale)`。 */
     fun locales(): Map<String, String> = engine.getLocales()
 
-    /** 平铺成 我们界面的 `名字‖取值`。 */
+    /** 平铺成 我们界面的 `名字‖取值`；第 3 位是插件给的图标地址（没有就是空串）。 */
     fun voices(locale: String): List<Array<String>> =
-        engine.getVoices(locale).map { arrayOf(it.name.ifEmpty { it.id }, it.id) }
+        engine.getVoices(locale).map {
+            arrayOf(it.name.ifEmpty { it.id }, it.id, it.icon ?: "")
+        }
 
     fun sampleRate(locale: String, voice: String): Int? = engine.getSampleRate(locale, voice)
 

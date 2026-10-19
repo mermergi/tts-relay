@@ -27,8 +27,24 @@ class JSpinner(context: Context, val hint: CharSequence) : FrameLayout(context) 
         get() = mItems
         set(value) {
             mItems = value
-            bar.adapter = ArrayAdapter(context,
-                android.R.layout.simple_spinner_dropdown_item, value.map { it.name.toString() })
+            // 不用系统的 simple_spinner_*_item：那套字号/内边距是按列表页设计的，
+            // 塞进这种窄条里会变成"一行占半屏"。自己给个紧凑的 TextView 当行。
+            bar.adapter = object : ArrayAdapter<String>(context, 0, value.map { it.name.toString() }) {
+                override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View =
+                    row(position, convertView)
+
+                override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View =
+                    row(position, convertView)
+
+                private fun row(position: Int, convertView: android.view.View?): android.view.View {
+                    val t = (convertView as? android.widget.TextView) ?: android.widget.TextView(context)
+                    t.text = getItem(position)
+                    t.textSize = 14f
+                    t.setPadding(dp(14), dp(11), dp(14), dp(11))
+                    t.setTextColor(0xFFE9ECF6.toInt())
+                    return t
+                }
+            }
             val pos = if (mSelectedPosition in value.indices) mSelectedPosition else 0
             mSelectedPosition = pos
             bar.setSelection(pos, false)

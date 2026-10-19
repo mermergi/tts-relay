@@ -881,6 +881,20 @@ public final class EngineStore {
         return out;
     }
 
+    /** 音色 → 插件给的图标地址（插件音色表里带 iconUrl 时记下来，界面上显示）。 */
+    private static final java.util.Map<String, String> VOICE_ICON =
+            new java.util.concurrent.ConcurrentHashMap<String, String>();
+
+    public static void putVoiceIcon(String voice, String url) {
+        if (voice == null || voice.length() == 0) return;
+        if (url == null || url.trim().length() == 0) return;
+        VOICE_ICON.put(voice, url.trim());
+    }
+
+    public static String voiceIcon(String voice) {
+        return voice == null ? "" : VOICE_ICON.getOrDefault(voice, "");
+    }
+
     /** 这个引擎叫什么（界面上按来源分组时显示）。 */
     public static String engineLabel(Context c, String id) {
         if (id == null || id.length() == 0) return "";

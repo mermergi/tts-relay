@@ -549,10 +549,12 @@ public final class JsTtsEngine implements TtsEngine {
                 for (String[] v : vs) {
                     String name = v[0] == null ? "" : v[0];
                     String id = v[1] == null ? "" : v[1];
+                    String icon = v.length > 2 && v[2] != null ? v[2] : "";
                     if (name.length() == 0 && id.length() == 0) continue;
                     String one = id.length() == 0 || id.equals(name)
                             ? name : name + EngineStore.SEP + id;
                     if (seen.add(one)) out.add(one);
+                    if (icon.length() > 0) EngineStore.putVoiceIcon(one, icon);
                 }
             }
         } catch (Throwable t) {
