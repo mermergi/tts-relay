@@ -34,6 +34,10 @@ class PluginBridge(
     )
 
     companion object {
+        /** 反射拿到的 LogBus.add —— Kotlin 先于 javac 编译，只能这么接。 */
+        @Volatile
+        private var logBusAdd: java.lang.reflect.Method? = null
+
         /**
          * 最近一次"插件真的吐了字节"的时间戳（毫秒）。全局一份就够了 —— 合成是串行的。
          * 看门狗靠它区分"慢"和"吊死"：还在吐就用不着超时。
@@ -66,8 +70,20 @@ class PluginBridge(
         try {
             engine.runtime.console.addLogListener { entry ->
                 try {
-                    // Kotlin 编译在 javac 之前，看不到我的 Java 类 —— 直接写 logcat（adb 能读）
-                    android.util.Log.i("ttsrelay", "插件：" + entry.message)
+                    val msg = "插件：" + entry.message
+                    // Kotlin 编译在 javac 之前，直接引用我的 Java 类看不到 —— 走反射进日志页。
+                    // 插件自己就是用 console 吐槽「语气控件挂载失败 / StartSession tone=…」的，
+                    // 不接过来就只能连 adb 才能看，等于瞎。
+                    android.util.Log.i("ttsrelay", msg)
+                    if (logBusAdd == null) {
+                        logBusAdd = try {
+                            Class.forName("com.mermergi.ttsrelay.LogBus")
+                                .getMethod("add", String::class.java)
+                        } catch (_: Throwable) {
+                            null
+                        }
+                    }
+                    logBusAdd?.invoke(null, msg)
                 } catch (_: Throwable) {
                 }
             }

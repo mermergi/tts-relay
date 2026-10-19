@@ -264,7 +264,18 @@ public final class JsTtsEngine implements TtsEngine {
 
     /** 把插件改过的 tts.data 存回引擎配置 —— 下次合成接着用（它本来就是持久存储）。 */
     private void saveData(Context c, PluginBridge h) {
-        if (it == null || c == null) return;
+        persistData(c, it, h);
+    }
+
+    /**
+     * 把插件自己存的「每套 TTS 配置的数据」（{@code ttsrv.tts.data}）写回引擎配置。
+     *
+     * <p>合成完会调一次；<b>单音色编辑页也要调</b> —— 那儿改的是同一份数据
+     * （豆包的「语气」就是存这里），不存的话：关掉页面就回退成默认，看着就是
+     * 「语气时不时不生效」。
+     */
+    public static void persistData(Context c, EngineStore.Item item, PluginBridge h) {
+        if (item == null || h == null || c == null) return;
         try {
             org.json.JSONObject o = new org.json.JSONObject();
             for (Map.Entry<String, String> e : h.ttsData().entrySet()) {
@@ -272,9 +283,9 @@ public final class JsTtsEngine implements TtsEngine {
                 o.put(e.getKey(), e.getValue());
             }
             String json = o.toString();
-            if (json.equals(it.s("tts_data", ""))) return;      // 没变不写盘
-            it.put("tts_data", json);
-            EngineStore.put(c, it);
+            if (json.equals(item.s("tts_data", ""))) return;      // 没变不写盘
+            item.put("tts_data", json);
+            EngineStore.put(c, item);
         } catch (Throwable t) {
             LogBus.error("存插件的每音色数据失败：" + t.getMessage());
         }

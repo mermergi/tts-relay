@@ -288,9 +288,19 @@ public final class PluginTtsActivity extends Activity {
         it.put("lang", curLocale);
         it.put("voice", curVoice);
         EngineStore.put(this, it);
+        // 插件界面上改的东西（豆包那个「语气」下拉存在 ttsrv.tts.data 里）也要存下来，
+        // 不然关了页面就没了 —— 表现就是「语气时不时不生效」。
+        JsTtsEngine.persistData(this, it, bridge);
         JsTtsEngine.clearVoices();
         toast("已保存");
         finish();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // 直接按返回键离开也要把插件界面上的选择留下（保存按钮只是"我确信"一下）
+        try { JsTtsEngine.persistData(this, it, bridge); } catch (Throwable ignored) { }
     }
 
     private LinearLayout kvRow(String label, TextView val) {
