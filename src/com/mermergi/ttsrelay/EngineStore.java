@@ -470,51 +470,97 @@ public final class EngineStore {
         f.delete();
     }
 
-    /** 插件声明的变量表：key → {label, hint, ...}。 */
-    public static JSONObject defVars(Item it) {
-        try { return new JSONObject(it == null ? "" : it.s("def_vars", "")); }
-        catch (Throwable t) { return new JSONObject(); }
-    }
-
     /**
-     * 这个音色<b>单独覆盖</b>的插件变量。存在 {@code vars_by_voice} 里：
-     * {@code {"<voice>": {"tone_text": "…"}}}。
-     * 没覆盖的键就跟随引擎页那一份（TTS Server 的变量是引擎级的，我们在它上面加一层"每音色"）。
+     * 这个音色自己的 {@code ttsrv.tts.data}（插件的「每套 TTS 配置数据」）。
+     *
+     * <p>照 TTS Server：data 本来就是<b>跟着 TTS 配置（音色）走</b>的，一个音色一份。
+     * 我们这边一个插件引擎可以挂很多音色，所以按音色分开存 —— 豆包的「语气」正是存在这里，
+     * 以前只存了引擎那一份，等于所有音色共用同一个语气。
      */
-    public static java.util.LinkedHashMap<String, String> varsOverride(Item it, String voice) {
+    public static java.util.LinkedHashMap<String, String> ttsDataForVoice(Item it, String voice) {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
-        if (it == null || voice == null || voice.trim().length() == 0) return m;
+        if (it == null) return m;
+        String key = voice == null ? "" : voice.trim();
+        if (key.length() > 0) {
+            try {
+                JSONObject all = new JSONObject(it.s("tts_data_by_voice", ""));
+                JSONObject one = all.optJSONObject(key);
+                if (one != null) {
+                    for (java.util.Iterator<String> k = one.keys(); k.hasNext(); ) {
+                        String kk = k.next();
+                        m.put(kk, one.optString(kk, ""));
+                    }
+                    return m;
+                }
+            } catch (Throwable ignored) { }
+        }
         try {
-            JSONObject all = new JSONObject(it.s("vars_by_voice", ""));
-            JSONObject one = all.optJSONObject(voice.trim());
-            if (one == null) return m;
-            for (java.util.Iterator<String> k = one.keys(); k.hasNext(); ) {
-                String key = k.next();
-                String v = one.optString(key, "");
-                if (v != null && v.trim().length() > 0) m.put(key, v);
+            JSONObject o = new JSONObject(it.s("tts_data", ""));
+            for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
+                String kk = k.next();
+                m.put(kk, o.optString(kk, ""));
             }
         } catch (Throwable ignored) { }
         return m;
     }
 
-    /** 写入/清掉某个音色的变量覆盖（空值 = 跟随引擎页）。 */
-    public static void setVarsOverride(Item it, String voice, java.util.Map<String, String> vals) {
+    /**
+     * 这个音色自己的语速 / 音量 / 音高（0 = 跟随全局）。
+     * 照 TTS Server：这三个参数本来就挂在「TTS 配置（音色）」上，一个音色一份。
+     */
+    public static float[] paramsForVoice(Item it, String voice) {
+        float[] out = new float[]{0f, 0f, 0f};
+        if (it == null || voice == null || voice.trim().length() == 0) return out;
+        try {
+            JSONObject all = new JSONObject(it.s("params_by_voice", ""));
+            JSONObject one = all.optJSONObject(voice.trim());
+            if (one == null) return out;
+            out[0] = (float) one.optDouble("speed", 0);
+            out[1] = (float) one.optDouble("volume", 0);
+            out[2] = (float) one.optDouble("pitch", 0);
+        } catch (Throwable ignored) { }
+        return out;
+    }
+
+    /** 存这个音色的三项参数（<=0 的项就不存，等于跟随上层）。 */
+    public static void setParamsForVoice(Item it, String voice, float speed, float volume, float pitch) {
         if (it == null || voice == null || voice.trim().length() == 0) return;
         try {
             String key = voice.trim();
-            JSONObject all = new JSONObject(it.s("vars_by_voice", ""));
+            JSONObject all = new JSONObject(it.s("params_by_voice", ""));
             JSONObject one = new JSONObject();
-            if (vals != null) {
-                for (java.util.Map.Entry<String, String> e : vals.entrySet()) {
-                    if (e.getValue() != null && e.getValue().trim().length() > 0) {
-                        one.put(e.getKey(), e.getValue());
-                    }
-                }
-            }
+            if (speed > 0f) one.put("speed", (double) speed);
+            if (volume > 0f) one.put("volume", (double) volume);
+            if (pitch > 0f) one.put("pitch", (double) pitch);
             if (one.length() == 0) all.remove(key);
             else all.put(key, one);
-            if (all.length() == 0) it.cfg.remove("vars_by_voice");
-            else it.put("vars_by_voice", all.toString());
+            if (all.length() == 0) it.cfg.remove("params_by_voice");
+            else it.put("params_by_voice", all.toString());
+        } catch (Throwable ignored) { }
+    }
+
+    /** 存这个音色的 tts.data；和引擎级那份一样就不单独存（让它跟着引擎默认走）。 */
+    public static void setTtsDataForVoice(Item it, String voice, java.util.Map<String, String> data) {
+        if (it == null) return;
+        String key = voice == null ? "" : voice.trim();
+        try {
+            JSONObject one = new JSONObject();
+            if (data != null) {
+                for (java.util.Map.Entry<String, String> e : data.entrySet()) {
+                    if (e.getValue() != null) one.put(e.getKey(), e.getValue());
+                }
+            }
+            if (key.length() == 0) {         // 不知道是哪个音色：就写引擎级那份
+                if (one.length() == 0) it.cfg.remove("tts_data");
+                else it.put("tts_data", one.toString());
+                return;
+            }
+            JSONObject all = new JSONObject(it.s("tts_data_by_voice", ""));
+            JSONObject base = new JSONObject(it.s("tts_data", ""));
+            if (one.toString().equals(base.toString())) all.remove(key);
+            else all.put(key, one);
+            if (all.length() == 0) it.cfg.remove("tts_data_by_voice");
+            else it.put("tts_data_by_voice", all.toString());
         } catch (Throwable ignored) { }
     }
 
@@ -893,6 +939,12 @@ public final class EngineStore {
             String owner = ownerOfVoice(c, voice);
             Item it = owner == null ? null : get(c, owner);
             if (it == null) return;
+            // 先看这个音色自己的三项（TTS Server 就是挂在音色上的）
+            float[] pv = paramsForVoice(it, voice);
+            if (pv[0] > 0f) say.rate = pv[0];
+            if (pv[1] > 0f) say.volume = pv[1];
+            if (pv[2] > 0f) say.pitch = pv[2];
+            if (pv[0] > 0f || pv[1] > 0f || pv[2] > 0f) return;
             float sp = num(it.s("speed", ""), 0f);
             float vo = num(it.s("vol", ""), 0f);
             float pi = num(it.s("pitch_", ""), 0f);

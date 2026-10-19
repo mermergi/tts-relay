@@ -34,6 +34,15 @@ class JTextInput(context: Context, val hint: CharSequence? = null) : FrameLayout
 
         fun length(): Int = input.text?.length ?: 0
 
+        /** 上游那个 MyEditable 有 append/clear，插件里会直接这么用。 */
+        fun append(s: CharSequence?) {
+            input.append(s ?: "")
+        }
+
+        fun clear() {
+            input.setText("")
+        }
+
         override fun toString(): String = input.text?.toString() ?: ""
     }
 

@@ -41,8 +41,9 @@ class JSpinner(context: Context, val hint: CharSequence) : FrameLayout(context) 
             if (value in mItems.indices) bar.setSelection(value, false)
         }
 
+    /** 上游的 getter 返回的就是选中的那个 Item（不是它的 value）；插件里有写 `spinner.value.value` 的。 */
     var value: Any
-        get() = mItems.getOrNull(mSelectedPosition)?.value ?: ""
+        get() = mItems.getOrNull(mSelectedPosition) ?: Item("", "")
         set(v) {
             val i = mItems.indexOfFirst { it.value == v }
             if (i >= 0) selectedPosition = i

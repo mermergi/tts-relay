@@ -118,20 +118,18 @@ class PluginBridge(
     fun ttsData(): Map<String, String> = source.data
 
     /**
-     * 换一组插件变量（同一个宿主按音色切）。
+     * 换这个音色自己的 {@code ttsrv.tts.data}（插件的「每套 TTS 配置数据」）。
      *
-     * <p>插件读的是 {@code ttsrv.userVars} 这个 Map <b>本体</b>（TtsEngineContext 里存的是引用），
-     * 所以必须原地 clear+putAll，不能换个新 Map —— 换了插件那边还是旧的。
+     * <p>插件读的是 {@code ttsrv.tts.data} 这个 Map <b>本体</b>，所以必须原地 clear+putAll，
+     * 换个新 Map 它那边还是旧的。
      */
     @Synchronized
-    fun applyVars(vars: Map<String, String>?) {
+    fun applyData(data: Map<String, String>?) {
         try {
             @Suppress("UNCHECKED_CAST")
-            val m = plugin.userVars as? MutableMap<String, String> ?: return
-            m.clear()
-            vars?.forEach { (k, v) ->
-                if (v != null && v.trim().isNotEmpty()) m[k] = v
-            }
+            val d = source.data as? MutableMap<String, String> ?: return
+            d.clear()
+            data?.forEach { (k, v) -> if (v != null) d[k] = v }
         } catch (_: Throwable) {
         }
     }
@@ -234,4 +232,20 @@ class PluginBridge(
         engine.getVoices(locale).map { arrayOf(it.name.ifEmpty { it.id }, it.id) }
 
     fun sampleRate(locale: String, voice: String): Int? = engine.getSampleRate(locale, voice)
+
+    /** 插件要的是"它给的是不是裸 PCM"（false = 需要我们自己包一层 WAV 再播）。 */
+    @JvmOverloads
+    fun needDecode(locale: String, voice: String = ""): Boolean = try {
+        engine.isNeedDecode(locale, voice)
+    } catch (_: Throwable) {
+        true
+    }
+
+    /** 插件声明的采样率（裸 PCM 时包 WAV 头要用），拿不到就给 0。 */
+    @JvmOverloads
+    fun pcmSampleRate(locale: String, voice: String = ""): Int = try {
+        engine.getSampleRate(locale, voice) ?: 0
+    } catch (_: Throwable) {
+        0
+    }
 }
