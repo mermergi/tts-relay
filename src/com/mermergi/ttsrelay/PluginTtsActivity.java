@@ -64,10 +64,10 @@ public final class PluginTtsActivity extends Activity {
     private com.mermergi.ttsrelay.js.PluginBridge bridge;
 
     @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
         App.install(this);
-        p = Palette.of(this);
-        setTheme(p.light ? R.style.AppTheme_Light : R.style.AppTheme);
+        // 先定主题再 super.onCreate（主题必须在 inflate 之前生效）
+        p = Palette.apply(this);
+        super.onCreate(b);
         ui = new Ui(this, p);
 
         Intent in = getIntent();

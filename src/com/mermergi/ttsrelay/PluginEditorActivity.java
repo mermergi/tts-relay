@@ -62,9 +62,9 @@ public final class PluginEditorActivity extends Activity {
     private boolean loading = false;
 
     @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
         App.install(this);
-        p = Palette.of(this);
+        p = Palette.apply(this);
+        super.onCreate(b);
         ui = new Ui(this, p);
 
         String id = getIntent() == null ? "" : getIntent().getStringExtra(EXTRA_ID);

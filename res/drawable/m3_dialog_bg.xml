@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M3 弹窗底板：28dp 圆角 + surface 色。
+
+  为什么自己画：本应用用的是平台 AlertDialog（不是 MaterialAlertDialogBuilder），
+  它不会自己叠底板，弹窗底板就是主题里的 android:windowBackground。
+  M3 的 Dialog 主题链里 windowBackground 还是 M2 那套，所以这里显式给一个。
+
+  颜色走主题属性：深色/浅色、动态色都跟着走。
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="0dp"
+    android:insetRight="0dp"
+    android:insetTop="0dp"
+    android:insetBottom="0dp">
+
+    <shape android:shape="rectangle">
+        <corners android:radius="28dp" />
+        <solid android:color="?attr/colorSurface" />
+    </shape>
+</inset>

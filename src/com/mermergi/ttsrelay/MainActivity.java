@@ -32,7 +32,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -64,7 +63,6 @@ public class MainActivity extends Activity {
 
     // ── 骨架 ──
     private FrameLayout content;
-    private final TextView[] tabInd = new TextView[5];
     private final TextView[] tabName = new TextView[5];
     private int tab = -1;
 
@@ -73,7 +71,7 @@ public class MainActivity extends Activity {
     private Button toggleBtn, pauseBtn, muteBtn;
     private final TextView[] stat = new TextView[4];
     private TextView addrView, lanAddrView;
-    private Switch lanSwitch;
+    private com.google.android.material.materialswitch.MaterialSwitch lanSwitch;
 
     // ── 朗读 ──
     private TextView voiceView, rateVal, pitchVal, volVal, previewOut;
@@ -83,8 +81,8 @@ public class MainActivity extends Activity {
 
     // ── 设置 ──
     private EditText upstreamField, portField, ttsField, maxChunkField, skipKeyField, smallTokenField;
-    private Switch skipSwitch, autoStartSwitch;
-    private Switch mvSwitch, speakUserSwitch;
+    private com.google.android.material.materialswitch.MaterialSwitch skipSwitch, autoStartSwitch;
+    private com.google.android.material.materialswitch.MaterialSwitch mvSwitch, speakUserSwitch;
     private TextView userVoiceView;
     /** 这次开音色库是给「用户消息」挑音色。 */
     private boolean pickUserVoice = false;
@@ -146,9 +144,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         App.install(this);
-        p = Palette.of(this);
-        // 先把主题定下来：Material 的控件（底部抽屉 / 输入框 / 按钮）在 inflate 时读的就是它
-        setTheme(p.light ? R.style.AppTheme_Light : R.style.AppTheme);
+        // 先定主题、再从主题里取 M3 角色（Palette.apply 内部先 setTheme）
+        p = Palette.apply(this);
         super.onCreate(b);
         ui = new Ui(this, p);
         applyWindow();
@@ -213,58 +210,47 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         root.addView(buildTabBar(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(60)));
+                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)));
 
         setContentView(root);
         switchTab(LAST_TAB);
     }
 
+    /**
+     * M3 底部导航：选中项是一颗 secondaryContainer 药丸（Material You 的标志性样子），
+     * 未选是 onSurfaceVariant 文字。没有描边分隔线 —— 层级靠底色 tone。
+     */
     private View buildTabBar() {
-        LinearLayout wrap = ui.col();
-        wrap.setBackgroundColor(p.card);
-        View line = new View(this);
-        line.setBackgroundColor(p.border);
-        wrap.addView(line, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, ui.dp(1))));
-
         LinearLayout bar = ui.row();
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(p.card);
+        bar.setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6));
         for (int i = 0; i < 5; i++) {
             final int idx = i;
-            LinearLayout item = ui.col();
-            item.setGravity(Gravity.CENTER);
-            item.setLayoutParams(new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-
-            TextView ind = new TextView(this);
-            ind.setLayoutParams(new LinearLayout.LayoutParams(ui.dp(22), ui.dp(3)));
-            ind.setBackground(ui.round(p.accent, 2));
-
-            TextView nm = new TextView(this);
-            nm.setText(TAB_NAME[i]);
-            nm.setTextSize(12.5f);
-            nm.setGravity(Gravity.CENTER);
-            nm.setPadding(0, ui.dp(5), 0, 0);
-
-            item.addView(ind);
-            item.addView(nm);
-            item.setOnClickListener(new View.OnClickListener() {
+            TextView pill = new TextView(this);
+            pill.setText(TAB_NAME[i]);
+            pill.setTextAppearance(this, R.style.TextAppearance_Material3_LabelLarge);
+            pill.setGravity(Gravity.CENTER);
+            pill.setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10));
+            pill.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            pill.setOnClickListener(new View.OnClickListener() {
                 public void onClick(View v) { switchTab(idx); }
             });
-            tabInd[i] = ind;
-            tabName[i] = nm;
-            bar.addView(item);
+            tabName[i] = pill;
+            bar.addView(pill);
         }
-        wrap.addView(bar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        return wrap;
+        return bar;
     }
 
     private void paintTabs() {
         for (int i = 0; i < 5; i++) {
             boolean on = (i == tab);
-            tabInd[i].setBackground(on ? ui.round(p.accent, 2) : ui.round(0x00000000, 2));
-            tabName[i].setTextColor(on ? p.accent : p.textMuted);
-            tabName[i].setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            TextView t = tabName[i];
+            if (t == null) continue;
+            t.setTextColor(on ? p.chipFg : p.textSecondary);
+            t.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            t.setBackground(on ? ui.round(p.chipBg, 22) : ui.round(0x00000000, 22));
         }
     }
 
@@ -290,7 +276,8 @@ public class MainActivity extends Activity {
     }
 
     private View scroll(LinearLayout col) {
-        col.setPadding(ui.dp(14), ui.dp(16), ui.dp(14), ui.dp(28));
+        // M3 布局基准：16dp 页边距、区块之间 8dp 节奏
+        col.setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(32));
         ScrollView sv = new ScrollView(this);
         sv.setClipToPadding(false);
         sv.addView(col, new ViewGroup.LayoutParams(
@@ -333,8 +320,9 @@ public class MainActivity extends Activity {
 
         // ── 状态大卡 ──
         LinearLayout hero = ui.col();
-        hero.setBackground(ui.gradient(p.accentSoft, p.card, 20));
-        hero.setPadding(ui.dp(18), ui.dp(18), ui.dp(18), ui.dp(16));
+        // M3 filled tonal card：primaryContainer 底 + XL 圆角（Material You 的标志性大色块）
+        hero.setBackground(ui.round(p.accentSoft, Ui.R_XL));
+        hero.setPadding(ui.dp(20), ui.dp(20), ui.dp(20), ui.dp(18));
         LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         hlp.bottomMargin = ui.dp(12);
@@ -347,8 +335,9 @@ public class MainActivity extends Activity {
         heroDot.setTextSize(15);
         stRow.addView(heroDot);
         heroStatus = new TextView(this);
-        heroStatus.setTextSize(21);
-        heroStatus.setTypeface(Typeface.DEFAULT_BOLD);
+        heroStatus.setTextAppearance(this, R.style.TextAppearance_Material3_HeadlineSmall);
+        heroStatus.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        heroStatus.setTextColor(p.onAccentSoft);
         stRow.addView(heroStatus);
         LinearLayout.LayoutParams hsp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -357,10 +346,10 @@ public class MainActivity extends Activity {
         hero.addView(stRow);
 
         heroSub = new TextView(this);
-        heroSub.setTextSize(12);
-        heroSub.setTextColor(p.textSecondary);
-        heroSub.setLineSpacing(ui.dp(3), 1f);
-        heroSub.setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(14));
+        heroSub.setTextAppearance(this, R.style.TextAppearance_Material3_BodyMedium);
+        heroSub.setTextColor(p.onAccentSoft);
+        heroSub.setLineSpacing(ui.dp(4), 1f);
+        heroSub.setPadding(ui.dp(2), ui.dp(8), 0, ui.dp(16));
         hero.addView(heroSub);
 
         toggleBtn = ui.bigBtn("启动中转", true, new View.OnClickListener() {
@@ -370,13 +359,13 @@ public class MainActivity extends Activity {
 
         LinearLayout quick = ui.row();
         quick.setLayoutParams(topGap(8));
-        pauseBtn = ui.btn("暂停", false, new View.OnClickListener() {
+        pauseBtn = ui.btnOnContainer("暂停", new View.OnClickListener() {
             public void onClick(View v) { togglePause(); }
         });
-        muteBtn = ui.btn("静音", false, new View.OnClickListener() {
+        muteBtn = ui.btnOnContainer("静音", new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
         });
-        Button skipB = ui.btn("下一句", false, new View.OnClickListener() {
+        Button skipB = ui.btnOnContainer("下一句", new View.OnClickListener() {
             public void onClick(View v) { skipCurrent(); }
         });
         quick.addView(pauseBtn, ui.weightGap(1f, 8));
@@ -2171,8 +2160,8 @@ public class MainActivity extends Activity {
 
         if (heroStatus != null) {
             heroStatus.setText(up ? "运行中" : "未运行");
-            heroStatus.setTextColor(up ? p.ok : p.textMuted);
-            heroDot.setTextColor(up ? p.ok : p.textMuted);
+            heroStatus.setTextColor(up ? p.ok : Palette.alpha(p.onAccentSoft, 0.72f));
+            heroDot.setTextColor(up ? p.ok : Palette.alpha(p.onAccentSoft, 0.72f));
             String state = !up ? "点下面按钮启动"
                     : (muted ? "已静音 · 只中转不朗读" : (paused ? "已暂停朗读" : "正在朗读"));
             heroSub.setText("127.0.0.1:" + port + "  →  " + shortHost(Prefs.upstream(this))
@@ -2906,6 +2895,7 @@ public class MainActivity extends Activity {
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this, sheetTheme());
 
         LinearLayout wrap = ui.col();
+        wrap.setBackground(ui.sheetBg());                // M3 抽屉底板（容器自身透明，底得自己画）
         ImageView handle = new ImageView(this);          // 库里那根真的 drag handle
         handle.setImageResource(R.drawable.mtrl_bottomsheet_drag_handle);
         LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui.dp(32), ui.dp(4));

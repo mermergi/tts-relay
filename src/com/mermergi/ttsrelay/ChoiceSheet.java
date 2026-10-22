@@ -36,7 +36,9 @@ final class ChoiceSheet {
         final BottomSheetDialog dlg = new BottomSheetDialog(ctx, themeRes);
 
         LinearLayout box = ui.col();
-        box.setPadding(ui.dp(18), ui.dp(2), ui.dp(18), ui.dp(16));
+        // M3 抽屉底板：28dp 上圆角 + surface 色（M3 BottomSheetDialog 的容器自己是透明的）
+        box.setBackground(ui.sheetBg());
+        box.setPadding(ui.dp(18), ui.dp(20), ui.dp(18), ui.dp(24));
 
         TextView t = new TextView(ctx);
         t.setText(title);
