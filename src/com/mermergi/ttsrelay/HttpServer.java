@@ -402,6 +402,74 @@ public final class HttpServer {
                     + esc(cur == null ? "?" : cur.label) + "\"}");
             return;
         }
+        if ("/_jsprobe".equals(path)) {
+            // 调试：在插件宿主里直接跑一段 JS（和插件同一个作用域，能碰 ttsrv.*）。
+            // 用来验「插件写 ttsrv.tts.data 到底写没写进去」——?js=... 可选 &persist=1。
+            EngineStore.Item pIt = EngineStore.get(ctx,
+                    qs.get("id") != null ? qs.get("id") : EngineStore.activeId(ctx));
+            String pVoice = qs.get("voice");
+            if (pVoice == null) pVoice = "";
+            String js = qs.get("js");
+            com.mermergi.ttsrelay.js.PluginBridge h = null;
+            String pErr = null;
+            String pRes = "";
+            try {
+                h = JsTtsEngine.openFor(ctx, pIt, pIt == null ? "zh-CN" : pIt.s("lang", "zh-CN"), pVoice);
+                if (js != null) {
+                    Object r = h.evalJs(js);
+                    pRes = String.valueOf(r);
+                }
+                if (qs.get("persist") != null) JsTtsEngine.persistData(ctx, pIt, pVoice, h);
+            } catch (Throwable t) {
+                pErr = String.valueOf(t);
+            }
+            JSONObject o = new JSONObject();
+            try {
+                o.put("ok", pErr == null);
+                o.put("result", pRes);
+                o.put("error", pErr == null ? JSONObject.NULL : pErr);
+                JSONObject d = new JSONObject();
+                if (h != null) {
+                    for (java.util.Map.Entry<String, String> e : h.ttsData().entrySet()) {
+                        d.put(e.getKey(), e.getValue());
+                    }
+                }
+                o.put("data", d);
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
+            return;
+        }
+        if ("/_ttsdata".equals(path)) {
+            // 调试：看（或改）某个音色自己的 ttsrv.tts.data —— 插件往里存的东西
+            // （豆包的「自定义语气指令 tone_text」就在这儿）。?voice=raw 查，?k=&v= 写。
+            EngineStore.Item mIt = EngineStore.get(ctx,
+                    qs.get("id") != null ? qs.get("id") : EngineStore.activeId(ctx));
+            String mVoice = qs.get("voice");
+            if (mVoice == null) mVoice = "";
+            java.util.LinkedHashMap<String, String> mData = EngineStore.ttsDataForVoice(mIt, mVoice);
+            String mk = qs.get("k");
+            String mv = qs.get("v");
+            if (mk != null && mv != null && mIt != null) {
+                mData.put(mk, mv);
+                EngineStore.setTtsDataForVoice(mIt, mVoice, mData);
+                EngineStore.put(ctx, mIt);
+            } else if (mk != null && qs.get("del") != null && mIt != null) {
+                mData.remove(mk);
+                EngineStore.setTtsDataForVoice(mIt, mVoice, mData);
+                EngineStore.put(ctx, mIt);
+            }
+            JSONObject o = new JSONObject();
+            try {
+                o.put("voice", mVoice);
+                JSONObject d = new JSONObject();
+                for (java.util.Map.Entry<String, String> e : mData.entrySet()) {
+                    d.put(e.getKey(), e.getValue());
+                }
+                o.put("data", d);
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
+            return;
+        }
         if ("/_engines".equals(path)) {
             JSONObject o = new JSONObject();
             try {

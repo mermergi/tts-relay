@@ -1491,6 +1491,9 @@ public class MainActivity extends Activity {
         box.addView(paramSlider("音量", "vol", it));
         box.addView(paramSlider("音高", "pitch_", it));
 
+        // 这个抽屉自己开的插件宿主（按当前音色），保存/关掉时要把它的 ttsrv.tts.data 存回去
+        final com.mermergi.ttsrelay.js.PluginBridge[] hostRef =
+                new com.mermergi.ttsrelay.js.PluginBridge[1];
         box.addView(ui.btn("保存", true, new View.OnClickListener() {
             public void onClick(View v) {
                 String nm = nameBox.getText().toString().trim();
@@ -1498,6 +1501,8 @@ public class MainActivity extends Activity {
                 it.put("lang", lang[0]);
                 it.put("voice", curVoice[0]);
                 EngineStore.put(MainActivity.this, it);
+                // 插件界面上改的东西（豆包那个「自定义语气指令」存在 ttsrv.tts.data 里）
+                JsTtsEngine.persistData(MainActivity.this, it, curVoice[0], hostRef[0]);
                 JsTtsEngine.clearVoices();
                 renderEngines();
                 dismissSheet();
@@ -1505,13 +1510,26 @@ public class MainActivity extends Activity {
         }), ui.topGap(16));
 
         roleSheet = sheet(box);
+        // 手势划走 / 返回键关掉也一样存（跟单音色编辑页 onPause 的行为对齐）
+        try {
+            roleSheet.setOnDismissListener(new DialogInterface.OnDismissListener() {
+                public void onDismiss(DialogInterface d) {
+                    JsTtsEngine.persistData(MainActivity.this, it, curVoice[0], hostRef[0]);
+                }
+            });
+        } catch (Throwable ignored) { }
 
         // 起插件慢（要 eval 整个脚本），后台跑完再填
         new Thread(new Runnable() {
             public void run() {
-                final com.mermergi.ttsrelay.js.PluginBridge h =
-                        JsTtsEngine.sharedBridge(MainActivity.this, it);
-                if (h == null) return;
+                final com.mermergi.ttsrelay.js.PluginBridge h;
+                try {
+                    h = JsTtsEngine.openFor(MainActivity.this, it, lang[0], curVoice[0]);
+                } catch (Throwable t) {
+                    LogBus.error("打开插件界面失败：" + t.getMessage());
+                    return;
+                }
+                hostRef[0] = h;
                 final java.util.LinkedHashMap<String, String> locs;
                 final java.util.List<String[]> vs;
                 try {
@@ -1597,6 +1615,8 @@ public class MainActivity extends Activity {
                 ChoiceSheet.show(MainActivity.this, ui, p, sheetTheme(), "声音", null,
                         names, null, cur, new ChoiceSheet.OnPick() {
                             public void onPick(int i) {
+                                try { JsTtsEngine.persistData(MainActivity.this, it, curVoice[0], h); }
+                                catch (Throwable ignored) { }
                                 curVoice[0] = vs.get(i)[1];
                                 voiceVal.setText(vs.get(i)[0]);
                                 try { h.onVoiceChanged(lang[0], curVoice[0]); } catch (Throwable ignored) { }

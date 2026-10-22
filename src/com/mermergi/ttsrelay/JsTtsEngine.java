@@ -219,8 +219,9 @@ public final class JsTtsEngine implements TtsEngine {
     public static PluginBridge openFor(Context c, EngineStore.Item it, String locale, String voice) throws Exception {
         Map<String, String> vars = baseVars(it);
 
-        // 每音色的持久数据（插件往 ttsrv.tts.data 里塞的东西）—— 跟着音色走
-        Map<String, String> data = EngineStore.ttsDataForVoice(it, voice);
+        // 每音色的持久数据（插件往 ttsrv.tts.data 里塞的东西）—— 跟着音色走。
+        // 键统一用「取值部分」：音色表那一行是 `名字‖取值`，存/读两边必须同一个键。
+        Map<String, String> data = EngineStore.ttsDataForVoice(it, idOf(voice));
 
         String id = it == null || it.id.length() == 0 ? "plugin" : it.id;
         PluginBridge h = new PluginBridge(c, id, it == null ? "" : it.s("src", ""), vars, data,
@@ -294,13 +295,18 @@ public final class JsTtsEngine implements TtsEngine {
     public static void persistData(Context c, EngineStore.Item item, String voice, PluginBridge h) {
         if (item == null || h == null || c == null) return;
         try {
+            // 存和读用同一个键：音色表里的 `名字‖取值` 只取「取值」那部分
+            String key = idOf(voice);
             java.util.LinkedHashMap<String, String> data =
                     new java.util.LinkedHashMap<String, String>(h.ttsData());
             java.util.LinkedHashMap<String, String> before =
-                    EngineStore.ttsDataForVoice(item, voice);
+                    EngineStore.ttsDataForVoice(item, key);
             if (data.equals(before)) return;                       // 没变不写盘
-            EngineStore.setTtsDataForVoice(item, voice, data);
+            EngineStore.setTtsDataForVoice(item, key, data);
             EngineStore.put(c, item);
+            String dump = data.toString();
+            if (dump.length() > 200) dump = dump.substring(0, 200) + "…";
+            LogBus.add("插件数据已存 voice=[" + key + "] " + dump);
         } catch (Throwable t) {
             LogBus.error("存插件的每音色数据失败：" + t.getMessage());
         }

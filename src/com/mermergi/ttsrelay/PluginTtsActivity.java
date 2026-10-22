@@ -299,6 +299,10 @@ public final class PluginTtsActivity extends Activity {
         EngineStore.put(this, it);
         // 插件界面上改的东西（豆包那个「语气」下拉存在 ttsrv.tts.data 里）也要存下来 ——
         // 而且是按音色存的：这个音色选了什么语气，下次还是它。
+        try {
+            LogBus.add("页面保存：voice=[" + curVoice + "] bridge=" + (bridge != null)
+                    + " data=" + (bridge == null ? "-" : bridge.ttsData()));
+        } catch (Throwable ignored) { }
         JsTtsEngine.persistData(this, it, curVoice, bridge);
         JsTtsEngine.clearVoices();
         toast("已保存");

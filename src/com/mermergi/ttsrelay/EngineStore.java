@@ -477,13 +477,32 @@ public final class EngineStore {
      * 我们这边一个插件引擎可以挂很多音色，所以按音色分开存 —— 豆包的「语气」正是存在这里，
      * 以前只存了引擎那一份，等于所有音色共用同一个语气。
      */
+
+    /**
+     * 把 cfg 里的 JSON 串解析成对象。
+     *
+     * <p>坑：{@code new JSONObject("")} 会抛 JSONException（"End of input at character 0"）。
+     * 以前直接 {@code new JSONObject(it.s("params_by_voice", ""))} 再 catch 吞掉，
+     * 结果就是：<b>第一次</b>存某个音色的数据时 cfg 里还没有这个键 → 解析抛异常 → 整段写入被跳过，
+     * 什么都存不进去（豆包的「自定义语气指令」、每音色的语速/音量/音高全中这一枪）。
+     * 空串/脏数据一律当空对象。</p>
+     */
+    static JSONObject obj(String raw) {
+        if (raw == null || raw.trim().length() == 0) return new JSONObject();
+        try {
+            return new JSONObject(raw);
+        } catch (Throwable t) {
+            return new JSONObject();
+        }
+    }
+
     public static java.util.LinkedHashMap<String, String> ttsDataForVoice(Item it, String voice) {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
         if (it == null) return m;
         String key = voice == null ? "" : voice.trim();
         if (key.length() > 0) {
             try {
-                JSONObject all = new JSONObject(it.s("tts_data_by_voice", ""));
+                JSONObject all = obj(it.s("tts_data_by_voice", ""));
                 JSONObject one = all.optJSONObject(key);
                 if (one != null) {
                     for (java.util.Iterator<String> k = one.keys(); k.hasNext(); ) {
@@ -495,7 +514,7 @@ public final class EngineStore {
             } catch (Throwable ignored) { }
         }
         try {
-            JSONObject o = new JSONObject(it.s("tts_data", ""));
+            JSONObject o = obj(it.s("tts_data", ""));
             for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
                 String kk = k.next();
                 m.put(kk, o.optString(kk, ""));
@@ -512,7 +531,7 @@ public final class EngineStore {
         float[] out = new float[]{0f, 0f, 0f};
         if (it == null || voice == null || voice.trim().length() == 0) return out;
         try {
-            JSONObject all = new JSONObject(it.s("params_by_voice", ""));
+            JSONObject all = obj(it.s("params_by_voice", ""));
             JSONObject one = all.optJSONObject(voice.trim());
             if (one == null) return out;
             out[0] = (float) one.optDouble("speed", 0);
@@ -527,7 +546,7 @@ public final class EngineStore {
         if (it == null || voice == null || voice.trim().length() == 0) return;
         try {
             String key = voice.trim();
-            JSONObject all = new JSONObject(it.s("params_by_voice", ""));
+            JSONObject all = obj(it.s("params_by_voice", ""));
             JSONObject one = new JSONObject();
             if (speed > 0f) one.put("speed", (double) speed);
             if (volume > 0f) one.put("volume", (double) volume);
@@ -555,8 +574,8 @@ public final class EngineStore {
                 else it.put("tts_data", one.toString());
                 return;
             }
-            JSONObject all = new JSONObject(it.s("tts_data_by_voice", ""));
-            JSONObject base = new JSONObject(it.s("tts_data", ""));
+            JSONObject all = obj(it.s("tts_data_by_voice", ""));
+            JSONObject base = obj(it.s("tts_data", ""));
             if (one.toString().equals(base.toString())) all.remove(key);
             else all.put(key, one);
             if (all.length() == 0) it.cfg.remove("tts_data_by_voice");

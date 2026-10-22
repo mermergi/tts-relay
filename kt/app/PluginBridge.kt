@@ -118,6 +118,14 @@ class PluginBridge(
     fun ttsData(): Map<String, String> = source.data
 
     /**
+     * 调试用：在这个插件宿主里直接跑一段 JS（和插件代码同一个作用域，能碰 ttsrv.*）。
+     *
+     * <p>用来验证"插件写 ttsrv.tts.data 到底写没写进去"这类只有跑起来才知道的事，
+     * 不然只能靠点界面猜。走的是它自己的 RhinoScriptEngine。
+     */
+    fun evalJs(script: String): Any? = engine.evalScript(script)
+
+    /**
      * 换这个音色自己的 {@code ttsrv.tts.data}（插件的「每套 TTS 配置数据」）。
      *
      * <p>插件读的是 {@code ttsrv.tts.data} 这个 Map <b>本体</b>，所以必须原地 clear+putAll，
