@@ -479,7 +479,6 @@ public class MainActivity extends Activity {
         vc.addView(ui.label("试听文本（试听和换音色都念这句）"));
         tryField = ui.field("trytext", Prefs.TRY_DEF, InputType.TYPE_CLASS_TEXT);
         vc.addView(tryField);
-        vc.addView(ui.hint("自检 = 不连模型，直接走一遍断句 / 跳代码块 / 合成 / 播放，用来排除故障。"));
         col.addView(vc);
 
         // ── 语调 ──
@@ -526,7 +525,6 @@ public class MainActivity extends Activity {
         rateBar = s1.bar; rateVal = s1.val;
         pitchBar = s2.bar; pitchVal = s2.val;
         volBar = s3.bar; volVal = s3.val;
-        tc.addView(ui.hint("音量是叠在系统媒体音量上的，立刻生效；语速和音调改动从下一句开始。"));
         col.addView(tc);
 
         // ── 分角色朗读 ──
@@ -709,7 +707,6 @@ public class MainActivity extends Activity {
         maxChunkField = ui.field("maxchunk", String.valueOf(Prefs.MAXCHUNK_DEF),
                 InputType.TYPE_CLASS_NUMBER);
         tc.addView(maxChunkField);
-        tc.addView(ui.hint("断句方案在「朗读」页里换，换完立刻生效，不用重启。"));
         col.addView(tc);
 
         // ── 跳过规则 ──
@@ -729,8 +726,6 @@ public class MainActivity extends Activity {
         sc.addView(ui.label("关键词（英文逗号分隔，只在 system 提示词里找）"));
         skipKeyField = ui.field("skipkey", Prefs.SKIP_KEYWORDS_DEF, InputType.TYPE_CLASS_TEXT);
         sc.addView(skipKeyField);
-        sc.addView(ui.hint("关键词只在客户端「没设输出额度」时才生效 —— 否则角色卡里一个"
-                + "「标题」就能把整条正经回复哑掉。"));
         col.addView(sc);
 
         // ── 自动化 ──
@@ -747,7 +742,6 @@ public class MainActivity extends Activity {
             public void onClick(View v) { pickTheme(); }
         });
         ac.addView(themeBtn, topGap(14));
-        ac.addView(ui.hint("通知栏常驻卡片上还有 暂停 / 静音 / 停止 三个快捷按钮。"));
         col.addView(ac);
 
         col.addView(ui.bigBtn("保存设置", true, new View.OnClickListener() {
@@ -757,7 +751,6 @@ public class MainActivity extends Activity {
                 toast("已保存（端口 / 上游 / TTS 地址要重启中转生效）");
             }
         }));
-        col.addView(ui.hint("改动会随离开页面自动保存，上面这个按钮只是让你确信一下。"));
 
         return scroll(col);
     }
@@ -925,7 +918,6 @@ public class MainActivity extends Activity {
         engineNow = ui.value("");
         engineNow.setLineSpacing(ui.dp(3), 1f);
         c1.addView(engineNow);
-        c1.addView(ui.hint("播放链直接调这个引擎 —— 不再经过 TTS Server，也就不会再被它的崩溃带走。"));
         col.addView(c1);
 
         LinearLayout c2 = ui.card();
@@ -942,7 +934,6 @@ public class MainActivity extends Activity {
         c3.addView(ui.btn("用当前引擎念一句", true, new View.OnClickListener() {
             public void onClick(View v) { testEngine(); }
         }));
-        c3.addView(ui.hint("失败原因会写进「日志」页，也会打在合成失败那行里。"));
         col.addView(c3);
 
         LinearLayout c4 = ui.card();
@@ -963,9 +954,6 @@ public class MainActivity extends Activity {
             public void onClick(View v) { exportMenu(); }
         }), ui.weight(1f));
         c4.addView(r2, topGap(8));
-        c4.addView(ui.hint("认两种格式：本 App 自己导出的（能原样恢复），"
-                + "和阅读（Legado）的朗读引擎 JSON —— 就是圈里互相分享的那种，"
-                + "TTS Server 也认。别人的配置直接粘进来就能用。"));
         col.addView(c4);
 
         return scroll(col);
@@ -1909,7 +1897,6 @@ public class MainActivity extends Activity {
             public void onClick(View v) { showEngineVoices(it); }
         }), ui.weight(1f));
         box.addView(act, topGap(8));
-        box.addView(ui.hint("引擎配置就是一张键值表：上面是「约定键」，想加自己的参数点「＋ 加一个键」。"));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
@@ -1984,9 +1971,6 @@ public class MainActivity extends Activity {
                         + CookieGrab.summary(got));
             }
         }), topGap(8));
-        box.addView(ui.hint("粘什么进来都行：整段 cURL、一段请求头、或者裸的「名字=值; 名字=值」。"
-                + "长的会自动把 Cookie 摘出来，摘不出就原样收着。"));
-        box.addView(ui.hint("框里看到的就是最终结果；想清掉就清空再保存。"));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);

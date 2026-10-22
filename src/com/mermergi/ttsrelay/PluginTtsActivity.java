@@ -140,7 +140,7 @@ public final class PluginTtsActivity extends Activity {
         voiceRow.setVisibility(View.GONE);
         col.addView(voiceRow, ui.topGap(8));
 
-        col.addView(ui.label("这个音色的语速 / 音量 / 音高（0 = 跟随全局）"), ui.topGap(14));
+        col.addView(ui.label("语速 / 音量 / 音高"), ui.topGap(14));
         float[] pv = EngineStore.paramsForVoice(it, curVoice);
         spdBar = paramBar(0.5f, 2.0f, pv[0], 1.0f);
         volBar = paramBar(0f, 2.0f, pv[1], 1.0f);
