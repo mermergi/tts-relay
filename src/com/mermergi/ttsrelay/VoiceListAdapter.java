@@ -5,6 +5,7 @@ import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -104,6 +105,12 @@ final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.ViewHol
         card.addView(row, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        ImageView icon = new ImageView(ui.c);
+        icon.setVisibility(View.GONE);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(ui.dp(34), ui.dp(34));
+        ip.rightMargin = ui.dp(10);
+        row.addView(icon, ip);
+
         LinearLayout col = ui.col();
         TextView name = new TextView(ui.c);
         name.setTextColor(p.textPrimary);
@@ -124,18 +131,21 @@ final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.ViewHol
         final TextView name;
         final TextView sub;
         final TextView ear;
+        final ImageView icon;
 
         Row(View v) {
             super(v);
             LinearLayout row = (LinearLayout) ((MaterialCardView) v).getChildAt(0);
-            LinearLayout col = (LinearLayout) row.getChildAt(0);
+            icon = (ImageView) row.getChildAt(0);
+            LinearLayout col = (LinearLayout) row.getChildAt(1);
             name = (TextView) col.getChildAt(0);
             sub = (TextView) col.getChildAt(1);
-            ear = (TextView) row.getChildAt(1);
+            ear = (TextView) row.getChildAt(2);
         }
 
         void bind(final VoiceItem it) {
             name.setText(it.name);
+            Icons.load(it.icon, icon);
             String s = it.tagLine;
             if (it.usedBy.length() > 0) {
                 s = (s.length() > 0 ? s + "  ·  " : "") + "已用于 " + it.usedBy;

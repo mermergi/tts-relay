@@ -68,6 +68,13 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     open protected fun execute(script: String): Any? =
         engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
+    /**
+     * 调试入口（本仓库新增，上游没有）：在插件同一个 globalScope 里直接跑一段 JS。
+     * 只看不改逻辑 —— 用来验证「插件写 ttsrv.tts.data 到底进没进到 Kotlin 的 Map」。
+     */
+    fun evalScript(script: String): Any? =
+        engine.execute(script.toScriptSource(sourceName = "eval-" + plugin.pluginId))
+
     @Suppress("UNCHECKED_CAST")
     fun eval() {
         execute(plugin.code)

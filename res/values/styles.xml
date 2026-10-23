@@ -1,94 +1,154 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  界面本身是代码搭的、颜色全走 Palette；这里只给"系统托管的那层"配主题：
-  ● 窗口底色 / 状态栏 / 导航栏
-  ● 弹窗（AlertDialog 用什么壳）
-  ● Material Components 的控件（底部抽屉、输入框、按钮）取色
+  Material 3 主题层。
 
-  以前 AppTheme 直接挂平台 Theme.Material.NoActionBar；现在挂
-  Theme.MaterialComponents（AppCompat 那套的官方 Material 版），
-  这样 BottomSheetDialog / TextInputLayout / Chip 这些现成控件才有皮可穿。
+  界面本身还是代码搭的（颜色全走 Palette，Palette 从这里的语义角色取色），
+  这里管的是"系统托管的那层"：窗口底、状态栏/导航栏、弹窗壳、底部抽屉壳，
+  以及 Material 控件（MaterialSwitch / BottomSheetDialog / MaterialCardView）自己的取色。
+
+  ● 继承 Theme.Material3.Dark/Light.NoActionBar（material-1.12.0.aar 里真实存在的名字；
+    没有裸的 Theme.Material3，DayNight 只是 Light + values-night 覆盖）
+  ● 下面这套色值不是手调的：用 material-1.12.0.aar 自带的官方
+    com.google.android.material.color.utilities（HCT + SchemeTonalSpot）
+    以 #4F6BFF 为种子算出来的整套 M3 角色（Material You 的 TonalSpot 方案）。
+    生成器见 tools/m3-scheme/Gen.java，改种子跑一次就能重算。
+  ● Android 12+ 由 TtsApp 里的 DynamicColors 用壁纸色覆盖这些角色；
+    代码里没有写死颜色，所以动态色是"免费"的。
 -->
 <resources>
 
     <!-- ══════════════ 深色（默认） ══════════════ -->
-    <style name="AppTheme" parent="Theme.MaterialComponents.NoActionBar">
-        <item name="colorPrimary">#FF6C8CFF</item>
-        <item name="colorPrimaryVariant">#FF5566CC</item>
-        <item name="colorOnPrimary">#FF0D0E13</item>
-        <item name="colorSecondary">#FF6C8CFF</item>
-        <item name="colorSecondaryVariant">#FF5566CC</item>
-        <item name="colorOnSecondary">#FF0D0E13</item>
-        <item name="colorSurface">#FF161822</item>
-        <item name="colorOnSurface">#FFE9ECF6</item>
-        <item name="colorOnSurfaceVariant">#FF9AA0B4</item>
-        <item name="colorError">#FFF87171</item>
-        <item name="colorOnError">#FF0D0E13</item>
-        <item name="android:colorBackground">#FF0D0E13</item>
-        <item name="colorOnBackground">#FFE9ECF6</item>
-        <item name="android:textColorPrimary">#FFE9ECF6</item>
-        <item name="android:textColorSecondary">#FF9AA0B4</item>
-        <item name="android:textColorHint">#FF6E7386</item>
-        <item name="android:windowBackground">#FF0D0E13</item>
-        <item name="android:statusBarColor">#FF0D0E13</item>
-        <item name="android:navigationBarColor">#FF0D0E13</item>
+    <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">#FFBAC3FF</item>
+        <item name="colorOnPrimary">#FF222C61</item>
+        <item name="colorPrimaryContainer">#FF394379</item>
+        <item name="colorOnPrimaryContainer">#FFDEE0FF</item>
+        <item name="colorSecondary">#FFC3C5DD</item>
+        <item name="colorOnSecondary">#FF2C2F42</item>
+        <item name="colorSecondaryContainer">#FF434659</item>
+        <item name="colorOnSecondaryContainer">#FFDFE1F9</item>
+        <item name="colorTertiary">#FFE5BAD8</item>
+        <item name="colorOnTertiary">#FF44263E</item>
+        <item name="colorTertiaryContainer">#FF5D3C55</item>
+        <item name="colorOnTertiaryContainer">#FFFFD7F1</item>
+        <item name="colorError">#FFFFB4AB</item>
+        <item name="colorOnError">#FF690005</item>
+        <item name="colorErrorContainer">#FF93000A</item>
+        <item name="colorOnErrorContainer">#FFFFDAD6</item>
+        <item name="colorSurface">#FF121318</item>
+        <item name="colorOnSurface">#FFE4E1E9</item>
+        <item name="colorSurfaceVariant">#FF46464F</item>
+        <item name="colorOnSurfaceVariant">#FFC6C5D0</item>
+        <item name="colorSurfaceDim">#FF121318</item>
+        <item name="colorSurfaceBright">#FF39393F</item>
+        <item name="colorSurfaceContainerLowest">#FF0D0E13</item>
+        <item name="colorSurfaceContainerLow">#FF1B1B21</item>
+        <item name="colorSurfaceContainer">#FF1F1F25</item>
+        <item name="colorSurfaceContainerHigh">#FF29292F</item>
+        <item name="colorSurfaceContainerHighest">#FF34343A</item>
+        <item name="colorOutline">#FF90909A</item>
+        <item name="colorOutlineVariant">#FF46464F</item>
+        <item name="colorSurfaceInverse">#FFE4E1E9</item>
+        <item name="colorOnSurfaceInverse">#FF303036</item>
+        <item name="colorPrimaryInverse">#FF515B92</item>
+
+        <item name="android:colorBackground">#FF121318</item>
+        <item name="android:windowBackground">#FF121318</item>
+        <item name="android:statusBarColor">#FF121318</item>
+        <item name="android:navigationBarColor">#FF121318</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:textColorPrimary">#FFE4E1E9</item>
+        <item name="android:textColorSecondary">#FFC6C5D0</item>
+        <item name="android:textColorHint">#FF8A8A94</item>
+        <item name="android:colorAccent">#FFBAC3FF</item>
+        <item name="android:buttonStyle">@style/Widget.Material3.Button</item>
+
         <item name="bottomSheetDialogTheme">@style/AppBottomSheet</item>
-        <item name="android:buttonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item>
     </style>
 
     <!-- ══════════════ 浅色 ══════════════ -->
-    <style name="AppTheme.Light" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <item name="colorPrimary">#FF4F6BFF</item>
-        <item name="colorPrimaryVariant">#FF3B52C4</item>
+    <style name="AppTheme.Light" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">#FF515B92</item>
         <item name="colorOnPrimary">#FFFFFFFF</item>
-        <item name="colorSecondary">#FF4F6BFF</item>
-        <item name="colorSecondaryVariant">#FF3B52C4</item>
+        <item name="colorPrimaryContainer">#FFDEE0FF</item>
+        <item name="colorOnPrimaryContainer">#FF0B154B</item>
+        <item name="colorSecondary">#FF5B5D72</item>
         <item name="colorOnSecondary">#FFFFFFFF</item>
-        <item name="colorSurface">#FFFFFFFF</item>
-        <item name="colorOnSurface">#FF14161C</item>
-        <item name="colorOnSurfaceVariant">#FF5A6072</item>
-        <item name="colorError">#FFDC2626</item>
+        <item name="colorSecondaryContainer">#FFDFE1F9</item>
+        <item name="colorOnSecondaryContainer">#FF181A2C</item>
+        <item name="colorTertiary">#FF76536D</item>
+        <item name="colorOnTertiary">#FFFFFFFF</item>
+        <item name="colorTertiaryContainer">#FFFFD7F1</item>
+        <item name="colorOnTertiaryContainer">#FF2D1228</item>
+        <item name="colorError">#FFBA1A1A</item>
         <item name="colorOnError">#FFFFFFFF</item>
-        <item name="android:colorBackground">#FFF2F3F8</item>
-        <item name="colorOnBackground">#FF14161C</item>
-        <item name="android:textColorPrimary">#FF14161C</item>
-        <item name="android:textColorSecondary">#FF5A6072</item>
-        <item name="android:textColorHint">#FF8A90A2</item>
-        <item name="android:windowBackground">#FFF2F3F8</item>
-        <item name="android:statusBarColor">#FFF2F3F8</item>
-        <item name="android:navigationBarColor">#FFF2F3F8</item>
+        <item name="colorErrorContainer">#FFFFDAD6</item>
+        <item name="colorOnErrorContainer">#FF410002</item>
+        <item name="colorSurface">#FFFBF8FF</item>
+        <item name="colorOnSurface">#FF1B1B21</item>
+        <item name="colorSurfaceVariant">#FFE3E1EC</item>
+        <item name="colorOnSurfaceVariant">#FF46464F</item>
+        <item name="colorSurfaceDim">#FFDBD9E0</item>
+        <item name="colorSurfaceBright">#FFFBF8FF</item>
+        <item name="colorSurfaceContainerLowest">#FFFFFFFF</item>
+        <item name="colorSurfaceContainerLow">#FFF5F2FA</item>
+        <item name="colorSurfaceContainer">#FFEFEDF4</item>
+        <item name="colorSurfaceContainerHigh">#FFE9E7EF</item>
+        <item name="colorSurfaceContainerHighest">#FFE4E1E9</item>
+        <item name="colorOutline">#FF767680</item>
+        <item name="colorOutlineVariant">#FFC6C5D0</item>
+        <item name="colorSurfaceInverse">#FF303036</item>
+        <item name="colorOnSurfaceInverse">#FFF2EFF7</item>
+        <item name="colorPrimaryInverse">#FFBAC3FF</item>
+
+        <item name="android:colorBackground">#FFFBF8FF</item>
+        <item name="android:windowBackground">#FFFBF8FF</item>
+        <item name="android:statusBarColor">#FFFBF8FF</item>
+        <item name="android:navigationBarColor">#FFFBF8FF</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:textColorPrimary">#FF1B1B21</item>
+        <item name="android:textColorSecondary">#FF46464F</item>
+        <item name="android:textColorHint">#FF767680</item>
+        <item name="android:colorAccent">#FF515B92</item>
+        <item name="android:buttonStyle">@style/Widget.Material3.Button</item>
+
         <item name="bottomSheetDialogTheme">@style/AppBottomSheet.Light</item>
-        <item name="android:buttonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item>
     </style>
 
-    <!-- ══════════════ 底部抽屉（它的 ModalBottomSheet） ══════════════ -->
-    <style name="AppBottomSheet" parent="Theme.MaterialComponents.BottomSheetDialog">
-        <item name="colorPrimary">#FF6C8CFF</item>
-        <item name="colorOnPrimary">#FF0D0E13</item>
-        <item name="colorSurface">#FF161822</item>
-        <item name="colorOnSurface">#FFE9ECF6</item>
-        <item name="colorOnSurfaceVariant">#FF9AA0B4</item>
-        <item name="android:colorBackground">#FF161822</item>
-        <item name="colorOnBackground">#FFE9ECF6</item>
-        <item name="android:textColorPrimary">#FFE9ECF6</item>
-        <item name="android:textColorHint">#FF6E7386</item>
+    <!-- ══════════════ 底部抽屉 ══════════════ -->
+    <style name="AppBottomSheet" parent="Theme.Material3.Dark.BottomSheetDialog">
+        <item name="colorPrimary">#FFBAC3FF</item>
+        <item name="colorOnPrimary">#FF222C61</item>
+        <item name="colorSurface">#FF121318</item>
+        <item name="colorOnSurface">#FFE4E1E9</item>
+        <item name="colorSurfaceContainer">#FF1F1F25</item>
+        <item name="colorOnSurfaceVariant">#FFC6C5D0</item>
+        <item name="colorOutlineVariant">#FF46464F</item>
+        <item name="android:colorBackground">#FF121318</item>
+        <item name="colorOnBackground">#FFE4E1E9</item>
+        <item name="android:textColorPrimary">#FFE4E1E9</item>
+        <item name="android:textColorHint">#FF8A8A94</item>
+        <item name="android:colorAccent">#FFBAC3FF</item>
         <item name="bottomSheetStyle">@style/AppBottomSheetStyle</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:navigationBarColor">#00000000</item>
     </style>
 
-    <style name="AppBottomSheet.Light" parent="Theme.MaterialComponents.Light.BottomSheetDialog">
-        <item name="colorPrimary">#FF4F6BFF</item>
+    <style name="AppBottomSheet.Light" parent="Theme.Material3.Light.BottomSheetDialog">
+        <item name="colorPrimary">#FF515B92</item>
         <item name="colorOnPrimary">#FFFFFFFF</item>
-        <item name="colorSurface">#FFFFFFFF</item>
-        <item name="colorOnSurface">#FF14161C</item>
-        <item name="colorOnSurfaceVariant">#FF5A6072</item>
-        <item name="android:colorBackground">#FFFFFFFF</item>
-        <item name="colorOnBackground">#FF14161C</item>
-        <item name="android:textColorPrimary">#FF14161C</item>
-        <item name="android:textColorHint">#FF8A90A2</item>
+        <item name="colorSurface">#FFFBF8FF</item>
+        <item name="colorOnSurface">#FF1B1B21</item>
+        <item name="colorSurfaceContainer">#FFEFEDF4</item>
+        <item name="colorOnSurfaceVariant">#FF46464F</item>
+        <item name="colorOutlineVariant">#FFC6C5D0</item>
+        <item name="android:colorBackground">#FFFBF8FF</item>
+        <item name="colorOnBackground">#FF1B1B21</item>
+        <item name="android:textColorPrimary">#FF1B1B21</item>
+        <item name="android:textColorHint">#FF767680</item>
+        <item name="android:colorAccent">#FF515B92</item>
         <item name="bottomSheetStyle">@style/AppBottomSheetStyle.Light</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:navigationBarColor">#00000000</item>
@@ -96,33 +156,53 @@
 
     <!-- 容器自己透明：圆角和底色由代码里那个 sheetBg() 画（只圆上面两个角），
          不然 MDC 会给底板再叠一层 elevation 提亮，跟卡片颜色对不上 -->
-    <style name="AppBottomSheetStyle" parent="Widget.MaterialComponents.BottomSheet.Modal">
+    <style name="AppBottomSheetStyle" parent="Widget.Material3.BottomSheet.Modal">
         <item name="backgroundTint">@android:color/transparent</item>
     </style>
 
-    <style name="AppBottomSheetStyle.Light" parent="Widget.MaterialComponents.BottomSheet.Modal">
+    <style name="AppBottomSheetStyle.Light" parent="Widget.Material3.BottomSheet.Modal">
         <item name="backgroundTint">@android:color/transparent</item>
     </style>
 
-    <!-- 只有上面两个角是圆的（从底下升起来的那块） -->
+    <!-- 只有上面两个角是圆的（从底下升起来的那块）；28dp 是 M3 的 XL 圆角 -->
     <style name="AppSheetShape" parent="">
         <item name="cornerFamily">rounded</item>
-        <item name="cornerSizeTopLeft">22dp</item>
-        <item name="cornerSizeTopRight">22dp</item>
+        <item name="cornerSizeTopLeft">28dp</item>
+        <item name="cornerSizeTopRight">28dp</item>
         <item name="cornerSizeBottomLeft">0dp</item>
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
     <!-- ══════════════ 弹窗壳 ══════════════
-         别挂 Theme.MaterialComponents.Dialog.*：那是 Material 的弹窗主题，
-         里面内容排版又回去用平台的 AlertDialog 布局，两边主题一混
-         就是白底白字（断句方案那一坨）。这里直接用**平台**的 dialog 主题，
-         只把强调色换成我们的蓝。 -->
-    <style name="AppDialog" parent="@android:style/Theme.Material.Dialog.Alert">
-        <item name="android:colorAccent">#FF6C8CFF</item>
+         走 Material 3 的 Dialog 主题：圆角、底板 tone、按钮取色都是 M3 的。
+         内容还是代码搭的（颜色走 Palette），所以不会出现"白底白字"。 -->
+    <style name="AppDialog" parent="Theme.Material3.Dark.Dialog.Alert">
+        <item name="colorPrimary">#FFBAC3FF</item>
+        <item name="colorOnPrimary">#FF222C61</item>
+        <item name="colorSurface">#FF1F1F25</item>
+        <item name="colorOnSurface">#FFE4E1E9</item>
+        <item name="colorSurfaceContainerHigh">#FF29292F</item>
+        <item name="colorOnSurfaceVariant">#FFC6C5D0</item>
+        <item name="colorOutlineVariant">#FF46464F</item>
+        <item name="colorError">#FFFFB4AB</item>
+        <item name="android:textColorPrimary">#FFE4E1E9</item>
+        <item name="android:textColorSecondary">#FFC6C5D0</item>
+        <item name="android:colorAccent">#FFBAC3FF</item>
+        <item name="android:windowBackground">@drawable/m3_dialog_bg</item>
     </style>
 
-    <style name="AppDialog.Light" parent="@android:style/Theme.Material.Light.Dialog.Alert">
-        <item name="android:colorAccent">#FF4F6BFF</item>
+    <style name="AppDialog.Light" parent="Theme.Material3.Light.Dialog.Alert">
+        <item name="colorPrimary">#FF515B92</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorSurface">#FFFFFFFF</item>
+        <item name="colorOnSurface">#FF1B1B21</item>
+        <item name="colorSurfaceContainerHigh">#FFE9E7EF</item>
+        <item name="colorOnSurfaceVariant">#FF46464F</item>
+        <item name="colorOutlineVariant">#FFC6C5D0</item>
+        <item name="colorError">#FFBA1A1A</item>
+        <item name="android:textColorPrimary">#FF1B1B21</item>
+        <item name="android:textColorSecondary">#FF46464F</item>
+        <item name="android:colorAccent">#FF515B92</item>
+        <item name="android:windowBackground">@drawable/m3_dialog_bg</item>
     </style>
 </resources>

@@ -54,6 +54,9 @@ public final class PluginTtsActivity extends Activity {
     private LinearLayout langRow;
     private LinearLayout voiceRow;
     private LinearLayout pluginHost;
+    /** 这个音色自己的语速 / 音量 / 音高（0 = 跟随全局）。 */
+    private android.widget.SeekBar spdBar, volBar, pitBar;
+    private TextView spdVal, volVal, pitVal;
 
     private String origVoice = "";
     private String curVoice = "";
@@ -61,10 +64,10 @@ public final class PluginTtsActivity extends Activity {
     private com.mermergi.ttsrelay.js.PluginBridge bridge;
 
     @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
         App.install(this);
-        p = Palette.of(this);
-        setTheme(p.light ? R.style.AppTheme_Light : R.style.AppTheme);
+        // 先定主题再 super.onCreate（主题必须在 inflate 之前生效）
+        p = Palette.apply(this);
+        super.onCreate(b);
         ui = new Ui(this, p);
 
         Intent in = getIntent();
@@ -137,6 +140,18 @@ public final class PluginTtsActivity extends Activity {
         voiceRow.setVisibility(View.GONE);
         col.addView(voiceRow, ui.topGap(8));
 
+        col.addView(ui.label("语速 / 音量 / 音高"), ui.topGap(14));
+        float[] pv = EngineStore.paramsForVoice(it, curVoice);
+        spdBar = paramBar(0.5f, 2.0f, pv[0], 1.0f);
+        volBar = paramBar(0f, 2.0f, pv[1], 1.0f);
+        pitBar = paramBar(0.5f, 2.0f, pv[2], 1.0f);
+        spdVal = ui.hint("");
+        volVal = ui.hint("");
+        pitVal = ui.hint("");
+        col.addView(sliderRow("语速", spdBar, spdVal, 0.5f, 2.0f), ui.topGap(8));
+        col.addView(sliderRow("音量", volBar, volVal, 0f, 2.0f), ui.topGap(6));
+        col.addView(sliderRow("音高", pitBar, pitVal, 0.5f, 2.0f), ui.topGap(6));
+
         // 插件自己画的界面
         pluginHost = ui.col();
         col.addView(pluginHost, ui.topGap(8));
@@ -153,24 +168,40 @@ public final class PluginTtsActivity extends Activity {
         }
     }
 
-    /** onLoadData() → onLoadUI() → getLocales() → getVoices(locale)：照它的顺序。 */
+    /**
+     * onLoadData() → onLoadUI() → getLocales() → getVoices(locale)：照它的顺序。
+     *
+     * <p>这里<b>不复用</b>合成用的那个宿主，而是按「这个音色」单开一个：插件的
+     * {@code onLoadUI} 一建出来读的就是这个音色的 {@code ttsrv.tts.data}
+     * （插件的「语气」下拉就靠这个）。页面关掉时把它销毁，改过的数据已经存进配置。
+     */
     private void loadPluginAsync() {
         new Thread(new Runnable() {
             public void run() {
-                bridge = JsTtsEngine.sharedBridge(PluginTtsActivity.this, it);
-                if (bridge == null) return;
+                final com.mermergi.ttsrelay.js.PluginBridge h;
+                try {
+                    h = JsTtsEngine.openFor(PluginTtsActivity.this, it, curLocale, curVoice);
+                } catch (Throwable t) {
+                    LogBus.error("打开插件失败：" + t.getMessage());
+                    return;
+                }
                 LinkedHashMap<String, String> locs = null;
                 List<String[]> vs = null;
                 try {
-                    locs = new LinkedHashMap<String, String>(bridge.locales());
+                    locs = new LinkedHashMap<String, String>(h.locales());
                 } catch (Throwable ignored) { }
                 try {
-                    vs = bridge.voices(curLocale);
+                    vs = h.voices(curLocale);
                 } catch (Throwable ignored) { }
                 final LinkedHashMap<String, String> fLocs = locs;
                 final List<String[]> fVs = vs;
                 runOnUiThread(new Runnable() {
                     public void run() {
+                        com.mermergi.ttsrelay.js.PluginBridge old = bridge;
+                        bridge = h;
+                        if (old != null && old != h) {
+                            try { old.destroy(); } catch (Throwable ignored) { }
+                        }
                         bindLocales(fLocs);
                         bindVoices(fVs);
                         attachPluginUi();
@@ -198,7 +229,7 @@ public final class PluginTtsActivity extends Activity {
                             public void onPick(int i) {
                                 curLocale = codes[i];
                                 langVal.setText(locs.get(codes[i]));
-                                reloadVoices();
+                                loadPluginAsync();
                             }
                         });
             }
@@ -227,36 +258,12 @@ public final class PluginTtsActivity extends Activity {
                             public void onPick(int i) {
                                 curVoice = vs.get(i)[1];
                                 voiceVal.setText(vs.get(i)[0]);
-                                // 插件自己那块界面跟着换
-                                if (bridge != null) {
-                                    try { bridge.onVoiceChanged(curLocale, curVoice); } catch (Throwable ignored) { }
-                                }
+                                // 换音色 = 换一套"每音色数据"，重开宿主让插件界面显示这个音色的语气
+                                loadPluginAsync();
                             }
                         });
             }
         });
-    }
-
-    private void reloadVoices() {
-        new Thread(new Runnable() {
-            public void run() {
-                if (bridge == null) return;
-                final List<String[]> vs;
-                try { vs = bridge.voices(curLocale); } catch (Throwable t) { return; }
-                runOnUiThread(new Runnable() {
-                    public void run() {
-                        if (vs != null && !vs.isEmpty()) {
-                            curVoice = vs.get(0)[1];
-                            voiceVal.setText(vs.get(0)[0]);
-                            if (bridge != null) {
-                                try { bridge.onVoiceChanged(curLocale, curVoice); } catch (Throwable ignored) { }
-                            }
-                        }
-                        bindVoices(vs);
-                    }
-                });
-            }
-        }).start();
     }
 
     /** 插件在 onLoadUI 里画的容器，原样挂上来；没画就什么都不显示。 */
@@ -285,12 +292,71 @@ public final class PluginTtsActivity extends Activity {
                 Prefs.putVoiceNames(this, curVoice, sb.toString());
             }
         }
+        EngineStore.setParamsForVoice(it, curVoice,
+                barVal(spdBar, 0.5f, 2.0f), barVal(volBar, 0f, 2.0f), barVal(pitBar, 0.5f, 2.0f));
         it.put("lang", curLocale);
         it.put("voice", curVoice);
         EngineStore.put(this, it);
+        // 插件界面上改的东西（插件那个「语气」下拉存在 ttsrv.tts.data 里）也要存下来 ——
+        // 而且是按音色存的：这个音色选了什么语气，下次还是它。
+        try {
+            LogBus.add("页面保存：voice=[" + curVoice + "] bridge=" + (bridge != null)
+                    + " data=" + (bridge == null ? "-" : bridge.ttsData()));
+        } catch (Throwable ignored) { }
+        JsTtsEngine.persistData(this, it, curVoice, bridge);
         JsTtsEngine.clearVoices();
         toast("已保存");
         finish();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // 直接按返回键离开也要把插件界面上的选择留下（保存按钮只是"我确信"一下）
+        try { JsTtsEngine.persistData(this, it, curVoice, bridge); } catch (Throwable ignored) { }
+    }
+
+    /** 一条滑杆：progress 0..100，0 = 跟随；其余按 [lo, hi] 线性映射。 */
+    private android.widget.SeekBar paramBar(float lo, float hi, float cur, float def) {
+        android.widget.SeekBar b = new android.widget.SeekBar(this);
+        int prog = 0;
+        if (cur > 0f) prog = Math.round((cur - lo) / (hi - lo) * 100f);
+        b.setMax(100);
+        b.setProgress(Math.max(0, Math.min(100, prog)));
+        return b;
+    }
+
+    private float barVal(android.widget.SeekBar b, float lo, float hi) {
+        if (b == null) return 0f;
+        int p = b.getProgress();
+        if (p <= 0) return 0f;                       // 0 = 跟随全局
+        return lo + (hi - lo) * (p / 100f);
+    }
+
+    private LinearLayout sliderRow(String name, final android.widget.SeekBar bar,
+                                   final TextView out, final float lo, final float hi) {
+        LinearLayout row = ui.row();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView l = new TextView(this);
+        l.setText(name);
+        l.setTextColor(p.textSecondary);
+        l.setTextSize(12.5f);
+        row.addView(l, ui.weightGap(0.18f, 8));
+        bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar b, int prog, boolean fromUser) { show(); }
+            public void onStartTrackingTouch(android.widget.SeekBar b) { }
+            public void onStopTrackingTouch(android.widget.SeekBar b) { show(); }
+            private void show() {
+                int prog = bar.getProgress();
+                if (prog <= 0) out.setText("跟随全局");
+                else out.setText(String.format(Locale.US, "%.2f", lo + (hi - lo) * (prog / 100f)));
+            }
+        });
+        row.addView(bar, ui.weightGap(1f, 8));
+        row.addView(out, ui.weight(0.22f));
+        int p0 = bar.getProgress();
+        out.setText(p0 <= 0 ? "跟随全局" : String.format(Locale.US, "%.2f", lo + (hi - lo) * (p0 / 100f)));
+        return row;
     }
 
     private LinearLayout kvRow(String label, TextView val) {

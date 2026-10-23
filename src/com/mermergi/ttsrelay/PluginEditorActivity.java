@@ -62,9 +62,9 @@ public final class PluginEditorActivity extends Activity {
     private boolean loading = false;
 
     @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
         App.install(this);
-        p = Palette.of(this);
+        p = Palette.apply(this);
+        super.onCreate(b);
         ui = new Ui(this, p);
 
         String id = getIntent() == null ? "" : getIntent().getStringExtra(EXTRA_ID);
@@ -128,6 +128,16 @@ public final class PluginEditorActivity extends Activity {
         status = ui.hint("");
         status.setPadding(0, ui.dp(4), 0, 0);
         root.addView(status);
+
+        // 插件自己画的界面（语气输入框之类）直接内嵌在这儿，和 TTS Server 一样，不用开弹窗
+        TextView inlineToggle = ui.chip("插件界面 ▾", false, new View.OnClickListener() {
+            public void onClick(View v) { toggleInline(); }
+        });
+        inlineToggle.setSingleLine(true);
+        root.addView(inlineToggle);
+        pluginInline = ui.col();
+        pluginInline.setVisibility(View.GONE);
+        root.addView(pluginInline);
 
         // ── 代码区：sora-editor（开源，整屏）──
         code = new io.github.rosemoe.sora.widget.CodeEditor(this);
@@ -207,6 +217,12 @@ public final class PluginEditorActivity extends Activity {
         root.addView(keys);
 
         setContentView(root);
+    }
+
+    @Override protected void onDestroy() {
+        try { if (inlineBridge != null) inlineBridge.destroy(); } catch (Throwable ignored) { }
+        try { if (uiBridge != null) uiBridge.destroy(); } catch (Throwable ignored) { }
+        super.onDestroy();
     }
 
     /** 顶栏那些小方键（普通 Button 在这个高度太占地）。 */
@@ -341,6 +357,58 @@ public final class PluginEditorActivity extends Activity {
 
     /** 那个插件自己带的界面实例（弹窗关掉前别让它被回收）。 */
     private com.mermergi.ttsrelay.js.PluginBridge uiBridge;
+    /** 内嵌在页面里的插件界面（和 TTS Server 一样，不用再开弹窗）。 */
+    private LinearLayout pluginInline;
+    private com.mermergi.ttsrelay.js.PluginBridge inlineBridge;
+    private boolean inlineOpen = false;
+
+    /** 展开/收起内嵌的插件界面。 */
+    private void toggleInline() {
+        inlineOpen = !inlineOpen;
+        if (!inlineOpen) {
+            pluginInline.setVisibility(View.GONE);
+            if (inlineBridge != null) {
+                try { inlineBridge.destroy(); } catch (Throwable ignored) { }
+                inlineBridge = null;
+            }
+            return;
+        }
+        save();
+        new Thread(new Runnable() {
+            public void run() {
+                final com.mermergi.ttsrelay.js.PluginBridge h;
+                try {
+                    // 走引擎那份配置：变量、每音色数据都带上，界面里的输入框才有值
+                    h = com.mermergi.ttsrelay.JsTtsEngine.openFor(PluginEditorActivity.this, it,
+                            it.s("lang", "zh-CN"), it.s("voice", ""));
+                } catch (Throwable t) {
+                    runOnUiThread(new Runnable() { public void run() { toast("插件界面起不来：" + t.getMessage()); } });
+                    return;
+                }
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        LinearLayout host = h.getUiContainer();
+                        if (host == null || host.getChildCount() == 0) {
+                            toast("这个插件没有自己的界面");
+                            inlineOpen = false;
+                            try { h.destroy(); } catch (Throwable ignored) { }
+                            return;
+                        }
+                        ViewGroup par = (ViewGroup) host.getParent();
+                        if (par != null) par.removeView(host);
+                        if (inlineBridge != null) {
+                            try { inlineBridge.destroy(); } catch (Throwable ignored) { }
+                        }
+                        inlineBridge = h;
+                        pluginInline.removeAllViews();
+                        pluginInline.addView(host, new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                        pluginInline.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        }).start();
+    }
 
     /** 变量面板 —— 登录回来要关掉重开，否则框里还是登录前的空值，一点保存就把新值盖回去。 */
     private AlertDialog varsDlg;
@@ -419,6 +487,16 @@ public final class PluginEditorActivity extends Activity {
                 }
             }));
             box.addView(line);
+            // ua 绑定：插件要一个 User-Agent，给个一键填手机 UA 的按钮
+            String binding = d == null ? "" : d.optString("binding", "");
+            if ("ua".equals(binding) || "ua".equals(k)) {
+                box.addView(ui.chip("填手机 UA", false, new View.OnClickListener() {
+                    public void onClick(View v) {
+                        int idx = keys.indexOf(k);
+                        if (idx >= 0) boxes.get(idx).setText(MOBILE_UA);
+                    }
+                }));
+            }
             keys.add(k);
             boxes.add(e);
             logins.add(loginUrl);
@@ -462,6 +540,10 @@ public final class PluginEditorActivity extends Activity {
     }
 
     private String pendingLoginKey = "";
+
+    /** ua 绑定用的手机 UA。 */
+    static final String MOBILE_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
     private void openFirstLogin(List<String> logins) {
         for (int i = 0; i < logins.size(); i++) {

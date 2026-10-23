@@ -22,6 +22,7 @@ final class VoiceItem {
     String srcId = "";     // 这个音色是谁家的（引擎 id）
     String srcLabel = "";  // 引擎显示名
     String usedBy = "";    // 已经绑了哪些角色（一个音色可以绑多个）
+    String icon = "";      // 插件给的音色图标（没有就是空串）
 
     VoiceItem() { }
 
@@ -42,6 +43,7 @@ final class VoiceItem {
     static VoiceItem parse(String value) {
         VoiceItem it = new VoiceItem();
         it.raw = value == null ? "" : value;
+        it.icon = EngineStore.voiceIcon(it.raw);
         String v = it.raw;
         int sep = v.indexOf(EngineStore.SEP);          // 官方链路：名字‖style_id
         if (sep > 0) v = v.substring(0, sep);

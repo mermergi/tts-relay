@@ -61,8 +61,8 @@ public final class LoginActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle b) {
+        p = Palette.apply(this);
         super.onCreate(b);
-        p = Palette.of(this);
         ui = new Ui(this, p);
 
         Intent in = getIntent();

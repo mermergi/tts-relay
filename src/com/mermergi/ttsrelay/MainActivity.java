@@ -32,7 +32,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -64,7 +63,6 @@ public class MainActivity extends Activity {
 
     // ── 骨架 ──
     private FrameLayout content;
-    private final TextView[] tabInd = new TextView[5];
     private final TextView[] tabName = new TextView[5];
     private int tab = -1;
 
@@ -73,7 +71,7 @@ public class MainActivity extends Activity {
     private Button toggleBtn, pauseBtn, muteBtn;
     private final TextView[] stat = new TextView[4];
     private TextView addrView, lanAddrView;
-    private Switch lanSwitch;
+    private com.google.android.material.materialswitch.MaterialSwitch lanSwitch;
 
     // ── 朗读 ──
     private TextView voiceView, rateVal, pitchVal, volVal, previewOut;
@@ -83,8 +81,8 @@ public class MainActivity extends Activity {
 
     // ── 设置 ──
     private EditText upstreamField, portField, ttsField, maxChunkField, skipKeyField, smallTokenField;
-    private Switch skipSwitch, autoStartSwitch;
-    private Switch mvSwitch, speakUserSwitch;
+    private com.google.android.material.materialswitch.MaterialSwitch skipSwitch, autoStartSwitch;
+    private com.google.android.material.materialswitch.MaterialSwitch mvSwitch, speakUserSwitch;
     private TextView userVoiceView;
     /** 这次开音色库是给「用户消息」挑音色。 */
     private boolean pickUserVoice = false;
@@ -146,9 +144,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         App.install(this);
-        p = Palette.of(this);
-        // 先把主题定下来：Material 的控件（底部抽屉 / 输入框 / 按钮）在 inflate 时读的就是它
-        setTheme(p.light ? R.style.AppTheme_Light : R.style.AppTheme);
+        // 先定主题、再从主题里取 M3 角色（Palette.apply 内部先 setTheme）
+        p = Palette.apply(this);
         super.onCreate(b);
         ui = new Ui(this, p);
         applyWindow();
@@ -213,58 +210,47 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         root.addView(buildTabBar(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(60)));
+                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)));
 
         setContentView(root);
         switchTab(LAST_TAB);
     }
 
+    /**
+     * M3 底部导航：选中项是一颗 secondaryContainer 药丸（Material You 的标志性样子），
+     * 未选是 onSurfaceVariant 文字。没有描边分隔线 —— 层级靠底色 tone。
+     */
     private View buildTabBar() {
-        LinearLayout wrap = ui.col();
-        wrap.setBackgroundColor(p.card);
-        View line = new View(this);
-        line.setBackgroundColor(p.border);
-        wrap.addView(line, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, ui.dp(1))));
-
         LinearLayout bar = ui.row();
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(p.card);
+        bar.setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6));
         for (int i = 0; i < 5; i++) {
             final int idx = i;
-            LinearLayout item = ui.col();
-            item.setGravity(Gravity.CENTER);
-            item.setLayoutParams(new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-
-            TextView ind = new TextView(this);
-            ind.setLayoutParams(new LinearLayout.LayoutParams(ui.dp(22), ui.dp(3)));
-            ind.setBackground(ui.round(p.accent, 2));
-
-            TextView nm = new TextView(this);
-            nm.setText(TAB_NAME[i]);
-            nm.setTextSize(12.5f);
-            nm.setGravity(Gravity.CENTER);
-            nm.setPadding(0, ui.dp(5), 0, 0);
-
-            item.addView(ind);
-            item.addView(nm);
-            item.setOnClickListener(new View.OnClickListener() {
+            TextView pill = new TextView(this);
+            pill.setText(TAB_NAME[i]);
+            pill.setTextAppearance(this, R.style.TextAppearance_Material3_LabelLarge);
+            pill.setGravity(Gravity.CENTER);
+            pill.setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10));
+            pill.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            pill.setOnClickListener(new View.OnClickListener() {
                 public void onClick(View v) { switchTab(idx); }
             });
-            tabInd[i] = ind;
-            tabName[i] = nm;
-            bar.addView(item);
+            tabName[i] = pill;
+            bar.addView(pill);
         }
-        wrap.addView(bar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        return wrap;
+        return bar;
     }
 
     private void paintTabs() {
         for (int i = 0; i < 5; i++) {
             boolean on = (i == tab);
-            tabInd[i].setBackground(on ? ui.round(p.accent, 2) : ui.round(0x00000000, 2));
-            tabName[i].setTextColor(on ? p.accent : p.textMuted);
-            tabName[i].setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            TextView t = tabName[i];
+            if (t == null) continue;
+            t.setTextColor(on ? p.chipFg : p.textSecondary);
+            t.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            t.setBackground(on ? ui.round(p.chipBg, 22) : ui.round(0x00000000, 22));
         }
     }
 
@@ -290,7 +276,8 @@ public class MainActivity extends Activity {
     }
 
     private View scroll(LinearLayout col) {
-        col.setPadding(ui.dp(14), ui.dp(16), ui.dp(14), ui.dp(28));
+        // M3 布局基准：16dp 页边距、区块之间 8dp 节奏
+        col.setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(32));
         ScrollView sv = new ScrollView(this);
         sv.setClipToPadding(false);
         sv.addView(col, new ViewGroup.LayoutParams(
@@ -333,8 +320,9 @@ public class MainActivity extends Activity {
 
         // ── 状态大卡 ──
         LinearLayout hero = ui.col();
-        hero.setBackground(ui.gradient(p.accentSoft, p.card, 20));
-        hero.setPadding(ui.dp(18), ui.dp(18), ui.dp(18), ui.dp(16));
+        // M3 filled tonal card：primaryContainer 底 + XL 圆角（Material You 的标志性大色块）
+        hero.setBackground(ui.round(p.accentSoft, Ui.R_XL));
+        hero.setPadding(ui.dp(20), ui.dp(20), ui.dp(20), ui.dp(18));
         LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         hlp.bottomMargin = ui.dp(12);
@@ -347,8 +335,9 @@ public class MainActivity extends Activity {
         heroDot.setTextSize(15);
         stRow.addView(heroDot);
         heroStatus = new TextView(this);
-        heroStatus.setTextSize(21);
-        heroStatus.setTypeface(Typeface.DEFAULT_BOLD);
+        heroStatus.setTextAppearance(this, R.style.TextAppearance_Material3_HeadlineSmall);
+        heroStatus.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        heroStatus.setTextColor(p.onAccentSoft);
         stRow.addView(heroStatus);
         LinearLayout.LayoutParams hsp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -357,10 +346,10 @@ public class MainActivity extends Activity {
         hero.addView(stRow);
 
         heroSub = new TextView(this);
-        heroSub.setTextSize(12);
-        heroSub.setTextColor(p.textSecondary);
-        heroSub.setLineSpacing(ui.dp(3), 1f);
-        heroSub.setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(14));
+        heroSub.setTextAppearance(this, R.style.TextAppearance_Material3_BodyMedium);
+        heroSub.setTextColor(p.onAccentSoft);
+        heroSub.setLineSpacing(ui.dp(4), 1f);
+        heroSub.setPadding(ui.dp(2), ui.dp(8), 0, ui.dp(16));
         hero.addView(heroSub);
 
         toggleBtn = ui.bigBtn("启动中转", true, new View.OnClickListener() {
@@ -370,13 +359,13 @@ public class MainActivity extends Activity {
 
         LinearLayout quick = ui.row();
         quick.setLayoutParams(topGap(8));
-        pauseBtn = ui.btn("暂停", false, new View.OnClickListener() {
+        pauseBtn = ui.btnOnContainer("暂停", new View.OnClickListener() {
             public void onClick(View v) { togglePause(); }
         });
-        muteBtn = ui.btn("静音", false, new View.OnClickListener() {
+        muteBtn = ui.btnOnContainer("静音", new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
         });
-        Button skipB = ui.btn("跳过本句", false, new View.OnClickListener() {
+        Button skipB = ui.btnOnContainer("下一句", new View.OnClickListener() {
             public void onClick(View v) { skipCurrent(); }
         });
         quick.addView(pauseBtn, ui.weightGap(1f, 8));
@@ -490,7 +479,6 @@ public class MainActivity extends Activity {
         vc.addView(ui.label("试听文本（试听和换音色都念这句）"));
         tryField = ui.field("trytext", Prefs.TRY_DEF, InputType.TYPE_CLASS_TEXT);
         vc.addView(tryField);
-        vc.addView(ui.hint("自检 = 不连模型，直接走一遍断句 / 跳代码块 / 合成 / 播放，用来排除故障。"));
         col.addView(vc);
 
         // ── 语调 ──
@@ -537,7 +525,6 @@ public class MainActivity extends Activity {
         rateBar = s1.bar; rateVal = s1.val;
         pitchBar = s2.bar; pitchVal = s2.val;
         volBar = s3.bar; volVal = s3.val;
-        tc.addView(ui.hint("音量是叠在系统媒体音量上的，立刻生效；语速和音调改动从下一句开始。"));
         col.addView(tc);
 
         // ── 分角色朗读 ──
@@ -720,12 +707,11 @@ public class MainActivity extends Activity {
         maxChunkField = ui.field("maxchunk", String.valueOf(Prefs.MAXCHUNK_DEF),
                 InputType.TYPE_CLASS_NUMBER);
         tc.addView(maxChunkField);
-        tc.addView(ui.hint("断句方案在「朗读」页里换，换完立刻生效，不用重启。"));
         col.addView(tc);
 
         // ── 跳过规则 ──
         LinearLayout sc = ui.card();
-        sc.addView(ui.sectionTitle("跳过规则"));
+        sc.addView(ui.sectionTitle("后台小活判定"));
         skipSwitch = ui.switchBox("检测后台小活\n起标题、写摘要这类请求不朗读");
         skipSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton b, boolean checked) {
@@ -740,8 +726,6 @@ public class MainActivity extends Activity {
         sc.addView(ui.label("关键词（英文逗号分隔，只在 system 提示词里找）"));
         skipKeyField = ui.field("skipkey", Prefs.SKIP_KEYWORDS_DEF, InputType.TYPE_CLASS_TEXT);
         sc.addView(skipKeyField);
-        sc.addView(ui.hint("关键词只在客户端「没设输出额度」时才生效 —— 否则角色卡里一个"
-                + "「标题」就能把整条正经回复哑掉。"));
         col.addView(sc);
 
         // ── 自动化 ──
@@ -758,7 +742,6 @@ public class MainActivity extends Activity {
             public void onClick(View v) { pickTheme(); }
         });
         ac.addView(themeBtn, topGap(14));
-        ac.addView(ui.hint("通知栏常驻卡片上还有 暂停 / 静音 / 停止 三个快捷按钮。"));
         col.addView(ac);
 
         col.addView(ui.bigBtn("保存设置", true, new View.OnClickListener() {
@@ -768,7 +751,6 @@ public class MainActivity extends Activity {
                 toast("已保存（端口 / 上游 / TTS 地址要重启中转生效）");
             }
         }));
-        col.addView(ui.hint("改动会随离开页面自动保存，上面这个按钮只是让你确信一下。"));
 
         return scroll(col);
     }
@@ -936,7 +918,6 @@ public class MainActivity extends Activity {
         engineNow = ui.value("");
         engineNow.setLineSpacing(ui.dp(3), 1f);
         c1.addView(engineNow);
-        c1.addView(ui.hint("播放链直接调这个引擎 —— 不再经过 TTS Server，也就不会再被它的崩溃带走。"));
         col.addView(c1);
 
         LinearLayout c2 = ui.card();
@@ -953,7 +934,6 @@ public class MainActivity extends Activity {
         c3.addView(ui.btn("用当前引擎念一句", true, new View.OnClickListener() {
             public void onClick(View v) { testEngine(); }
         }));
-        c3.addView(ui.hint("失败原因会写进「日志」页，也会打在合成失败那行里。"));
         col.addView(c3);
 
         LinearLayout c4 = ui.card();
@@ -974,9 +954,6 @@ public class MainActivity extends Activity {
             public void onClick(View v) { exportMenu(); }
         }), ui.weight(1f));
         c4.addView(r2, topGap(8));
-        c4.addView(ui.hint("认两种格式：本 App 自己导出的（能原样恢复），"
-                + "和阅读（Legado）的朗读引擎 JSON —— 就是圈里互相分享的那种，"
-                + "TTS Server 也认。别人的配置直接粘进来就能用。"));
         col.addView(c4);
 
         return scroll(col);
@@ -1502,6 +1479,9 @@ public class MainActivity extends Activity {
         box.addView(paramSlider("音量", "vol", it));
         box.addView(paramSlider("音高", "pitch_", it));
 
+        // 这个抽屉自己开的插件宿主（按当前音色），保存/关掉时要把它的 ttsrv.tts.data 存回去
+        final com.mermergi.ttsrelay.js.PluginBridge[] hostRef =
+                new com.mermergi.ttsrelay.js.PluginBridge[1];
         box.addView(ui.btn("保存", true, new View.OnClickListener() {
             public void onClick(View v) {
                 String nm = nameBox.getText().toString().trim();
@@ -1509,6 +1489,8 @@ public class MainActivity extends Activity {
                 it.put("lang", lang[0]);
                 it.put("voice", curVoice[0]);
                 EngineStore.put(MainActivity.this, it);
+                // 插件界面上改的东西（插件那个「自定义语气指令」存在 ttsrv.tts.data 里）
+                JsTtsEngine.persistData(MainActivity.this, it, curVoice[0], hostRef[0]);
                 JsTtsEngine.clearVoices();
                 renderEngines();
                 dismissSheet();
@@ -1516,13 +1498,26 @@ public class MainActivity extends Activity {
         }), ui.topGap(16));
 
         roleSheet = sheet(box);
+        // 手势划走 / 返回键关掉也一样存（跟单音色编辑页 onPause 的行为对齐）
+        try {
+            roleSheet.setOnDismissListener(new DialogInterface.OnDismissListener() {
+                public void onDismiss(DialogInterface d) {
+                    JsTtsEngine.persistData(MainActivity.this, it, curVoice[0], hostRef[0]);
+                }
+            });
+        } catch (Throwable ignored) { }
 
         // 起插件慢（要 eval 整个脚本），后台跑完再填
         new Thread(new Runnable() {
             public void run() {
-                final com.mermergi.ttsrelay.js.PluginBridge h =
-                        JsTtsEngine.sharedBridge(MainActivity.this, it);
-                if (h == null) return;
+                final com.mermergi.ttsrelay.js.PluginBridge h;
+                try {
+                    h = JsTtsEngine.openFor(MainActivity.this, it, lang[0], curVoice[0]);
+                } catch (Throwable t) {
+                    LogBus.error("打开插件界面失败：" + t.getMessage());
+                    return;
+                }
+                hostRef[0] = h;
                 final java.util.LinkedHashMap<String, String> locs;
                 final java.util.List<String[]> vs;
                 try {
@@ -1608,6 +1603,8 @@ public class MainActivity extends Activity {
                 ChoiceSheet.show(MainActivity.this, ui, p, sheetTheme(), "声音", null,
                         names, null, cur, new ChoiceSheet.OnPick() {
                             public void onPick(int i) {
+                                try { JsTtsEngine.persistData(MainActivity.this, it, curVoice[0], h); }
+                                catch (Throwable ignored) { }
                                 curVoice[0] = vs.get(i)[1];
                                 voiceVal.setText(vs.get(i)[0]);
                                 try { h.onVoiceChanged(lang[0], curVoice[0]); } catch (Throwable ignored) { }
@@ -1900,7 +1897,6 @@ public class MainActivity extends Activity {
             public void onClick(View v) { showEngineVoices(it); }
         }), ui.weight(1f));
         box.addView(act, topGap(8));
-        box.addView(ui.hint("引擎配置就是一张键值表：上面是「约定键」，想加自己的参数点「＋ 加一个键」。"));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
@@ -1975,9 +1971,6 @@ public class MainActivity extends Activity {
                         + CookieGrab.summary(got));
             }
         }), topGap(8));
-        box.addView(ui.hint("粘什么进来都行：整段 cURL、一段请求头、或者裸的「名字=值; 名字=值」。"
-                + "长的会自动把 Cookie 摘出来，摘不出就原样收着。"));
-        box.addView(ui.hint("框里看到的就是最终结果；想清掉就清空再保存。"));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
@@ -2171,8 +2164,8 @@ public class MainActivity extends Activity {
 
         if (heroStatus != null) {
             heroStatus.setText(up ? "运行中" : "未运行");
-            heroStatus.setTextColor(up ? p.ok : p.textMuted);
-            heroDot.setTextColor(up ? p.ok : p.textMuted);
+            heroStatus.setTextColor(up ? p.ok : Palette.alpha(p.onAccentSoft, 0.72f));
+            heroDot.setTextColor(up ? p.ok : Palette.alpha(p.onAccentSoft, 0.72f));
             String state = !up ? "点下面按钮启动"
                     : (muted ? "已静音 · 只中转不朗读" : (paused ? "已暂停朗读" : "正在朗读"));
             heroSub.setText("127.0.0.1:" + port + "  →  " + shortHost(Prefs.upstream(this))
@@ -2280,7 +2273,7 @@ public class MainActivity extends Activity {
         Speaker spk = RelayService.speakerOrNull();
         if (spk == null) { toast("先启动中转"); return; }
         spk.skipCurrent();
-        toast("已跳过当前句");
+        toast("已切到下一句");
     }
 
     private void openTtsServer() {
@@ -2906,6 +2899,7 @@ public class MainActivity extends Activity {
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this, sheetTheme());
 
         LinearLayout wrap = ui.col();
+        wrap.setBackground(ui.sheetBg());                // M3 抽屉底板（容器自身透明，底得自己画）
         ImageView handle = new ImageView(this);          // 库里那根真的 drag handle
         handle.setImageResource(R.drawable.mtrl_bottomsheet_drag_handle);
         LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui.dp(32), ui.dp(4));

@@ -140,7 +140,7 @@ public final class JsTtsEngine implements TtsEngine {
     /** 我这侧只存数据，不认识的键别往插件里塞。 */
     private static final java.util.Set<String> NOT_VARS = new java.util.HashSet<String>(java.util.Arrays.asList(
             "src", "def_vars", "var_labels", "user_vars", "tts_data", "login_key", "login_url",
-            "binding", "ua", "lang", "voice", "speed", "volume", "pitch"));
+            "binding", "ua", "lang", "voice", "speed", "volume", "pitch", "vars_by_voice"));
 
     private PluginBridge open(Context c) throws Exception { return open(c, locale(), ""); }
 
@@ -217,8 +217,44 @@ public final class JsTtsEngine implements TtsEngine {
 
     /** 按某份引擎配置开一个插件宿主（界面上问语言/声音也走这里，保证参数一模一样）。 */
     public static PluginBridge openFor(Context c, EngineStore.Item it, String locale, String voice) throws Exception {
-        // 变量值：优先读 `user_vars`（别人那套引擎文件的模型），没有就退回"cfg 里非保留键都当变量"
-        Map<String, String> vars = new LinkedHashMap<String, String>();
+        Map<String, String> vars = baseVars(it);
+
+        // 每音色的持久数据（插件往 ttsrv.tts.data 里塞的东西）—— 跟着音色走。
+        // 键统一用「取值部分」：音色表那一行是 `名字‖取值`，存/读两边必须同一个键。
+        Map<String, String> data = EngineStore.ttsDataForVoice(it, idOf(voice));
+
+        String id = it == null || it.id.length() == 0 ? "plugin" : it.id;
+        PluginBridge h = new PluginBridge(c, id, it == null ? "" : it.s("src", ""), vars, data,
+                locale, voice.length() > 0 ? voice : TtsEngine.shortVoice(Prefs.voice(c)));
+        // 构造里已经 eval() + onLoad() + onLoadUI() + onLoadData()（照它的生命周期）
+        return h;
+    }
+
+    /** 裸 PCM（16bit 单声道小端）→ WAV，好让 MediaPlayer 认。 */
+    static byte[] pcmToWav(byte[] pcm, int sampleRate) {
+        int dataLen = pcm == null ? 0 : pcm.length;
+        byte[] out = new byte[44 + dataLen];
+        java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(out).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        bb.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        bb.putInt(36 + dataLen);
+        bb.put("WAVE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        bb.put("fmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        bb.putInt(16);                 // PCM 头长度
+        bb.putShort((short) 1);        // PCM
+        bb.putShort((short) 1);        // 单声道
+        bb.putInt(sampleRate);
+        bb.putInt(sampleRate * 2);     // 字节率
+        bb.putShort((short) 2);        // 块对齐
+        bb.putShort((short) 16);       // 位深
+        bb.put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        bb.putInt(dataLen);
+        if (dataLen > 0) bb.put(pcm);
+        return out;
+    }
+
+    /** 引擎级的插件变量（user_vars 优先，其次 cfg 里的散键）。 */
+    public static LinkedHashMap<String, String> baseVars(EngineStore.Item it) {
+        LinkedHashMap<String, String> vars = new LinkedHashMap<String, String>();
         String uv = it == null ? "" : it.s("user_vars", "");
         if (uv.trim().length() > 0) {
             try {
@@ -241,40 +277,36 @@ public final class JsTtsEngine implements TtsEngine {
                 if (val.trim().length() > 0) vars.put(key, val);
             }
         }
-
-        // 每音色的持久数据（插件往 ttsrv.tts.data 里塞的东西）
-        Map<String, String> data = new LinkedHashMap<String, String>();
-        String td = it == null ? "" : it.s("tts_data", "");
-        if (td.trim().length() > 0) {
-            try {
-                org.json.JSONObject o = new org.json.JSONObject(td);
-                for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
-                    String key = k.next();
-                    data.put(key, o.optString(key, ""));
-                }
-            } catch (Throwable ignored) { }
-        }
-
-        String id = it == null || it.id.length() == 0 ? "plugin" : it.id;
-        PluginBridge h = new PluginBridge(c, id, it == null ? "" : it.s("src", ""), vars, data,
-                locale, voice.length() > 0 ? voice : TtsEngine.shortVoice(Prefs.voice(c)));
-        // 构造里已经 eval() + onLoad() + onLoadUI() + onLoadData()（照它的生命周期）
-        return h;
+        return vars;
     }
 
     /** 把插件改过的 tts.data 存回引擎配置 —— 下次合成接着用（它本来就是持久存储）。 */
-    private void saveData(Context c, PluginBridge h) {
-        if (it == null || c == null) return;
+    private void saveData(Context c, PluginBridge h, String voice) {
+        persistData(c, it, voice, h);
+    }
+
+    /**
+     * 把插件自己存的「每套 TTS 配置的数据」（{@code ttsrv.tts.data}）写回引擎配置。
+     *
+     * <p>合成完会调一次；<b>单音色编辑页也要调</b> —— 那儿改的是同一份数据
+     * （插件的「语气」就是存这里），不存的话：关掉页面就回退成默认，看着就是
+     * 「语气时不时不生效」。
+     */
+    public static void persistData(Context c, EngineStore.Item item, String voice, PluginBridge h) {
+        if (item == null || h == null || c == null) return;
         try {
-            org.json.JSONObject o = new org.json.JSONObject();
-            for (Map.Entry<String, String> e : h.ttsData().entrySet()) {
-                if (e.getValue() == null) continue;
-                o.put(e.getKey(), e.getValue());
-            }
-            String json = o.toString();
-            if (json.equals(it.s("tts_data", ""))) return;      // 没变不写盘
-            it.put("tts_data", json);
-            EngineStore.put(c, it);
+            // 存和读用同一个键：音色表里的 `名字‖取值` 只取「取值」那部分
+            String key = idOf(voice);
+            java.util.LinkedHashMap<String, String> data =
+                    new java.util.LinkedHashMap<String, String>(h.ttsData());
+            java.util.LinkedHashMap<String, String> before =
+                    EngineStore.ttsDataForVoice(item, key);
+            if (data.equals(before)) return;                       // 没变不写盘
+            EngineStore.setTtsDataForVoice(item, key, data);
+            EngineStore.put(c, item);
+            String dump = data.toString();
+            if (dump.length() > 200) dump = dump.substring(0, 200) + "…";
+            LogBus.add("插件数据已存 voice=[" + key + "] " + dump);
         } catch (Throwable t) {
             LogBus.error("存插件的每音色数据失败：" + t.getMessage());
         }
@@ -306,6 +338,7 @@ public final class JsTtsEngine implements TtsEngine {
         // 同一个插件运行时同时被两个合成碰，就会互相把会话搅烂 → No data written。
         synchronized (h) {
             String v = pickVoice(c, s.voice);
+            h.applyData(EngineStore.ttsDataForVoice(it, v));   // 这个音色自己的插件数据（插件的「语气」在这）
             // 音色/参数没变就别再折腾插件一遍 —— 分角色朗读是"一个音色念几句又换下一个"，
             // 每次 setSource + onVoiceChanged 都会让插件重新初始化一回（慢的就是这一下）。
             String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
@@ -313,6 +346,16 @@ public final class JsTtsEngine implements TtsEngine {
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
                 h.onVoiceChanged(locale(), v);
                 h.setAppliedSig(sig);
+            }
+
+            // 插件说"不用解码" = 它给的是裸 PCM：包个 WAV 头再交给播放端（MediaPlayer 只认容器）
+            if (!h.needDecode(locale(), v)) {
+                byte[] raw = h.audioBytes(text, s.rate, s.volume, s.pitch,
+                        it == null ? 30000L : (long) Math.min(30000, it.i("timeout", 30000)));
+                if (raw == null || raw.length == 0) throw new IllegalStateException("插件没给音频（PCM 为空）");
+                int sr = h.pcmSampleRate(locale(), v);
+                saveData(c, h, v);
+                return pcmToWav(raw, sr > 0 ? sr : 24000);
             }
 
             Throwable first = null;
@@ -340,9 +383,10 @@ public final class JsTtsEngine implements TtsEngine {
                     break;
                 }
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.applyData(EngineStore.ttsDataForVoice(it, v));
                 h.onVoiceChanged(locale(), v);
             }
-            if (!isDead(h)) saveData(c, h);
+            if (!isDead(h)) saveData(c, h, v);
             throw new IllegalStateException(first == null ? "插件没给音频" : first.getMessage());
         }
     }
@@ -360,11 +404,22 @@ public final class JsTtsEngine implements TtsEngine {
 
         synchronized (h) {
             String v = pickVoice(c, s.voice);
+            h.applyData(EngineStore.ttsDataForVoice(it, v));
             String sig = locale() + "|" + v + "|" + s.rate + "|" + s.volume + "|" + s.pitch;
             if (!sig.equals(h.getAppliedSig())) {
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
                 h.onVoiceChanged(locale(), v);
                 h.setAppliedSig(sig);
+            }
+            if (!h.needDecode(locale(), v)) {
+                byte[] raw = h.audioBytes(text, s.rate, s.volume, s.pitch,
+                        it == null ? 30000L : (long) Math.min(30000, it.i("timeout", 30000)));
+                if (raw == null || raw.length == 0) throw new IllegalStateException("插件没给音频（PCM 为空）");
+                int sr = h.pcmSampleRate(locale(), v);
+                byte[] wav = pcmToWav(raw, sr > 0 ? sr : 24000);
+                saveData(c, h, v);
+                sink.chunk(wav, 0, wav.length);
+                return;
             }
             final boolean[] got = new boolean[]{false};
             AudioSink wrapped = new AudioSink() {
@@ -379,7 +434,7 @@ public final class JsTtsEngine implements TtsEngine {
                 try {
                     int n = h.audioTo(text, s.rate, s.volume, s.pitch,
                             it == null ? 30000L : (long) Math.min(30000, it.i("timeout", 30000)), wrapped);
-                    if (n > 0) { saveData(c, h); return; }
+                    if (n > 0) { saveData(c, h, v); return; }
                     first = new IllegalStateException("插件这次没给回音频");
                 } catch (Throwable t) {
                     first = t;
@@ -388,9 +443,10 @@ public final class JsTtsEngine implements TtsEngine {
                 LogBus.error("插件第 " + (attempt + 1) + " 次没给音频（" + first.getMessage() + "），等一下再试");
                 try { Thread.sleep(400L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
                 h.setSource(locale(), v, s.rate, s.volume, s.pitch);
+                h.applyData(EngineStore.ttsDataForVoice(it, v));
                 h.onVoiceChanged(locale(), v);
             }
-            if (!isDead(h)) saveData(c, h);
+            if (!isDead(h)) saveData(c, h, v);
             throw new IllegalStateException(first == null ? "插件没给音频" : first.getMessage());
         }
     }
@@ -499,17 +555,18 @@ public final class JsTtsEngine implements TtsEngine {
                 for (String[] v : vs) {
                     String name = v[0] == null ? "" : v[0];
                     String id = v[1] == null ? "" : v[1];
+                    String icon = v.length > 2 && v[2] != null ? v[2] : "";
                     if (name.length() == 0 && id.length() == 0) continue;
                     String one = id.length() == 0 || id.equals(name)
                             ? name : name + EngineStore.SEP + id;
                     if (seen.add(one)) out.add(one);
+                    if (icon.length() > 0) EngineStore.putVoiceIcon(one, icon);
                 }
             }
         } catch (Throwable t) {
             LogBus.error("跑插件的音色表失败：" + t.getMessage());
         } finally {
             if (h != null) {
-                saveData(c, h);
                 try { h.destroy(); } catch (Throwable ignored) { }
             }
         }

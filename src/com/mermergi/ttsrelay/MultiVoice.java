@@ -621,7 +621,10 @@ public final class MultiVoice {
         }
         if (text.trim().length() == 0) return;
         putAll(text, r, n, g == null ? null : g.tags);
-        out.addAll(flushRun());      // 一行一句，行与行之间不许粘
+        // 以前这里一行一冲，结果「一句一合成」：每句都是独立请求，模型没有上下文、
+        // 句间也没有换气的停顿，听着又碎又赶。现在只补一个分隔符，让断句器
+        // （「单句最长字数」/断句方案）去决定切多长 —— 同一个人的连续几行会攒成一整块。
+        putAll("\n", r, n, g == null ? null : g.tags);
     }
 
     // ═════════════════════════ RP · 只念引号 ═════════════════════════

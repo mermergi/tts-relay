@@ -471,6 +471,119 @@ public final class EngineStore {
     }
 
     /**
+     * 这个音色自己的 {@code ttsrv.tts.data}（插件的「每套 TTS 配置数据」）。
+     *
+     * <p>照 TTS Server：data 本来就是<b>跟着 TTS 配置（音色）走</b>的，一个音色一份。
+     * 我们这边一个插件引擎可以挂很多音色，所以按音色分开存 —— 插件的「语气」正是存在这里，
+     * 以前只存了引擎那一份，等于所有音色共用同一个语气。
+     */
+
+    /**
+     * 把 cfg 里的 JSON 串解析成对象。
+     *
+     * <p>坑：{@code new JSONObject("")} 会抛 JSONException（"End of input at character 0"）。
+     * 以前直接 {@code new JSONObject(it.s("params_by_voice", ""))} 再 catch 吞掉，
+     * 结果就是：<b>第一次</b>存某个音色的数据时 cfg 里还没有这个键 → 解析抛异常 → 整段写入被跳过，
+     * 什么都存不进去（插件的「自定义语气指令」、每音色的语速/音量/音高全中这一枪）。
+     * 空串/脏数据一律当空对象。</p>
+     */
+    static JSONObject obj(String raw) {
+        if (raw == null || raw.trim().length() == 0) return new JSONObject();
+        try {
+            return new JSONObject(raw);
+        } catch (Throwable t) {
+            return new JSONObject();
+        }
+    }
+
+    public static java.util.LinkedHashMap<String, String> ttsDataForVoice(Item it, String voice) {
+        java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
+        if (it == null) return m;
+        String key = voice == null ? "" : voice.trim();
+        if (key.length() > 0) {
+            try {
+                JSONObject all = obj(it.s("tts_data_by_voice", ""));
+                JSONObject one = all.optJSONObject(key);
+                if (one != null) {
+                    for (java.util.Iterator<String> k = one.keys(); k.hasNext(); ) {
+                        String kk = k.next();
+                        m.put(kk, one.optString(kk, ""));
+                    }
+                    return m;
+                }
+            } catch (Throwable ignored) { }
+        }
+        try {
+            JSONObject o = obj(it.s("tts_data", ""));
+            for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
+                String kk = k.next();
+                m.put(kk, o.optString(kk, ""));
+            }
+        } catch (Throwable ignored) { }
+        return m;
+    }
+
+    /**
+     * 这个音色自己的语速 / 音量 / 音高（0 = 跟随全局）。
+     * 照 TTS Server：这三个参数本来就挂在「TTS 配置（音色）」上，一个音色一份。
+     */
+    public static float[] paramsForVoice(Item it, String voice) {
+        float[] out = new float[]{0f, 0f, 0f};
+        if (it == null || voice == null || voice.trim().length() == 0) return out;
+        try {
+            JSONObject all = obj(it.s("params_by_voice", ""));
+            JSONObject one = all.optJSONObject(voice.trim());
+            if (one == null) return out;
+            out[0] = (float) one.optDouble("speed", 0);
+            out[1] = (float) one.optDouble("volume", 0);
+            out[2] = (float) one.optDouble("pitch", 0);
+        } catch (Throwable ignored) { }
+        return out;
+    }
+
+    /** 存这个音色的三项参数（<=0 的项就不存，等于跟随上层）。 */
+    public static void setParamsForVoice(Item it, String voice, float speed, float volume, float pitch) {
+        if (it == null || voice == null || voice.trim().length() == 0) return;
+        try {
+            String key = voice.trim();
+            JSONObject all = obj(it.s("params_by_voice", ""));
+            JSONObject one = new JSONObject();
+            if (speed > 0f) one.put("speed", (double) speed);
+            if (volume > 0f) one.put("volume", (double) volume);
+            if (pitch > 0f) one.put("pitch", (double) pitch);
+            if (one.length() == 0) all.remove(key);
+            else all.put(key, one);
+            if (all.length() == 0) it.cfg.remove("params_by_voice");
+            else it.put("params_by_voice", all.toString());
+        } catch (Throwable ignored) { }
+    }
+
+    /** 存这个音色的 tts.data；和引擎级那份一样就不单独存（让它跟着引擎默认走）。 */
+    public static void setTtsDataForVoice(Item it, String voice, java.util.Map<String, String> data) {
+        if (it == null) return;
+        String key = voice == null ? "" : voice.trim();
+        try {
+            JSONObject one = new JSONObject();
+            if (data != null) {
+                for (java.util.Map.Entry<String, String> e : data.entrySet()) {
+                    if (e.getValue() != null) one.put(e.getKey(), e.getValue());
+                }
+            }
+            if (key.length() == 0) {         // 不知道是哪个音色：就写引擎级那份
+                if (one.length() == 0) it.cfg.remove("tts_data");
+                else it.put("tts_data", one.toString());
+                return;
+            }
+            JSONObject all = obj(it.s("tts_data_by_voice", ""));
+            JSONObject base = obj(it.s("tts_data", ""));
+            if (one.toString().equals(base.toString())) all.remove(key);
+            else all.put(key, one);
+            if (all.length() == 0) it.cfg.remove("tts_data_by_voice");
+            else it.put("tts_data_by_voice", all.toString());
+        } catch (Throwable ignored) { }
+    }
+
+    /**
      * 插件声明的变量 → {@code user_vars}：TTS Server 是"声明"和"用户填的值"分开存的，
      * 插件读的是 {@code ttsrv.userVars['api_key']}，塞在 cfg 的散键里容易对不上。
      */
@@ -787,6 +900,20 @@ public final class EngineStore {
         return out;
     }
 
+    /** 音色 → 插件给的图标地址（插件音色表里带 iconUrl 时记下来，界面上显示）。 */
+    private static final java.util.Map<String, String> VOICE_ICON =
+            new java.util.concurrent.ConcurrentHashMap<String, String>();
+
+    public static void putVoiceIcon(String voice, String url) {
+        if (voice == null || voice.length() == 0) return;
+        if (url == null || url.trim().length() == 0) return;
+        VOICE_ICON.put(voice, url.trim());
+    }
+
+    public static String voiceIcon(String voice) {
+        return voice == null ? "" : VOICE_ICON.getOrDefault(voice, "");
+    }
+
     /** 这个引擎叫什么（界面上按来源分组时显示）。 */
     public static String engineLabel(Context c, String id) {
         if (id == null || id.length() == 0) return "";
@@ -845,6 +972,12 @@ public final class EngineStore {
             String owner = ownerOfVoice(c, voice);
             Item it = owner == null ? null : get(c, owner);
             if (it == null) return;
+            // 先看这个音色自己的三项（TTS Server 就是挂在音色上的）
+            float[] pv = paramsForVoice(it, voice);
+            if (pv[0] > 0f) say.rate = pv[0];
+            if (pv[1] > 0f) say.volume = pv[1];
+            if (pv[2] > 0f) say.pitch = pv[2];
+            if (pv[0] > 0f || pv[1] > 0f || pv[2] > 0f) return;
             float sp = num(it.s("speed", ""), 0f);
             float vo = num(it.s("vol", ""), 0f);
             float pi = num(it.s("pitch_", ""), 0f);

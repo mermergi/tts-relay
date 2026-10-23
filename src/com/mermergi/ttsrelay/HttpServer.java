@@ -89,6 +89,8 @@ public final class HttpServer {
     private volatile boolean running;
     private Thread acceptThread;
     private int port = Prefs.PORT_DEF;
+    /** 最近一条对话请求的原样正文（调试用；/_lastreq 读它，看客户端到底发了什么）。 */
+    private volatile String lastChatBody = "";
 
     public HttpServer(Context c, Speaker s) {
         ctx = c.getApplicationContext();
@@ -261,6 +263,38 @@ public final class HttpServer {
             json(out, 200, o.toString());
             return;
         }
+        if ("/_lastreq".equals(path)) {
+            // 最近一条对话请求的原样正文 —— 认不出说话人时，先看客户端到底发了什么
+            byte[] b = lastChatBody.getBytes(StandardCharsets.UTF_8);
+            Map<String, String> h = new LinkedHashMap<String, String>();
+            h.put("Content-Type", "application/json; charset=utf-8");
+            h.put("Cache-Control", "no-store");
+            writeHead(out, 200, h, b.length, false);
+            out.write(b);
+            out.flush();
+            return;
+        }
+        if ("/_bindings".equals(path)) {
+            // 分角色朗读的当前配置：解析模式 + 两张音色表 —— 对不上号时先看这里
+            JSONObject o = new JSONObject();
+            try {
+                o.put("mvEnabled", Prefs.mvEnabled(ctx));
+                o.put("parseMode", Prefs.parseMode(ctx));
+                o.put("parseModeName", MultiVoice.MODE_NAMES[MultiVoice.clampMode(Prefs.parseMode(ctx))]);
+                JSONArray byName = new JSONArray();
+                for (java.util.Map.Entry<String, String> e : Prefs.voiceNamesMap(ctx).entrySet()) {
+                    JSONObject x = new JSONObject();
+                    x.put("voice", e.getKey());
+                    x.put("names", MultiVoice.splitNames(e.getValue()));
+                    byName.put(x);
+                }
+                o.put("voiceToNames", byName);
+                o.put("roleToVoice", new JSONObject(Prefs.voiceTableMap(ctx)));
+                o.put("candidates", new JSONArray(boundNames()));
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
+            return;
+        }
         if ("/_log".equals(path)) {
             byte[] b = LogBus.dump().getBytes(StandardCharsets.UTF_8);
             Map<String, String> h = new LinkedHashMap<String, String>();
@@ -292,6 +326,8 @@ public final class HttpServer {
                 o.put("tts", Prefs.ttsBase(ctx));
                 o.put("splitMode", Prefs.splitMode(ctx));
                 o.put("splitModeName", Splitter.modeName(Prefs.splitMode(ctx)));
+                o.put("parseMode", Prefs.parseMode(ctx));
+                o.put("parseModeName", MultiVoice.MODE_NAMES[MultiVoice.clampMode(Prefs.parseMode(ctx))]);
                 EngineStore.Item ae = EngineStore.get(ctx, EngineStore.activeId(ctx));
                 o.put("ttsEngine", ae == null ? "?" : ae.label);
                 o.put("ttsEngineId", EngineStore.activeId(ctx));
@@ -364,6 +400,74 @@ public final class HttpServer {
             EngineStore.Item cur = EngineStore.get(ctx, EngineStore.activeId(ctx));
             json(out, 200, "{\"active\":\"" + EngineStore.activeId(ctx) + "\",\"label\":\""
                     + esc(cur == null ? "?" : cur.label) + "\"}");
+            return;
+        }
+        if ("/_jsprobe".equals(path)) {
+            // 调试：在插件宿主里直接跑一段 JS（和插件同一个作用域，能碰 ttsrv.*）。
+            // 用来验「插件写 ttsrv.tts.data 到底写没写进去」——?js=... 可选 &persist=1。
+            EngineStore.Item pIt = EngineStore.get(ctx,
+                    qs.get("id") != null ? qs.get("id") : EngineStore.activeId(ctx));
+            String pVoice = qs.get("voice");
+            if (pVoice == null) pVoice = "";
+            String js = qs.get("js");
+            com.mermergi.ttsrelay.js.PluginBridge h = null;
+            String pErr = null;
+            String pRes = "";
+            try {
+                h = JsTtsEngine.openFor(ctx, pIt, pIt == null ? "zh-CN" : pIt.s("lang", "zh-CN"), pVoice);
+                if (js != null) {
+                    Object r = h.evalJs(js);
+                    pRes = String.valueOf(r);
+                }
+                if (qs.get("persist") != null) JsTtsEngine.persistData(ctx, pIt, pVoice, h);
+            } catch (Throwable t) {
+                pErr = String.valueOf(t);
+            }
+            JSONObject o = new JSONObject();
+            try {
+                o.put("ok", pErr == null);
+                o.put("result", pRes);
+                o.put("error", pErr == null ? JSONObject.NULL : pErr);
+                JSONObject d = new JSONObject();
+                if (h != null) {
+                    for (java.util.Map.Entry<String, String> e : h.ttsData().entrySet()) {
+                        d.put(e.getKey(), e.getValue());
+                    }
+                }
+                o.put("data", d);
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
+            return;
+        }
+        if ("/_ttsdata".equals(path)) {
+            // 调试：看（或改）某个音色自己的 ttsrv.tts.data —— 插件往里存的东西
+            // （插件的「自定义语气指令 tone_text」就在这儿）。?voice=raw 查，?k=&v= 写。
+            EngineStore.Item mIt = EngineStore.get(ctx,
+                    qs.get("id") != null ? qs.get("id") : EngineStore.activeId(ctx));
+            String mVoice = qs.get("voice");
+            if (mVoice == null) mVoice = "";
+            java.util.LinkedHashMap<String, String> mData = EngineStore.ttsDataForVoice(mIt, mVoice);
+            String mk = qs.get("k");
+            String mv = qs.get("v");
+            if (mk != null && mv != null && mIt != null) {
+                mData.put(mk, mv);
+                EngineStore.setTtsDataForVoice(mIt, mVoice, mData);
+                EngineStore.put(ctx, mIt);
+            } else if (mk != null && qs.get("del") != null && mIt != null) {
+                mData.remove(mk);
+                EngineStore.setTtsDataForVoice(mIt, mVoice, mData);
+                EngineStore.put(ctx, mIt);
+            }
+            JSONObject o = new JSONObject();
+            try {
+                o.put("voice", mVoice);
+                JSONObject d = new JSONObject();
+                for (java.util.Map.Entry<String, String> e : mData.entrySet()) {
+                    d.put(e.getKey(), e.getValue());
+                }
+                o.put("data", d);
+            } catch (Throwable ignored) { }
+            json(out, 200, o.toString());
             return;
         }
         if ("/_engines".equals(path)) {
@@ -631,7 +735,7 @@ public final class HttpServer {
             Splitter sp = new Splitter(Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
             String fake = "哥哥，这是自检。"
                     + "\n```python\nprint('这段代码不该被念出来')\n```\n"
-                    + "如果你听到了这句话，说明断句、跳过代码块、合成、播放整条链路都通了。";
+                    + "如果你听到了这句话，说明断句、忽略代码块、合成、播放整条链路都通了。";
             List<String> parts = new ArrayList<String>();
             for (int i = 0; i < fake.length(); i++) {
                 parts.addAll(sp.feed(String.valueOf(fake.charAt(i))));
@@ -684,6 +788,7 @@ public final class HttpServer {
                        Map<String, String> headers, byte[] body) throws IOException {
 
         boolean chat = path.endsWith("/chat/completions") && "POST".equals(method);
+        if (chat) lastChatBody = new String(body == null ? new byte[0] : body, StandardCharsets.UTF_8);
         Decision dec = chat ? decide(body) : new Decision(false, true, "非对话请求");
         boolean speak = dec.speak;
         // 用户自己发的那条（开关打开时）先念出来；念了的话，这一发的回复就接在后面排队，
@@ -1005,6 +1110,11 @@ public final class HttpServer {
             if (MultiVoice.SKIP.equals(e.getValue())) continue;
             names.add(e.getKey());
         }
+        // 「先选音色、再填名字」那张表里的名字同样算点名（之前漏了，导致只有这张表时
+        // 「名字: 」前缀和单行名字都认不出来）。
+        for (java.util.Map.Entry<String, String> e : Prefs.voiceNamesMap(ctx).entrySet()) {
+            if (e.getValue() != null) names.addAll(MultiVoice.splitNames(e.getValue()));
+        }
         mv.setKnownNames(names);
         return mv;
     }
@@ -1088,9 +1198,11 @@ public final class HttpServer {
                 + " model=" + info.optString("model", "?")
                 + " msgs=" + info.optInt("msgs", 0)
                 + " 末条=" + info.optString("last", "-") + "(" + info.optInt("lastLen", 0) + "字)"
+                + (info.optString("char", "").length() > 0 ? " char=" + info.optString("char") : "")
+                + (info.optString("names", "").length() > 0 ? " names=" + info.optString("names") : "")
                 + " max_tokens=" + info.optInt("max_tokens", -1)
                 + " stream=" + info.optBoolean("stream", false)
-                + "  →  " + (d.speak ? (d.cut ? "念" : "念·接在后面") : "跳过")
+                + "  →  " + (d.speak ? (d.cut ? "念" : "念·接在后面") : "不念")
                 + "（" + d.why + "）");
     }
 
@@ -1117,6 +1229,23 @@ public final class HttpServer {
             o.put("lastLen", lastLen);
             o.put("max_tokens", src.optInt("max_tokens", -1));
             o.put("stream", src.optBoolean("stream", false));
+            // 说话人线索：char_name（酒馆自定义请求体里加的那行）和消息自带的 name
+            o.put("char", src.optString("char_name", ""));
+            StringBuilder nm = new StringBuilder();
+            JSONArray m2 = src.optJSONArray("messages");
+            if (m2 != null) {
+                for (int i = 0; i < m2.length(); i++) {
+                    JSONObject msg = m2.optJSONObject(i);
+                    if (msg == null || !"assistant".equals(msg.optString("role", ""))) continue;
+                    Object v = msg.opt("name");
+                    if (!(v instanceof String)) continue;
+                    String s = ((String) v).trim();
+                    if (s.length() == 0 || s.length() > 24) continue;
+                    if (nm.indexOf("|" + s + "|") >= 0) continue;
+                    nm.append('|').append(s).append('|');
+                }
+            }
+            o.put("names", nm.toString().replace("|", " ").trim());
         } catch (Throwable ignored) { }
         return o;
     }
@@ -1136,12 +1265,104 @@ public final class HttpServer {
         if (Prefs.muted(ctx)) return new Decision(false, true, "已静音");
         try {
             JSONObject o = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            Shape sh = shapeOf(o);
             // 「跳过后台小活」只管"念不念"，不该顺手把"打断不打断"也锁死 ——
             // 之前它一关就直接 cut=true，群聊里每个人一开口就把上一个人腰斩。
-            return decideShape(shapeOf(o), Prefs.skipSmall(ctx),
+            Decision d = decideShape(sh, Prefs.skipSmall(ctx),
                     Prefs.smallTokenLimit(ctx), skipMarkers(ctx));
+            // 请求里已经写明说话人（群聊提醒 / 酒馆的 char_name / 单角色聊天的消息名）时，
+            // 直接把名字喂给解析器：这一发整条都是他说的，不用再从正文里猜。
+            if (d.speak && d.speaker.length() == 0) {
+                String who = speakerFromBody(o, sh);
+                if (who.length() > 0) {
+                    d = new Decision(d.speak, d.cut, d.why + " · 这一发是「" + who + "」", who);
+                }
+            }
+            return d;
         } catch (Throwable ignored) { }
         return new Decision(true, true, "正常对话：这一段会打断上一段");
+    }
+
+    /**
+     * 这一发是谁在说 —— 三条路，从最准往下退：
+     *
+     * <ol>
+     *   <li>{@code char_name}：酒馆「自定义请求体」里加一行 {@code char_name: "{{char}}"} 就有。
+     *       群聊时它是<b>当前正在生成的那个角色</b>，最准，也不受界面语言影响。</li>
+     *   <li>{@code messages[].name}：酒馆每条消息本来就带（openai.js 的 setOpenAIMessages），
+     *       单角色聊天里所有 assistant 消息的名字都是同一个角色 —— 一行设置都不用改就能认。</li>
+     *   <li>前面都没给：拿音色表里<b>点过名</b>的角色去 system 提示词里找，只有一个命中才算数。</li>
+     * </ol>
+     *
+     * 都认不出来就返回空串，照旧从正文里的 {@code [角色]} 标签或「名字: 」前缀认。
+     */
+    private String speakerFromBody(JSONObject o, Shape sh) {
+        String type = o.optString("type", "").trim();
+        if ("impersonate".equalsIgnoreCase(type)) return "";    // 写的是用户自己的话，别套角色音色
+        String charName = o.optString("char_name", "").trim();
+        if (charName.length() > 0 && charName.length() <= 24 && !"null".equals(charName)) {
+            return charName;
+        }
+        // 酒馆主提示词（默认模板）第一句就写着这一发是谁：
+        //   Write {{char}}'s next reply in a fictional chat between {{charIfNotGroup}} and {{user}}.
+        String fromPrompt = nameFromMainPrompt(sh.sysText);
+        if (fromPrompt.length() > 0) return fromPrompt;
+        if (sh.assistantNames.size() == 1) return sh.assistantNames.iterator().next();
+        return boundNameIn(sh.sysText);
+    }
+
+    /**
+     * 从酒馆主提示词里抠角色名 —— 它用的就是 ST 自己的默认模板
+     * （openai.js 的 {@code default_main_prompt}），模板没被用户换掉时最准；
+     * 群聊时 {@code {{char}}} 是<b>当前正在生成的那个角色</b>，照样对。
+     * 用户把主提示词改了（换成中文模板之类）就认不出来，退回后面的办法。
+     */
+    private static final java.util.regex.Pattern ST_MAIN_PROMPT =
+            java.util.regex.Pattern.compile("Write\\s+(.{1,40}?)['\u2019]s next reply",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private static String nameFromMainPrompt(String sys) {
+        if (sys == null || sys.length() == 0) return "";
+        java.util.regex.Matcher m = ST_MAIN_PROMPT.matcher(sys);
+        if (!m.find()) return "";
+        String n = m.group(1).trim();
+        if (n.length() == 0 || n.length() > 24) return "";
+        if ("the group".equalsIgnoreCase(n) || "the characters".equalsIgnoreCase(n)) return "";
+        return n;
+    }
+
+    /** 音色表里点过名的角色（两张表都算），去重、去掉分类键和「不念」。 */
+    private java.util.List<String> boundNames() {
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<String>();
+        for (java.util.Map.Entry<String, String> e : Prefs.voiceTableMap(ctx).entrySet()) {
+            String k = e.getKey() == null ? "" : e.getKey().trim();
+            if (k.length() < 2 || MultiVoice.isReservedKey(k)) continue;
+            if (MultiVoice.SKIP.equals(e.getValue())) continue;
+            set.add(k);
+        }
+        for (java.util.Map.Entry<String, String> e : Prefs.voiceNamesMap(ctx).entrySet()) {
+            for (String n : MultiVoice.splitNames(e.getValue())) {
+                if (n.length() >= 2 && !MultiVoice.isReservedKey(n)) set.add(n);
+            }
+        }
+        return new java.util.ArrayList<String>(set);
+    }
+
+    /**
+     * 提示词里提到了配过音色的角色 —— 主提示词在最前面，所以取<b>最先出现</b>的那个：
+     * 角色卡里往往还会提到别的角色（「干妈」「妈妈」），名字越早出现越可能是主角。
+     * 一个都没提到就返回空串（宁可不动声色，也别乱套音色）。
+     */
+    private String boundNameIn(String text) {
+        if (text == null || text.length() == 0) return "";
+        String best = "";
+        int bestAt = Integer.MAX_VALUE;
+        for (String n : boundNames()) {
+            int at = text.indexOf(n);
+            if (at < 0) continue;
+            if (at < bestAt) { bestAt = at; best = n; }
+        }
+        return best;
     }
 
     /** 判定只看这几个字段。抽出来是为了能脱开 Android 的 org.json 离线验。 */
@@ -1153,6 +1374,9 @@ public final class HttpServer {
         String lastText = "";
         String sysText = "";
         boolean lastToolCalls;
+        /** 消息里带的说话人名字（酒馆每条消息都有 {@code name} 字段）—— 单角色聊天就靠它认人。 */
+        final java.util.LinkedHashSet<String> assistantNames = new java.util.LinkedHashSet<String>();
+        String lastName = "";
     }
 
     static Shape shapeOf(JSONObject o) {
@@ -1168,6 +1392,14 @@ public final class HttpServer {
                 String role = msg.optString("role", "");
                 if ("system".equals(role) || "developer".equals(role)) {
                     sys.append(String.valueOf(msg.opt("content"))).append('\n');
+                }
+                Object nm = msg.opt("name");
+                if (nm instanceof String) {
+                    String n = ((String) nm).trim();
+                    if (n.length() > 0 && n.length() <= 24) {
+                        if ("assistant".equals(role)) sh.assistantNames.add(n);
+                        if (i == m.length() - 1) sh.lastName = n;
+                    }
                 }
                 if (i == m.length() - 1) {
                     sh.lastRole = role;
@@ -1235,7 +1467,7 @@ public final class HttpServer {
             }
         }
         return new Decision(true, true, applySkip ? "正常对话：这一段会打断上一段"
-                : "正常对话：这一段会打断上一段（跳过规则已关，只判打断）");
+                : "正常对话：这一段会打断上一段（小活判定已关，只判断打断）");
     }
 
     /**
