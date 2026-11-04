@@ -371,12 +371,12 @@ public final class HttpServer {
             // 全量备份：relay 这一个 SharedPreferences 就是整个 app 的状态
             try {
                 String txt = Prefs.backupJson(ctx);
-                out.write(("HTTP/1.1 200 OK\\r\\nContent-Type: application/json; charset=utf-8\\r\\n"
+                out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
                         + "Content-Disposition: attachment; filename=ttsrelay-backup-"
                         + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.CHINA)
-                                .format(new java.util.Date()) + ".json\\r\\n"
+                                .format(new java.util.Date()) + ".json\r\n"
                         + "Content-Length: " + txt.getBytes("UTF-8").length
-                        + "\\r\\nConnection: close\\r\\n\\r\\n").getBytes("UTF-8"));
+                        + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
                 out.write(txt.getBytes("UTF-8"));
                 out.flush();
             } catch (Throwable t) {
