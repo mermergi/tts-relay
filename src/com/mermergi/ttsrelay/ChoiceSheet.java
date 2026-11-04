@@ -21,16 +21,16 @@ import com.google.android.material.radiobutton.MaterialRadioButton;
  * TextView 里、字号一样、靠换行硬分，看着就是一坨。现在一行 = 名字（15sp 粗）
  * + 说明（12sp 灰）+ 右边单选点，选中的那张卡描边和底色换成主题色。
  */
-final class ChoiceSheet {
+public final class ChoiceSheet {
 
-    interface OnPick {
+    public interface OnPick {
         void onPick(int index);
     }
 
     /**
      * @param checked 当前选中的下标；<b>-1 = 这是一张操作清单</b>，不画单选点
      */
-    static void show(Context ctx, Ui ui, Palette p, int themeRes,
+    public static void show(Context ctx, Ui ui, Palette p, int themeRes,
                      String title, String subtitle,
                      String[] names, String[] descs, int checked, final OnPick onPick) {
         final BottomSheetDialog dlg = new BottomSheetDialog(ctx, themeRes);

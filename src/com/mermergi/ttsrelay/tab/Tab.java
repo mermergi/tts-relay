@@ -19,6 +19,12 @@ public interface Tab {
     /** 离开 tab 时置空全部 view 引用（防残留引用）。 */
     void clearRefs();
 
+    /** 把本页输入框落盘（切页 / 退后台时由壳调用）。 */
+    default void saveInputs() { }
+
+    /** 把配置填进本页控件（进页 / 回前台时由壳调用）。 */
+    default void syncInputs() { }
+
     /**
      * 协调器对外的全部能力都走这个接口 —— 协调器不许持有 Activity 引用。
      * 数据只从三个单一来源读：Prefs / EngineStore / RelayService。
@@ -33,5 +39,10 @@ public interface Tab {
         void requestRefresh();
         /** 仅限 startActivity / SAF 落盘这类非 Activity 不可的场景。 */
         Activity activity();
+
+        /** 底部抽屉壳（多页共用一个槽位，跟旧单体一致）。 */
+        android.app.Dialog sheet(View content);
+        void dismissSheet();
+        int sheetTheme();
     }
 }

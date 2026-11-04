@@ -81,8 +81,6 @@ public class MainActivity extends Activity implements Tab.Host {
     private Button splitBtn;
 
     // ── 设置 ──
-    private EditText upstreamField, portField, ttsField, maxChunkField, skipKeyField, smallTokenField;
-    private com.google.android.material.materialswitch.MaterialSwitch skipSwitch, autoStartSwitch;
     private com.google.android.material.materialswitch.MaterialSwitch mvSwitch, speakUserSwitch;
     private TextView userVoiceView;
     /** 这次开音色库是给「用户消息」挑音色。 */
@@ -115,10 +113,7 @@ public class MainActivity extends Activity implements Tab.Host {
     /** 当前开着的「编辑引擎」框。只允许有一个 —— 叠加起来的话，
      *  关掉上面那个就会露出下面那个还挂着旧状态的框，看着就像"没保存"。 */
     private AlertDialog engineDlg = null;
-    private Button themeBtn;
-    private final List<TextView> presetChips = new ArrayList<TextView>();
     /** 「常用上游」那一行的容器 —— 加了自定义接口要整行重画。 */
-    private LinearLayout presetRow;
 
     // ── 日志 ──
 
@@ -130,13 +125,6 @@ public class MainActivity extends Activity implements Tab.Host {
         }
     };
 
-    /** 常用上游，点一下就填进地址框。 */
-    private static final String[][] PRESETS = {
-            {"DeepSeek", "https://api.deepseek.com"},
-            {"OpenAI", "https://api.openai.com"},
-            {"硅基流动", "https://api.siliconflow.cn"},
-            {"本地 Ollama", "http://127.0.0.1:11434"},
-    };
 
     // ══════════════════════════ 生命周期 ══════════════════════════
 
@@ -166,14 +154,14 @@ public class MainActivity extends Activity implements Tab.Host {
         }
         tick.removeCallbacks(refresher);
         tick.post(refresher);
-        syncInputs();
+        dispatchSync();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         tick.removeCallbacks(refresher);
-        saveInputs();
+        dispatchSave();
     }
 
     @Override
@@ -258,7 +246,7 @@ public class MainActivity extends Activity implements Tab.Host {
     private void switchTab(int i) {
         if (i < 0 || i > 4) i = 0;
         if (i == tab) { paintTabs(); return; }
-        saveInputs();
+        dispatchSave();
         clearRefs();
         tab = i;
         LAST_TAB = i;
@@ -267,7 +255,6 @@ public class MainActivity extends Activity implements Tab.Host {
         Tab t = tabs[i];
         if (t != null) page = t.build(this);
         else if (i == 1) page = pageSpeak();
-        else if (i == 2) page = pageSettings();
         else page = pageEngine();
         content.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -284,13 +271,9 @@ public class MainActivity extends Activity implements Tab.Host {
         rateVal = null; pitchVal = null; volVal = null;
         rateBar = null; pitchBar = null; volBar = null;
         splitBtn = null; previewIn = null; previewOut = null;
-        upstreamField = null; portField = null; ttsField = null; maxChunkField = null;
-        skipKeyField = null; smallTokenField = null;
-        skipSwitch = null; autoStartSwitch = null; themeBtn = null;
         mvSwitch = null; modeBtn = null; roleBox = null;
         speakUserSwitch = null; userVoiceView = null;
         engineBox = null; engineNow = null;
-        presetChips.clear(); presetRow = null;
         Tab t = (tab >= 0) ? tabs[tab] : null;
         if (t != null) t.clearRefs();
     }
@@ -474,240 +457,10 @@ public class MainActivity extends Activity implements Tab.Host {
 
 
 
-    // ══════════════════════════ 设置 ══════════════════════════
-
-    private View pageSettings() {
-        LinearLayout col = ui.col();
-
-        // ── 上游 ──
-        LinearLayout uc = ui.card();
-        uc.addView(ui.sectionTitle("上游模型接口"));
-        uc.addView(ui.label("常用上游"));
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        presetRow = ui.row();
-        hs.addView(presetRow);
-        buildPresetRow();
-        uc.addView(hs);
-
-        uc.addView(ui.label("上游 API 地址"));
-        upstreamField = ui.field("upstream", Prefs.UPSTREAM_DEF, InputType.TYPE_TEXT_VARIATION_URI);
-        uc.addView(upstreamField);
-        uc.addView(ui.label("监听端口"));
-        portField = ui.field("port", String.valueOf(Prefs.PORT_DEF), InputType.TYPE_CLASS_NUMBER);
-        uc.addView(portField);
-        col.addView(uc);
-
-        // ── TTS ──
-        LinearLayout tc = ui.card();
-        tc.addView(ui.sectionTitle("TTS Server"));
-        tc.addView(ui.label("转发器地址"));
-        ttsField = ui.field("tts", Prefs.TTS_BASE_DEF, InputType.TYPE_TEXT_VARIATION_URI);
-        tc.addView(ttsField);
-        tc.addView(ui.label("单句最长字数（超了硬切）"));
-        maxChunkField = ui.field("maxchunk", String.valueOf(Prefs.MAXCHUNK_DEF),
-                InputType.TYPE_CLASS_NUMBER);
-        tc.addView(maxChunkField);
-        col.addView(tc);
-
-        // ── 跳过规则 ──
-        LinearLayout sc = ui.card();
-        sc.addView(ui.sectionTitle("后台小活判定"));
-        skipSwitch = ui.switchBox("检测后台小活\n起标题、写摘要这类请求不朗读");
-        skipSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton b, boolean checked) {
-                Prefs.setSkipSmall(MainActivity.this, checked);
-            }
-        });
-        sc.addView(skipSwitch);
-        sc.addView(ui.label("额度阈值：输出上限小于它就当小活"));
-        smallTokenField = ui.field("smalltoken", String.valueOf(Prefs.SMALL_TOKEN_DEF),
-                InputType.TYPE_CLASS_NUMBER);
-        sc.addView(smallTokenField);
-        sc.addView(ui.label("关键词（英文逗号分隔，只在 system 提示词里找）"));
-        skipKeyField = ui.field("skipkey", Prefs.SKIP_KEYWORDS_DEF, InputType.TYPE_CLASS_TEXT);
-        sc.addView(skipKeyField);
-        col.addView(sc);
-
-        // ── 自动化 ──
-        LinearLayout ac = ui.card();
-        ac.addView(ui.sectionTitle("自动化与外观"));
-        autoStartSwitch = ui.switchBox("开机自启\n仅在上次是运行状态时拉起");
-        autoStartSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton b, boolean checked) {
-                Prefs.setAutoStart(MainActivity.this, checked);
-            }
-        });
-        ac.addView(autoStartSwitch);
-        themeBtn = ui.btn("", false, new View.OnClickListener() {
-            public void onClick(View v) { pickTheme(); }
-        });
-        ac.addView(themeBtn, Widgets.topGap(ui, 14));
-        col.addView(ac);
-
-        col.addView(ui.bigBtn("保存设置", true, new View.OnClickListener() {
-            public void onClick(View v) {
-                saveInputs();
-                syncInputs();
-                toast("已保存（端口 / 上游 / TTS 地址要重启中转生效）");
-            }
-        }));
-
-        return Widgets.scroll(this, ui, col);
-    }
-
-    /** 重画「常用上游」那一行：内置的 + 自己加的 + 末尾那个「＋ 自定义」。 */
-    private void buildPresetRow() {
-        if (presetRow == null) return;
-        presetRow.removeAllViews();
-        presetChips.clear();
-        for (int i = 0; i < PRESETS.length; i++) {
-            addPresetChip(PRESETS[i][0], PRESETS[i][1], false);
-        }
-        for (String[] e : Prefs.upstreamCustom(this)) {
-            addPresetChip(e[0], e[1], true);
-        }
-        TextView add = ui.chip("＋ 自定义", false, new View.OnClickListener() {
-            public void onClick(View v) { customUpstreamSheet(); }
-        });
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cp.rightMargin = ui.dp(8);
-        presetRow.addView(add, cp);
-        renderPresets();
-    }
-
-    private void addPresetChip(final String name, final String url, final boolean custom) {
-        TextView chip = ui.chip(name, false, new View.OnClickListener() {
-            public void onClick(View v) {
-                if (upstreamField == null) return;
-                upstreamField.setText(url);
-                saveInputs();
-                renderPresets();
-            }
-        });
-        chip.setTag(url);
-        if (custom) {                       // 自己加的：长按删掉
-            chip.setOnLongClickListener(new View.OnLongClickListener() {
-                public boolean onLongClick(View v) {
-                    Prefs.removeUpstreamCustom(MainActivity.this, url);
-                    buildPresetRow();
-                    toast("删掉了「" + name + "」");
-                    return true;
-                }
-            });
-        }
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cp.rightMargin = ui.dp(8);
-        presetRow.addView(chip, cp);
-        presetChips.add(chip);
-    }
-
-    /** 自定义上游：起个名字、填地址存下来，就当常用上游用（长按可删）。 */
-    private void customUpstreamSheet() {
-        LinearLayout box = ui.col();
-        box.setPadding(ui.dp(18), ui.dp(2), ui.dp(18), ui.dp(18));
-
-        TextView title = new TextView(this);
-        title.setText("自定义接口");
-        title.setTextColor(p.textPrimary);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(title, ui.topGap(14));
-
-        final EditText name = ui.field(null, "", InputType.TYPE_CLASS_TEXT);
-        name.setHint("名字，比如「公司网关」");
-        final EditText url = ui.field(null, "", InputType.TYPE_TEXT_VARIATION_URI);
-        url.setHint("https://…");
-        box.addView(ui.label("名字"), ui.topGap(12));
-        box.addView(name);
-        box.addView(ui.label("地址"), ui.topGap(10));
-        box.addView(url);
-
-        box.addView(ui.btn("保存", true, new View.OnClickListener() {
-            public void onClick(View v) {
-                String n = name.getText().toString().trim();
-                String u = url.getText().toString().trim();
-                if (n.length() == 0 || u.length() == 0) { toast("名字和地址都要填"); return; }
-                if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
-                Prefs.putUpstreamCustom(MainActivity.this, n, u);
-                buildPresetRow();
-                if (upstreamField != null) {
-                    upstreamField.setText(u);
-                    saveInputs();
-                    renderPresets();
-                }
-                dismissSheet();
-            }
-        }), ui.topGap(14));
-
-        List<String[]> have = Prefs.upstreamCustom(this);
-        if (!have.isEmpty()) {
-            box.addView(ui.label("已保存的（点「删」去掉）"), ui.topGap(16));
-            for (final String[] e : have) {
-                LinearLayout row = ui.row();
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setPadding(0, ui.dp(8), 0, 0);
-                LinearLayout col = ui.col();
-                TextView n = new TextView(this);
-                n.setText(e[0]);
-                n.setTextColor(p.textPrimary);
-                n.setTextSize(14);
-                TextView u = new TextView(this);
-                u.setText(e[1]);
-                u.setTextColor(p.textMuted);
-                u.setTextSize(11.5f);
-                col.addView(n);
-                col.addView(u);
-                row.addView(col, ui.weightGap(1f, 8));
-                row.addView(ui.chip("删", false, new View.OnClickListener() {
-                    public void onClick(View v) {
-                        Prefs.removeUpstreamCustom(MainActivity.this, e[1]);
-                        dismissSheet();
-                        customUpstreamSheet();
-                    }
-                }));
-                box.addView(row);
-            }
-        }
-
-        roleSheet = sheet(box);
-    }
-
-    private void renderPresets() {
-        if (presetRow == null || upstreamField == null) return;
-        String cur = upstreamField.getText().toString().trim();
-        for (int i = 0; i < presetRow.getChildCount(); i++) {
-            View v = presetRow.getChildAt(i);
-            if (!(v instanceof TextView) || v.getTag() == null) continue;
-            TextView t = (TextView) v;
-            boolean on = String.valueOf(v.getTag()).equals(cur);
-            if (on) {
-                t.setTextColor(p.onAccent);
-                t.setTypeface(Typeface.DEFAULT_BOLD);
-                t.setBackground(ui.pressable(p.accent, p.rippleOnAccent, 20, 0));
-            } else {
-                t.setTextColor(p.textSecondary);
-                t.setTypeface(Typeface.DEFAULT);
-                t.setBackground(ui.pressable(p.cardHi, p.ripple, 20, p.border));
-            }
-        }
-    }
-
     @Override public int dialogTheme() {
         return p.light ? R.style.AppDialog_Light : R.style.AppDialog;
     }
 
-    private void pickTheme() {
-        ChoiceSheet.show(this, ui, p, sheetTheme(), "主题", null,
-                Palette.THEME_NAMES, null, Prefs.themeMode(this), new ChoiceSheet.OnPick() {
-                    public void onPick(int which) {
-                        Prefs.setThemeMode(MainActivity.this, which);
-                        recreate();
-                    }
-                });
-    }
 
     // ══════════════════════════ 引擎 ══════════════════════════
 
@@ -1831,9 +1584,6 @@ public class MainActivity extends Activity implements Tab.Host {
         if (splitBtn != null) {
             splitBtn.setText("断句方案：" + Splitter.modeName(Prefs.splitMode(this)) + "  ▸");
         }
-        if (themeBtn != null) {
-            themeBtn.setText("主题：" + Palette.THEME_NAMES[Prefs.themeMode(this)] + "  ▸");
-        }
         if (modeBtn != null) {
             modeBtn.setText("解析模式：" + MultiVoice.MODE_NAMES[Prefs.parseMode(this)] + "  ▸");
         }
@@ -1850,6 +1600,21 @@ public class MainActivity extends Activity implements Tab.Host {
 
 
     // ══════════════════════════ 读写设置 ══════════════════════════
+
+    /** 壳分发：各 Tab 管自己的字段，壳只管还没搬走的朗读页字段。 */
+    private void dispatchSave() {
+        saveInputs();
+        Tab t = (tab >= 0) ? tabs[tab] : null;
+        if (t != null) t.saveInputs();
+    }
+
+    private void dispatchSync() {
+        syncing = true;                      // 这一轮是"程序往控件里填值"，别当用户操作
+        syncInputs();
+        Tab t = (tab >= 0) ? tabs[tab] : null;
+        if (t != null) t.syncInputs();
+        syncing = false;
+    }
 
     private List<EditText> fields() {
         List<EditText> out = new ArrayList<EditText>();
@@ -1871,34 +1636,16 @@ public class MainActivity extends Activity implements Tab.Host {
             if (!(tag instanceof String)) continue;
             String k = (String) tag;
             String v = e.getText().toString().trim();
-            if (k.equals("skipkey")) { Prefs.setSkipKeywords(this, v); continue; }
             if (k.equals("trytext")) { if (v.length() > 0) Prefs.setTryText(this, v); continue; }
-            if (v.length() == 0) continue;
-            if (k.equals("upstream")) Prefs.setUpstream(this, v);
-            else if (k.equals("tts")) Prefs.setTtsBase(this, v);
-            else if (k.equals("port")) {
-                try { Prefs.setPort(this, Integer.parseInt(v)); } catch (Throwable ignored) { }
-            } else if (k.equals("maxchunk")) {
-                try { Prefs.setMaxChunk(this, Integer.parseInt(v)); } catch (Throwable ignored) { }
-            } else if (k.equals("smalltoken")) {
-                try { Prefs.setSmallTokenLimit(this, Integer.parseInt(v)); } catch (Throwable ignored) { }
-            }
         }
     }
 
     private void syncInputs() {
-        syncing = true;                      // 这一轮是"程序往控件里填值"，别当用户操作
         for (EditText e : fields()) {
             Object tag = e.getTag();
             if (!(tag instanceof String)) continue;
             String k = (String) tag;
-            if (k.equals("upstream")) e.setText(Prefs.upstream(this));
-            else if (k.equals("tts")) e.setText(Prefs.ttsBase(this));
-            else if (k.equals("port")) e.setText(String.valueOf(Prefs.port(this)));
-            else if (k.equals("maxchunk")) e.setText(String.valueOf(Prefs.maxChunk(this)));
-            else if (k.equals("trytext")) e.setText(Prefs.tryText(this));
-            else if (k.equals("skipkey")) e.setText(Prefs.skipKeywords(this));
-            else if (k.equals("smalltoken")) e.setText(String.valueOf(Prefs.smallTokenLimit(this)));
+            if (k.equals("trytext")) e.setText(Prefs.tryText(this));
         }
         if (rateBar != null) {
             rateBar.setProgress(SliderRow.toneProg(Prefs.rate(this)));
@@ -1913,17 +1660,12 @@ public class MainActivity extends Activity implements Tab.Host {
             volBar.setProgress(v);
             volVal.setText(v + "%");
         }
-        if (skipSwitch != null) skipSwitch.setChecked(Prefs.skipSmall(this));
         if (mvSwitch != null) mvSwitch.setChecked(Prefs.mvEnabled(this));
         if (speakUserSwitch != null) speakUserSwitch.setChecked(Prefs.speakUser(this));
         renderUserVoice();
         renderVoiceTable();
         renderEngines();          // 只在切页 / 回前台时画，别每秒都画
-        if (autoStartSwitch != null) autoStartSwitch.setChecked(Prefs.autoStart(this));
-        if (themeBtn != null) themeBtn.setText("主题：" + Palette.THEME_NAMES[Prefs.themeMode(this)] + "  ▸");
-        renderPresets();
         renderPreview();
-        syncing = false;
     }
 
     // ══════════════════════════ 断句预览 ══════════════════════════
@@ -2436,7 +2178,7 @@ public class MainActivity extends Activity implements Tab.Host {
      * 底部抽屉的壳 —— 用的是 Material 的 BottomSheetDialog（它的 ModalBottomSheet 同一套）：
      * 遮罩、从下滑走、拖动、圆角、导航栏避让全是库里的，不用自己摆假把手。
      */
-    private Dialog sheet(View content) {
+    @Override public Dialog sheet(View content) {
         com.google.android.material.bottomsheet.BottomSheetDialog d =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this, sheetTheme());
 
@@ -2462,7 +2204,7 @@ public class MainActivity extends Activity implements Tab.Host {
     }
 
     /** 底部抽屉那层的主题（深色 / 浅色各一套，都在 styles.xml 里）。 */
-    private int sheetTheme() {
+    @Override public int sheetTheme() {
         return p.light ? R.style.AppBottomSheet_Light : R.style.AppBottomSheet;
     }
 
@@ -2573,7 +2315,7 @@ public class MainActivity extends Activity implements Tab.Host {
 
     private Dialog roleSheet;
 
-    private void dismissSheet() {
+    @Override public void dismissSheet() {
         Dialog d = roleSheet;
         roleSheet = null;
         if (d != null) {
