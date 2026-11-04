@@ -85,6 +85,7 @@ public class MainActivity extends Activity implements Tab.Host {
             try { requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIF); }
             catch (Throwable ignored) { }
         }
+        CrashHook.offerReport(this, dialogTheme());   // 上次崩过就弹「分享 / 忽略」
     }
 
     @Override

@@ -25,6 +25,7 @@ public final class App {
         if (a == null) a = c;
         if (appCtx == null) appCtx = a;
 
+        CrashHook.install(a);              // 崩溃自捕获：越早装越好，五个入口谁先起来谁装
         try {
             splitties.init.AppCtxKt.installAppCtx(a);
         } catch (Throwable t) {
