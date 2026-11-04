@@ -66,6 +66,21 @@ public final class Speaker {
     private volatile boolean paused = false;
     /** 合成线程正在处理的这句（通知栏"正在念：…"用的；空闲为 null）。 */
     private volatile String nowText = null;
+
+    /** 状态变了（开始念新的一句 / 念完一轮 / 暂停 / 继续 / 入队 / 计数）——UI 和通知来这儿领。 */
+    public interface Listener { public void onSpeakerChanged(); }
+
+    private static final java.util.concurrent.CopyOnWriteArrayList<Listener> LSN =
+            new java.util.concurrent.CopyOnWriteArrayList<Listener>();
+
+    public static void addListener(Listener l) { LSN.add(l); }
+    public static void removeListener(Listener l) { LSN.remove(l); }
+
+    private static void fire() {
+        for (Listener l : LSN) {
+            try { l.onSpeakerChanged(); } catch (Throwable ignored) { }
+        }
+    }
     private volatile float volume = 1f;
 
     // ── 播放那一段 ──
@@ -130,6 +145,7 @@ public final class Speaker {
     public void pause() {
         if (!running || paused) return;
         paused = true;
+        fire();
         Handler h = playH;
         if (h != null) {
             h.post(new Runnable() {
@@ -147,6 +163,7 @@ public final class Speaker {
     public void resume() {
         if (!running || !paused) return;
         paused = false;
+        fire();
         Handler h = playH;
         if (h != null) {
             h.post(new Runnable() {
@@ -265,6 +282,7 @@ public final class Speaker {
         audioQ.clear();
         // 打断会把"上一段还没念的"直接丢掉 —— 这是设计。但要看得出丢了几句，
         // 否则"队列里还剩三句却不念了"就分不清是打断丢的、还是工作线程卡住了。
+        fire();   // 队列被清空 / 状态切换，通知和 UI 都要跟上（哪怕刚才本来就空闲）
         if (dropped > 0) LogBus.add("⏭ 被打断，丢掉上一段没念的 " + dropped + " 句（队列清空）");
         Handler h = playH;
         if (h != null) {
@@ -293,6 +311,7 @@ public final class Speaker {
         if (text == null || text.length() == 0) return;
         if (Prefs.muted(ctx)) return;
         textQ.offer(new Task(text, voice));
+        fire();                                    // 队列数变了，通知栏的"队列 N"跟着走
     }
 
     private void cleanClips() {
@@ -438,7 +457,7 @@ public final class Speaker {
         Task cur = null;
         while (running && ep == synthEpoch) {
             if (cur == null) {
-                nowText = null;                       // 手头没活了，通知栏改"待命中"
+                if (nowText != null) { nowText = null; fire(); }   // 通知栏：改"待命中"
                 synthBeat("等句子");
                 try {
                     cur = textQ.poll(400, TimeUnit.MILLISECONDS);
@@ -447,6 +466,7 @@ public final class Speaker {
                 }
                 if (cur == null) continue;
                 nowText = cur.text;
+                fire();                                  // 通知栏：待命中 → 正在念
                 curTries = 0;
                 curFails = 0;
                 curTimeouts = 0;
@@ -855,6 +875,7 @@ public final class Speaker {
         }
         mp = p;                       // 立刻记上：playNext 靠它守着"一句是一句"
         spoken.incrementAndGet();
+        fire();
         chars.addAndGet(clip.text.length());
         last = clip.text;
         LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
@@ -915,6 +936,7 @@ public final class Speaker {
         playStage = "播放中 " + playDur + "ms";
         mp = p;
         spoken.incrementAndGet();
+        fire();
         chars.addAndGet(clip.text.length());
         last = clip.text;
         // 多语音时把音色也打出来 —— 一眼就能看出这句是谁在念

@@ -88,6 +88,9 @@ public final class LogBus {
 
     public static void addSink(Sink s) { SINKS.add(s); }
 
+    /** 配对移除：界面 onPause 摘监听用（动态注册/注销的完整性）。 */
+    public static void removeSink(Sink s) { SINKS.remove(s); }
+
     public static synchronized String dump() {
         StringBuilder sb = new StringBuilder();
         for (String l : LINES) sb.append(l).append('\n');

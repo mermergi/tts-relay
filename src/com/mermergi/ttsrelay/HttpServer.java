@@ -761,12 +761,14 @@ public final class HttpServer {
         }
         if ("/_mute".equals(path)) {
             Prefs.setMuted(ctx, true);
-            speaker.interrupt();
+            speaker.interrupt();                          // 里面有 fire()
             json(out, 200, "{\"ok\":true,\"muted\":true}");
             return;
         }
         if ("/_unmute".equals(path)) {
             Prefs.setMuted(ctx, false);
+            RelayService svc = RelayService.instance();
+            if (svc != null) svc.updateNotification();   // 静音状态不走 Speaker，得自己喊一嗓子
             json(out, 200, "{\"ok\":true,\"muted\":false}");
             return;
         }

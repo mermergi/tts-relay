@@ -55,12 +55,24 @@ public class MainActivity extends Activity implements Tab.Host {
     // ── 日志 ──
 
     private final Handler tick = new Handler();
+    /** 5 秒一拍的兜底轮询：真正的实时性由下面两个事件源负责。 */
     private final Runnable refresher = new Runnable() {
         public void run() {
             refresh();
-            tick.postDelayed(this, 1000);
+            tick.postDelayed(this, 5000);
         }
     };
+    /** 朗读状态变了（开始念/念完/暂停/队列变）→ 刷当前页。 */
+    private final Speaker.Listener spkLsn = new Speaker.Listener() {
+        public void onSpeakerChanged() { runOnUiThread(refreshUi); }
+    };
+    /** 有新日志 → 只在日志页时刷（别的页不需要跟着日志走）。 */
+    private final LogBus.Sink logLsn = new LogBus.Sink() {
+        public void onLog(String line) {
+            if (tab == 4) runOnUiThread(refreshUi);
+        }
+    };
+    private final Runnable refreshUi = new Runnable() { public void run() { refresh(); } };
 
     // ══════════════════════════ 生命周期 ══════════════════════════
 
@@ -97,6 +109,8 @@ public class MainActivity extends Activity implements Tab.Host {
         }
         tick.removeCallbacks(refresher);
         tick.post(refresher);
+        Speaker.addListener(spkLsn);
+        LogBus.addSink(logLsn);
         dispatchSync();
     }
 
@@ -104,6 +118,8 @@ public class MainActivity extends Activity implements Tab.Host {
     protected void onPause() {
         super.onPause();
         tick.removeCallbacks(refresher);
+        Speaker.removeListener(spkLsn);
+        LogBus.removeSink(logLsn);
         dispatchSave();
     }
 
@@ -234,11 +250,6 @@ public class MainActivity extends Activity implements Tab.Host {
 
         boolean muted = Prefs.muted(this);
         boolean paused = spk != null && spk.isPaused();
-
-        if (up && (System.currentTimeMillis() % 5000) < 1000) {
-            RelayService svc = RelayService.instance();
-            if (svc != null) svc.updateNotification();
-        }
 
         Tab t2 = (tab >= 0) ? tabs[tab] : null;
         if (t2 != null) t2.refresh();

@@ -33,7 +33,14 @@ public final class RelayService extends Service {
         public void run() {
             try {
                 if (Prefs.wanted(RelayService.this)) {
-                    if (speaker == null) { speaker = new Speaker(RelayService.this); speaker.start(); }
+                    if (speaker == null) {
+                    speaker = new Speaker(RelayService.this);
+                    speaker.start();
+                    // 念到哪句/暂停/队列变了 → 通知立刻跟上，不用等 15 秒看门狗
+                    Speaker.addListener(new Speaker.Listener() {
+                        public void onSpeakerChanged() { updateNotification(); }
+                    });
+                }
                     if (server == null) server = new HttpServer(RelayService.this, speaker);
                     if (!server.isRunning()) {
                         LogBus.add("看门狗：中转掉了，自动拉起");
