@@ -1,0 +1,57 @@
+# ═══ ttsrelay R8 规则（v1：只摇树，不混淆不深优化 —— 行为零变化优先）═══
+# 我们自己的代码 + TTS Server 插件运行时全保：Rhino 按 runtime 类型反射进 Java，
+# gson/kotlinx-serialization 按名字找字段，插件脚本按属性名调方法 —— 一改名就哑。
+-keep class com.mermergi.ttsrelay.** { *; }
+-keep class com.github.jing332.** { *; }
+-keep class org.mozilla.** { *; }
+# androidx/material：AAR 布局按全类名引用 View，styles→class 映射也按名字找
+-keep class androidx.** { *; }
+-keep class com.google.android.material.** { *; }
+-keep class com.google.android.flexbox.** { *; }
+# Kotlin 标准库/协程/序列化：内部有名字反射
+-keep class kotlin.** { *; }
+-keep class kotlinx.** { *; }
+-dontwarn java.lang.invoke.StringConcatFactory
+-dontwarn org.codehaus.mojo.animal_sniffer.*
+-dontwarn javax.annotation.**
+-dontwarn org.checkerframework.**
+-dontwarn org.jetbrains.annotations.**
+-dontwarn androidx.emoji2.text.**
+-dontwarn com.chenlb.**
+-dontwarn com.drake.**
+-dontwarn com.github.houbb.pinyin.constant.**
+-dontwarn com.github.promeg.**
+-dontwarn com.github.stuxuhai.**
+-dontwarn com.google.errorprone.**
+-dontwarn com.googlecode.**
+-dontwarn com.hankcs.**
+-dontwarn com.hankcs.hanlp.**
+-dontwarn com.huaban.analysis.**
+-dontwarn com.mayabot.nlp.**
+-dontwarn com.ql.util.**
+-dontwarn com.rnkrsoft.**
+-dontwarn io.github.**
+-dontwarn io.github.logtube.**
+-dontwarn java.**
+-dontwarn jdk.**
+-dontwarn jdk.dynalink.**
+-dontwarn jdk.dynalink.linker.**
+-dontwarn kotlinx.**
+-dontwarn net.sourceforge.pinyin4j.**
+-dontwarn org.**
+-dontwarn org.ansj.splitWord.**
+-dontwarn org.apache.**
+-dontwarn org.apache.commons.**
+-dontwarn org.apache.logging.**
+-dontwarn org.apache.lucene.**
+-dontwarn org.apache.lucene.analysis.cn.**
+-dontwarn org.apdplat.word.**
+-dontwarn org.intellij.lang.**
+-dontwarn org.jboss.**
+-dontwarn org.lionsoul.**
+-dontwarn org.lionsoul.jcseg.**
+-dontwarn org.pmw.**
+-dontwarn org.springframework.**
+-dontwarn org.springframework.expression.spel.**
+-dontwarn org.tinylog.**
+-dontwarn org.wltea.analyzer.**

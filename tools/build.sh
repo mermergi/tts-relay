@@ -151,19 +151,29 @@ set -e
 grep -vE '^warning: \[|^Note: ' "$out/javac.log" || true
 [ "$st" -eq 0 ] || { echo "javac 失败（见 $out/javac.log）" >&2; exit 1; }
 
-echo "==> d8"; stamp "d8"
-# 依赖 jar 预 dex：所有 jar 一次 d8 合成一组 dex（单进程才容忍跨 jar 的重复注解类），
-# 按整组内容哈希缓存 —— 依赖不变就 30 秒陪跑免了，最终一步只 dex 我们自己的类
-libs_hash="$({ for j in "${libs[@]:-}"; do [ -n "$j" ] && sha256sum "$j"; done; } | sha256sum | cut -d' ' -f1)"
-libdex_dir="$root/.ktcache/libdex-all/$libs_hash"
-if [ ! -f "$libdex_dir/.done" ]; then
-    rm -rf "$libdex_dir"; mkdir -p "$libdex_dir"
-    d8 --lib "$android_jar" --min-api 26 --output "$libdex_dir" "${libs[@]:-}"
-    touch "$libdex_dir/.done"
+echo "==> d8/R8"; stamp "d8"
+if [ "${USE_R8:-1}" = "1" ]; then
+    # R8 摇树：规则见 tools/r8-rules.pro（不混淆，插件运行时全保）
+    rm -rf "$dex"; mkdir -p "$dex"
+    mapfile -t classes < <(find "$obj" -name '*.class')
+    r8 --release --lib "$android_jar" --min-api 26 \
+        --pg-conf "$root/tools/r8-rules.pro" \
+        --output "$dex" "${classes[@]}" "${libs[@]:-}" \
+        >"$out/r8.log" 2>&1 || { tail -30 "$out/r8.log" >&2; echo "R8 失败（见 $out/r8.log）" >&2; exit 1; }
+    echo "    R8 摇树完成（USE_R8=0 可退回 d8）"
+else
+    # d8 依赖预 dex：整组一次合成（单进程才容忍跨 jar 的重复注解类），按组哈希缓存
+    libs_hash="$({ for j in "${libs[@]:-}"; do [ -n "$j" ] && sha256sum "$j"; done; } | sha256sum | cut -d' ' -f1)"
+    libdex_dir="$root/.ktcache/libdex-all/$libs_hash"
+    if [ ! -f "$libdex_dir/.done" ]; then
+        rm -rf "$libdex_dir"; mkdir -p "$libdex_dir"
+        d8 --lib "$android_jar" --min-api 26 --output "$libdex_dir" "${libs[@]:-}"
+        touch "$libdex_dir/.done"
+    fi
+    mapfile -t classes < <(find "$obj" -name '*.class')
+    mapfile -t libdexes < <(find "$libdex_dir" -name '*.dex' | sort)
+    d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libdexes[@]}"
 fi
-mapfile -t classes < <(find "$obj" -name '*.class')
-mapfile -t libdexes < <(find "$libdex_dir" -name '*.dex' | sort)
-d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libdexes[@]}"
 
 echo "==> 依赖 jar 里的资源"; stamp "依赖 jar 里的资源"
 # d8 只吃 .class，jar 里的资源（Rhino 的 Messages.properties 这类）会被丢掉，
