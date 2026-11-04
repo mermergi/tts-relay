@@ -5,6 +5,8 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 
+import com.mermergi.ttsrelay.RelayService;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -41,9 +43,44 @@ public final class CrashHook {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
                 try { save(c, t, e); } catch (Throwable ignored) { }
+                try { scheduleRestart(c); } catch (Throwable ignored) { }
                 if (def != null) def.uncaughtException(t, e);   // 原有的默认行为照走（让系统弹"已停止"）
             }
         });
+    }
+
+    // ══════════════════════════ 自拉 ══════════════════════════
+
+    /** 崩了不认命：3 秒后用闹钟把前台服务拉起来。 */
+    private static void scheduleRestart(android.content.Context c) {
+        android.app.PendingIntent pi = restartPendingIntent(c);
+        if (pi == null) return;
+        android.app.AlarmManager am = (android.app.AlarmManager)
+                c.getSystemService(android.content.Context.ALARM_SERVICE);
+        if (am == null) return;
+        long at = android.os.SystemClock.elapsedRealtime() + 3000;
+        try {
+            // 精确闹钟在 Android 14 上才算 FGS 后台启动的豁免理由；没授权就退回 inexact 试运气
+            if (android.os.Build.VERSION.SDK_INT >= 31 && am.canScheduleExactAlarms())
+                am.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
+            else
+                am.setAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
+        } catch (Throwable ignored) {
+            try { am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi); } catch (Throwable ignored2) { }
+        }
+    }
+
+    /** 拉服务不拉 Activity —— 崩死后的进程属于后台，起活动会被 BAL 拦死，前台服务才有豁免。 */
+    static android.app.PendingIntent restartPendingIntent(android.content.Context c) {
+        try {
+            android.content.Intent i = new android.content.Intent(c, RelayService.class);
+            return android.app.PendingIntent.getForegroundService(c, 9901, i,
+                    android.app.PendingIntent.FLAG_ONE_SHOT
+                            | android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                            | android.app.PendingIntent.FLAG_IMMUTABLE);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     // ══════════════════════════ 落盘 ══════════════════════════

@@ -127,6 +127,24 @@ public final class SettingsTab implements Tab {
             }
         }));
 
+        // ═══ 保活 ═══
+        LinearLayout kc = new LinearLayout(ctx);
+        kc.setOrientation(LinearLayout.VERTICAL);
+        kc.addView(ui.sectionTitle("保活"));
+        kc.addView(ui.label(keepAliveText()));
+        kc.addView(ui.btn("申请电池优化豁免", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                try {
+                    ctx.startActivity(new android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:" + ctx.getPackageName())));
+                } catch (Throwable t) {
+                    host.toast("跳不过去，去系统设置里手动关掉本应用的电池优化");
+                }
+            }
+        }));
+        col.addView(kc, Widgets.topGap(ui, 14));
+
         // ═══ 备份 / 恢复 ═══
         LinearLayout bc = new LinearLayout(ctx);
         bc.setOrientation(LinearLayout.VERTICAL);
@@ -289,6 +307,14 @@ public final class SettingsTab implements Tab {
                 t.setBackground(ui.pressable(p.cardHi, p.ripple, 20, p.border));
             }
         }
+    }
+
+    private String keepAliveText() {
+        android.os.PowerManager pm = (android.os.PowerManager)
+                host.activity().getSystemService(Context.POWER_SERVICE);
+        boolean ok = pm != null && pm.isIgnoringBatteryOptimizations(host.activity().getPackageName());
+        return ok ? "电池优化：已豁免（系统不敢随便杀）"
+                  : "电池优化：未豁免（系统闲了会掐掉后台朗读）";
     }
 
     // ══════════════════════════ 备份 / 恢复 ══════════════════════════
