@@ -46,6 +46,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import com.mermergi.ttsrelay.tab.HomeTab;
 import com.mermergi.ttsrelay.tab.LogTab;
 import com.mermergi.ttsrelay.tab.Tab;
 import com.mermergi.ttsrelay.ui.Form;
@@ -74,13 +75,6 @@ public class MainActivity extends Activity implements Tab.Host {
     private int tab = -1;
 
     // ── 首页 ──
-    private TextView heroDot, heroStatus, heroSub;
-    private Button toggleBtn, pauseBtn, muteBtn;
-    private final TextView[] stat = new TextView[4];
-    private TextView addrView, lanAddrView;
-    private com.google.android.material.materialswitch.MaterialSwitch lanSwitch;
-
-    // ── 朗读 ──
     private TextView voiceView, rateVal, pitchVal, volVal, previewOut;
     private SeekBar rateBar, pitchBar, volBar;
     private EditText tryField, previewIn;
@@ -153,7 +147,8 @@ public class MainActivity extends Activity implements Tab.Host {
         p = Palette.apply(this);
         super.onCreate(b);
         ui = new Ui(this, p);
-        tabs[4] = new LogTab(ui, p, this);   // 日志页试点
+        tabs[0] = new HomeTab(ui, p, this, new Runnable() { public void run() { saveInputs(); } });
+        tabs[4] = new LogTab(ui, p, this);
         applyWindow();
         buildShell();
         if (Build.VERSION.SDK_INT >= 33) {
@@ -271,7 +266,6 @@ public class MainActivity extends Activity implements Tab.Host {
         View page;
         Tab t = tabs[i];
         if (t != null) page = t.build(this);
-        else if (i == 0) page = pageHome();
         else if (i == 1) page = pageSpeak();
         else if (i == 2) page = pageSettings();
         else page = pageEngine();
@@ -286,10 +280,6 @@ public class MainActivity extends Activity implements Tab.Host {
 
     /** 切页时先松手，免得还抓着上一页已经拆掉的控件。 */
     private void clearRefs() {
-        heroDot = null; heroStatus = null; heroSub = null;
-        toggleBtn = null; pauseBtn = null; muteBtn = null;
-        stat[0] = null; stat[1] = null; stat[2] = null; stat[3] = null;
-        addrView = null; lanAddrView = null; lanSwitch = null;
         voiceView = null; tryField = null;
         rateVal = null; pitchVal = null; volVal = null;
         rateBar = null; pitchBar = null; volBar = null;
@@ -303,143 +293,6 @@ public class MainActivity extends Activity implements Tab.Host {
         presetChips.clear(); presetRow = null;
         Tab t = (tab >= 0) ? tabs[tab] : null;
         if (t != null) t.clearRefs();
-    }
-
-    // ══════════════════════════ 首页 ══════════════════════════
-
-    private View pageHome() {
-        LinearLayout col = ui.col();
-
-        // ── 状态大卡 ──
-        LinearLayout hero = ui.col();
-        // M3 filled tonal card：primaryContainer 底 + XL 圆角（Material You 的标志性大色块）
-        hero.setBackground(ui.round(p.accentSoft, Ui.R_XL));
-        hero.setPadding(ui.dp(20), ui.dp(20), ui.dp(20), ui.dp(18));
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hlp.bottomMargin = ui.dp(12);
-        hero.setLayoutParams(hlp);
-
-        LinearLayout stRow = ui.row();
-        stRow.setGravity(Gravity.CENTER_VERTICAL);
-        heroDot = new TextView(this);
-        heroDot.setText("●");
-        heroDot.setTextSize(15);
-        stRow.addView(heroDot);
-        heroStatus = new TextView(this);
-        heroStatus.setTextAppearance(this, R.style.TextAppearance_Material3_HeadlineSmall);
-        heroStatus.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        heroStatus.setTextColor(p.onAccentSoft);
-        stRow.addView(heroStatus);
-        LinearLayout.LayoutParams hsp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hsp.leftMargin = ui.dp(8);
-        heroStatus.setLayoutParams(hsp);
-        hero.addView(stRow);
-
-        heroSub = new TextView(this);
-        heroSub.setTextAppearance(this, R.style.TextAppearance_Material3_BodyMedium);
-        heroSub.setTextColor(p.onAccentSoft);
-        heroSub.setLineSpacing(ui.dp(4), 1f);
-        heroSub.setPadding(ui.dp(2), ui.dp(8), 0, ui.dp(16));
-        hero.addView(heroSub);
-
-        toggleBtn = ui.bigBtn("启动中转", true, new View.OnClickListener() {
-            public void onClick(View v) { toggle(); }
-        });
-        hero.addView(toggleBtn);
-
-        LinearLayout quick = ui.row();
-        quick.setLayoutParams(Widgets.topGap(ui, 8));
-        pauseBtn = ui.btnOnContainer("暂停", new View.OnClickListener() {
-            public void onClick(View v) { togglePause(); }
-        });
-        muteBtn = ui.btnOnContainer("静音", new View.OnClickListener() {
-            public void onClick(View v) { toggleMute(); }
-        });
-        Button skipB = ui.btnOnContainer("下一句", new View.OnClickListener() {
-            public void onClick(View v) { skipCurrent(); }
-        });
-        quick.addView(pauseBtn, ui.weightGap(1f, 8));
-        quick.addView(muteBtn, ui.weightGap(1f, 8));
-        quick.addView(skipB, ui.weight(1f));
-        hero.addView(quick);
-        col.addView(hero);
-
-        // ── 统计瓷砖 ──
-        LinearLayout stats = ui.row();
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        slp.bottomMargin = ui.dp(12);
-        stats.setLayoutParams(slp);
-        String[] caps = {"已念句", "字数", "队列", "失败"};
-        int[] colors = {p.accent, p.textPrimary, p.warn, p.err};
-        for (int i = 0; i < 4; i++) {
-            TextView[] out = new TextView[1];
-            stats.addView(ui.tile(caps[i], colors[i], out),
-                    i < 3 ? ui.weightGap(1f, 8) : ui.weight(1f));
-            stat[i] = out[0];
-        }
-        col.addView(stats);
-
-        // ── 地址卡 ──
-        LinearLayout ac = ui.card();
-        ac.addView(ui.sectionTitle("对话软件里填的 API 主机"));
-        addrView = new TextView(this);
-        addrView.setTextSize(14);
-        addrView.setTypeface(Typeface.MONOSPACE);
-        ac.addView(addrView);
-        lanAddrView = new TextView(this);
-        lanAddrView.setTextSize(12);
-        lanAddrView.setTypeface(Typeface.MONOSPACE);
-        lanAddrView.setTextColor(p.textSecondary);
-        lanAddrView.setPadding(0, ui.dp(4), 0, 0);
-        ac.addView(lanAddrView);
-
-        LinearLayout ab = ui.row();
-        ab.setLayoutParams(Widgets.topGap(ui, 12));
-        ab.addView(ui.btn("复制本机地址", true, new View.OnClickListener() {
-            public void onClick(View v) { copy("http://127.0.0.1:" + curPort() + "/v1"); }
-        }), ui.weightGap(1f, 8));
-        ab.addView(ui.btn("复制局域网地址", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                String ip = lanIp();
-                if (ip == null) { toast("没找到局域网 IP"); return; }
-                copy("http://" + ip + ":" + curPort() + "/v1");
-            }
-        }), ui.weight(1f));
-        ac.addView(ab);
-
-        lanSwitch = ui.switchBox("允许局域网访问");
-        lanSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton b, boolean checked) {
-                Prefs.setLanAllowed(MainActivity.this, checked);
-                toast(checked ? "已开启 —— 注意：局域网里谁都能用你的 key" : "已关闭");
-            }
-        });
-        ac.addView(lanSwitch);
-        col.addView(ac);
-
-        // ── 快捷卡 ──
-        LinearLayout tc = ui.card();
-        tc.addView(ui.sectionTitle("快捷"));
-        LinearLayout tb = ui.row();
-        tb.addView(ui.btn("TTS Server", false, new View.OnClickListener() {
-            public void onClick(View v) { openTtsServer(); }
-        }), ui.weightGap(1f, 8));
-        tb.addView(ui.btn("自检", false, new View.OnClickListener() {
-            public void onClick(View v) { selfTest(); }
-        }), ui.weightGap(1f, 8));
-        tb.addView(ui.btn("清空日志", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                LogBus.clear();
-                toast("日志已清空");
-            }
-        }), ui.weight(1f));
-        tc.addView(tb);
-        col.addView(tc);
-
-        return Widgets.scroll(this, ui, col);
     }
 
     // ══════════════════════════ 朗读 ══════════════════════════
@@ -463,7 +316,7 @@ public class MainActivity extends Activity implements Tab.Host {
             public void onClick(View v) { testSpeak(); }
         }), ui.weightGap(1f, 8));
         vb.addView(ui.btn("自检", false, new View.OnClickListener() {
-            public void onClick(View v) { selfTest(); }
+            public void onClick(View v) { Widgets.selfTest(MainActivity.this, curPort()); }
         }), ui.weight(1f));
         vc.addView(vb);
 
@@ -1975,38 +1828,6 @@ public class MainActivity extends Activity implements Tab.Host {
         boolean muted = Prefs.muted(this);
         boolean paused = spk != null && spk.isPaused();
 
-        if (heroStatus != null) {
-            heroStatus.setText(up ? "运行中" : "未运行");
-            heroStatus.setTextColor(up ? p.ok : Palette.alpha(p.onAccentSoft, 0.72f));
-            heroDot.setTextColor(up ? p.ok : Palette.alpha(p.onAccentSoft, 0.72f));
-            String state = !up ? "点下面按钮启动"
-                    : (muted ? "已静音 · 只中转不朗读" : (paused ? "已暂停朗读" : "正在朗读"));
-            heroSub.setText("127.0.0.1:" + port + "  →  " + shortHost(Prefs.upstream(this))
-                    + "\n" + state);
-        }
-        if (toggleBtn != null) toggleBtn.setText(up ? "停止中转" : "启动中转");
-        if (pauseBtn != null) pauseBtn.setText(paused ? "继续" : "暂停");
-        if (muteBtn != null) muteBtn.setText(muted ? "取消静音" : "静音");
-
-        if (stat[0] != null) stat[0].setText(String.valueOf(spk == null ? 0 : spk.spokenCount()));
-        if (stat[1] != null) stat[1].setText(String.valueOf(spk == null ? 0 : spk.charCount()));
-        if (stat[2] != null) stat[2].setText(String.valueOf(spk == null ? 0 : spk.queued()));
-        if (stat[3] != null) stat[3].setText(String.valueOf(spk == null ? 0 : spk.failedCount()));
-
-        if (addrView != null) addrView.setText("http://127.0.0.1:" + port + "/v1");
-        if (lanAddrView != null) {
-            String ip = lanIp();
-            lanAddrView.setText(ip == null
-                    ? "（没找到局域网 IP）"
-                    : "http://" + ip + ":" + port + "/v1"
-                    + (Prefs.lanAllowed(this) ? "  · 已开" : "  · 未开"));
-        }
-        if (voiceView != null) {
-            String v = Prefs.voice(this);
-            voiceView.setText(v.length() == 0
-                    ? "当前：（未选）用 TTS Server 自己的默认音色"
-                    : "当前：" + v.replaceAll("_\\d+$", ""));
-        }
         if (splitBtn != null) {
             splitBtn.setText("断句方案：" + Splitter.modeName(Prefs.splitMode(this)) + "  ▸");
         }
@@ -2015,9 +1836,6 @@ public class MainActivity extends Activity implements Tab.Host {
         }
         if (modeBtn != null) {
             modeBtn.setText("解析模式：" + MultiVoice.MODE_NAMES[Prefs.parseMode(this)] + "  ▸");
-        }
-        if (lanSwitch != null && lanSwitch.isChecked() != Prefs.lanAllowed(this)) {
-            lanSwitch.setChecked(Prefs.lanAllowed(this));
         }
 
 
@@ -2030,64 +1848,6 @@ public class MainActivity extends Activity implements Tab.Host {
         if (t2 != null) t2.refresh();
     }
 
-    private static String shortHost(String u) {
-        try { return new java.net.URL(u).getHost(); } catch (Throwable t) { return u; }
-    }
-
-    // ══════════════════════════ 行为 ══════════════════════════
-
-    private void toggle() {
-        boolean up = RelayService.isUp();
-        Intent i = new Intent(this, RelayService.class);
-        if (up) {
-            i.setAction(RelayService.ACTION_STOP);
-            try { startService(i); } catch (Throwable ignored) { }
-            toast("已停止");
-        } else {
-            saveInputs();
-            try {
-                if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-                else startService(i);
-            } catch (Throwable t) {
-                toast("启动失败：" + t.getMessage());
-            }
-        }
-        tick.postDelayed(new Runnable() { public void run() { refresh(); } }, 600);
-    }
-
-    private void togglePause() {
-        Speaker spk = RelayService.speakerOrNull();
-        if (spk == null) { toast("先启动中转"); return; }
-        if (spk.isPaused()) spk.resume(); else spk.pause();
-        refresh();
-    }
-
-    private void toggleMute() {
-        boolean m = !Prefs.muted(this);
-        Prefs.setMuted(this, m);
-        Speaker spk = RelayService.speakerOrNull();
-        if (m && spk != null) spk.interrupt();
-        toast(m ? "已静音：只当中转用，不朗读" : "已取消静音");
-        refresh();
-    }
-
-    private void skipCurrent() {
-        Speaker spk = RelayService.speakerOrNull();
-        if (spk == null) { toast("先启动中转"); return; }
-        spk.skipCurrent();
-        toast("已切到下一句");
-    }
-
-    private void openTtsServer() {
-        try {
-            Intent i = getPackageManager().getLaunchIntentForPackage(Prefs.engine(this));
-            if (i == null) { toast("没装：" + Prefs.engine(this)); return; }
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
-        } catch (Throwable t) {
-            toast("打开失败：" + t.getMessage());
-        }
-    }
 
     // ══════════════════════════ 读写设置 ══════════════════════════
 
@@ -2153,7 +1913,6 @@ public class MainActivity extends Activity implements Tab.Host {
             volBar.setProgress(v);
             volVal.setText(v + "%");
         }
-        if (lanSwitch != null) lanSwitch.setChecked(Prefs.lanAllowed(this));
         if (skipSwitch != null) skipSwitch.setChecked(Prefs.skipSmall(this));
         if (mvSwitch != null) mvSwitch.setChecked(Prefs.mvEnabled(this));
         if (speakUserSwitch != null) speakUserSwitch.setChecked(Prefs.speakUser(this));
@@ -2210,29 +1969,10 @@ public class MainActivity extends Activity implements Tab.Host {
         toast("已排队（" + parts.size() + " 块，方案：" + Splitter.modeName(Prefs.splitMode(this)) + "）");
     }
 
-    private void selfTest() {
-        if (!RelayService.isUp()) { toast("先启动中转"); return; }
-        final int p0 = curPort();
-        new Thread(new Runnable() {
-            public void run() {
-                try {
-                    java.net.HttpURLConnection c = (java.net.HttpURLConnection)
-                            new java.net.URL("http://127.0.0.1:" + p0 + "/_selftest").openConnection();
-                    c.setConnectTimeout(5000);
-                    c.setReadTimeout(15000);
-                    c.getResponseCode();
-                    c.disconnect();
-                    runOnUiThread(new Runnable() {
-                        public void run() { toast("自检音频已排队，听声音"); }
-                    });
-                } catch (Throwable t) {
-                    final String m = String.valueOf(t.getMessage());
-                    runOnUiThread(new Runnable() {
-                        public void run() { toast("自检失败：" + m); }
-                    });
-                }
-            }
-        }).start();
+
+    private int curPort() {
+        com.mermergi.ttsrelay.HttpServer srv = RelayService.serverOrNull();
+        return (srv != null && srv.isRunning()) ? srv.port() : Prefs.port(this);
     }
 
     private void pickSplitMode() {
@@ -2877,29 +2617,7 @@ public class MainActivity extends Activity implements Tab.Host {
         toast("已复制：" + s);
     }
 
-    private int curPort() {
-        HttpServer srv = RelayService.serverOrNull();
-        return (srv != null && srv.isRunning()) ? srv.port() : Prefs.port(this);
-    }
 
-    private String lanIp() {
-        try {
-            java.util.Enumeration<java.net.NetworkInterface> ifs =
-                    java.net.NetworkInterface.getNetworkInterfaces();
-            while (ifs != null && ifs.hasMoreElements()) {
-                java.net.NetworkInterface ni = ifs.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) continue;
-                java.util.Enumeration<java.net.InetAddress> as = ni.getInetAddresses();
-                while (as.hasMoreElements()) {
-                    java.net.InetAddress a = as.nextElement();
-                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) {
-                        return a.getHostAddress();
-                    }
-                }
-            }
-        } catch (Throwable ignored) { }
-        return null;
-    }
 
     @Override public void toast(String s) {
         Widgets.toast(this, s);

@@ -110,6 +110,36 @@ public final class Widgets {
         return SliderRow.build(ctx, ui, p, title, max, out, l);
     }
 
+    /** 自检：打中转自己的 /_selftest，让整条链路念一段。首页和朗读页共用。 */
+    public static void selfTest(final Context ctx, int port) {
+        if (!com.mermergi.ttsrelay.RelayService.isUp()) {
+            toast(ctx, "先启动中转");
+            return;
+        }
+        final int p0 = port;
+        new Thread(new Runnable() {
+            public void run() {
+                final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+                try {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection)
+                            new java.net.URL("http://127.0.0.1:" + p0 + "/_selftest").openConnection();
+                    c.setConnectTimeout(5000);
+                    c.setReadTimeout(15000);
+                    c.getResponseCode();
+                    c.disconnect();
+                    main.post(new Runnable() {
+                        public void run() { toast(ctx, "自检音频已排队，听声音"); }
+                    });
+                } catch (Throwable t) {
+                    final String m = String.valueOf(t.getMessage());
+                    main.post(new Runnable() {
+                        public void run() { toast(ctx, "自检失败：" + m); }
+                    });
+                }
+            }
+        }).start();
+    }
+
     public static void toast(Context ctx, String s) {
         Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show();
     }

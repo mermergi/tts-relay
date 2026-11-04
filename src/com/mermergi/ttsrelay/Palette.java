@@ -161,7 +161,7 @@ public final class Palette {
                 | (int) (ab * s + bb * t);
     }
 
-    static int alpha(int color, float a) {
+    public static int alpha(int color, float a) {
         return ((int) (a * 255f) << 24) | (color & 0x00FFFFFF);
     }
 
