@@ -19,6 +19,7 @@ public final class RelayService extends Service {
     /** 通知栏快捷开关。 */
     public static final String ACTION_PAUSE = "com.mermergi.ttsrelay.PAUSE";
     public static final String ACTION_MUTE = "com.mermergi.ttsrelay.MUTE";
+    public static final String ACTION_SKIP = "com.mermergi.ttsrelay.SKIP";
 
     private static final String CHANNEL = "relay";
     private static final int NID = 4141;
@@ -88,6 +89,11 @@ public final class RelayService extends Service {
             updateNotification();
             return START_STICKY;
         }
+        if (ACTION_SKIP.equals(a)) {
+            Speaker sp = speaker;
+            if (sp != null) sp.skipCurrent();   // 这句不想听，后面的照听
+            return START_STICKY;
+        }
         if (ACTION_MUTE.equals(a)) {
             boolean m = !Prefs.muted(this);
             Prefs.setMuted(this, m);
@@ -134,10 +140,19 @@ public final class RelayService extends Service {
         boolean up = server != null && server.isRunning();
         StringBuilder sb = new StringBuilder();
         if (up) {
-            sb.append("127.0.0.1:").append(server.port())
-              .append(" · 已念 ").append(speaker == null ? 0 : speaker.spokenCount()).append(" 句");
+            // 折叠态常态可见的就这一行 —— 放用户最关心的：正在念什么 / 队列还有多少
+            int q = speaker == null ? 0 : speaker.queueSize();
+            String now = speaker == null ? "" : speaker.nowSpeaking();
+            if (now != null && now.length() > 0) {
+                sb.append("正在念：").append(now.length() > 24 ? now.substring(0, 24) + "…" : now);
+            } else {
+                sb.append("待命中");
+            }
+            if (q > 0) sb.append(" · 队列 ").append(q);
             if (speaker != null && speaker.isPaused()) sb.append(" · 已暂停");
             if (Prefs.muted(this)) sb.append(" · 已静音");
+            if (speaker != null) sb.append('\n').append("已念 ")
+                    .append(speaker.spokenCount()).append(" 句 · 127.0.0.1:").append(server.port());
         } else {
             sb.append("未运行");
         }
@@ -164,7 +179,7 @@ public final class RelayService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        // 通知栏快捷开关：暂停/继续、静音、停止 —— 不必回 App 就能捂住嘴
+        // 通知栏快捷开关：暂停/继续、跳过、静音、停止 —— 不必回 App 就能捂住嘴
         boolean paused = speaker != null && speaker.isPaused();
         PendingIntent pausePi = PendingIntent.getService(this, 1,
                 new Intent(this, RelayService.class).setAction(ACTION_PAUSE), flags);
@@ -172,11 +187,19 @@ public final class RelayService extends Service {
                 new Intent(this, RelayService.class).setAction(ACTION_MUTE), flags);
         PendingIntent stopPi = PendingIntent.getService(this, 3,
                 new Intent(this, RelayService.class).setAction(ACTION_STOP), flags);
+        PendingIntent skipPi = PendingIntent.getService(this, 4,
+                new Intent(this, RelayService.class).setAction(ACTION_SKIP), flags);
         b.addAction(action(paused ? "继续" : "暂停", pausePi));
+        b.addAction(action("跳过", skipPi));
         b.addAction(action(Prefs.muted(this) ? "取消静音" : "静音", mutePi));
         b.addAction(action("停止", stopPi));
+        // HyperOS / MIUI 折叠态把普通 action 全折进长按 —— MediaStyle 的 compact 行
+        // 是唯一会常驻在折叠通知里的按钮排，放最常用的三个（暂停 / 跳过 / 静音）
+        Notification.MediaStyle ms = new Notification.MediaStyle();
+        ms.setShowActionsInCompactView(0, 1, 2);
         return b.setContentTitle(getString(R.string.notif_title))
                 .setContentText(text)
+                .setStyle(ms)
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
                 .setContentIntent(pi)
                 .setOngoing(true)

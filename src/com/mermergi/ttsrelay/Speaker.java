@@ -64,6 +64,8 @@ public final class Speaker {
     private volatile boolean running = false;
     /** 暂停只停"播" —— 合成照跑，继续时立刻有声，不用等下一句合出来。 */
     private volatile boolean paused = false;
+    /** 合成线程正在处理的这句（通知栏"正在念：…"用的；空闲为 null）。 */
+    private volatile String nowText = null;
     private volatile float volume = 1f;
 
     // ── 播放那一段 ──
@@ -426,10 +428,17 @@ public final class Speaker {
 
     public long pace() { return paceMs; }
 
+    /** 通知栏用：队列里还压着几句。 */
+    public int queueSize() { return textQ.size(); }
+
+    /** 通知栏用：正在念的那句原文；没在念就 null。 */
+    public String nowSpeaking() { return nowText; }
+
     private void synthLoop(final int ep) {
         Task cur = null;
         while (running && ep == synthEpoch) {
             if (cur == null) {
+                nowText = null;                       // 手头没活了，通知栏改"待命中"
                 synthBeat("等句子");
                 try {
                     cur = textQ.poll(400, TimeUnit.MILLISECONDS);
@@ -437,6 +446,7 @@ public final class Speaker {
                     return;
                 }
                 if (cur == null) continue;
+                nowText = cur.text;
                 curTries = 0;
                 curFails = 0;
                 curTimeouts = 0;

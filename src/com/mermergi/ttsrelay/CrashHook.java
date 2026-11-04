@@ -85,18 +85,31 @@ public final class CrashHook {
 
     // ══════════════════════════ 下次启动的弹窗 ══════════════════════════
 
-    /** 主界面 onCreate 里调一句：有新崩溃就弹「分享 / 忽略」（theme 走调用方的对话框主题）。 */
+    /**
+     * 主界面 onCreate 里调一句：有新崩溃就弹「分享 / 忽略」（theme 走调用方的对话框主题）。
+     * 忽略 / 分享过的那份记下名字（prefs），同一份不烦第二次；再出更新的崩才重新弹。
+     */
     public static void offerReport(final Activity act, final int dialogTheme) {
         final File newest = newest(dir(act));
         if (newest == null) return;
+        final android.content.SharedPreferences sp =
+                act.getSharedPreferences("crash", android.content.Context.MODE_PRIVATE);
+        if (newest.getName().equals(sp.getString("seen", null))) return;
         new AlertDialog.Builder(act, dialogTheme)
                 .setTitle("上次崩溃了")
                 .setMessage("崩溃日志已存本地（" + newest.getName() + "）。\n"
                         + "分享给作者有助于修问题；忽略则留着下次再看。")
                 .setPositiveButton("分享", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { share(act, newest); }
+                    public void onClick(DialogInterface d, int w) {
+                        sp.edit().putString("seen", newest.getName()).apply();
+                        share(act, newest);
+                    }
                 })
-                .setNegativeButton("忽略", null)
+                .setNegativeButton("忽略", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        sp.edit().putString("seen", newest.getName()).apply();
+                    }
+                })
                 .show();
     }
 
