@@ -23,12 +23,12 @@ import com.google.android.material.card.MaterialCardView;
  * 两种视图类型：分组标题（女声 / 男声 / 未标注）、音色行（名字 + 标签 + 🎧）。
  * 行用 MaterialCardView：水波、点击反馈、圆角、描边都是它自带的。
  */
-final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.ViewHolder> {
+public final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.ViewHolder> {
 
     private static final int TYPE_HEAD = 0;
     private static final int TYPE_ROW = 1;
 
-    interface Listener {
+    public interface Listener {
         /** 点了这一行（选它，或者给它填名字）。 */
         void onPick(VoiceItem it);
 
@@ -52,7 +52,7 @@ final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.ViewHol
     private final Ui ui;
     private final Listener l;
 
-    VoiceListAdapter(Palette p, Ui ui, Listener l) {
+    public VoiceListAdapter(Palette p, Ui ui, Listener l) {
         super(DIFF);
         this.p = p;
         this.ui = ui;

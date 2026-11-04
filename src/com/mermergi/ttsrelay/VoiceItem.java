@@ -8,25 +8,25 @@ import java.util.List;
  * {@code 成熟姐姐 女|青年|成熟_1792090364247} —— 名字、性别、年龄、风格都在这儿。
  * 解析出来，界面才能按男女分组、把标签单独摆一行。
  */
-final class VoiceItem {
+public final class VoiceItem {
 
     /** 列表里的分组标题（女声 / 男声 / 未标注），不是真音色。 */
-    boolean header;
+    public boolean header;
 
-    String name = "";      // 显示名（不含标签）
-    String raw = "";       // 存下去的原值
-    String gender = "未标注";
-    String age = "";
-    String style = "";
-    String tagLine = "";
-    String srcId = "";     // 这个音色是谁家的（引擎 id）
-    String srcLabel = "";  // 引擎显示名
-    String usedBy = "";    // 已经绑了哪些角色（一个音色可以绑多个）
-    String icon = "";      // 插件给的音色图标（没有就是空串）
+    public String name = "";      // 显示名（不含标签）
+    public String raw = "";       // 存下去的原值
+    public String gender = "未标注";
+    public String age = "";
+    public String style = "";
+    public String tagLine = "";
+    public String srcId = "";     // 这个音色是谁家的（引擎 id）
+    public String srcLabel = "";  // 引擎显示名
+    public String usedBy = "";    // 已经绑了哪些角色（一个音色可以绑多个）
+    public String icon = "";      // 插件给的音色图标（没有就是空串）
 
-    VoiceItem() { }
+    public VoiceItem() { }
 
-    VoiceItem(String display, String value) {
+    public VoiceItem(String display, String value) {
         name = display;
         raw = value;
         tagLine = display;
@@ -40,7 +40,7 @@ final class VoiceItem {
         return it;
     }
 
-    static VoiceItem parse(String value) {
+    public static VoiceItem parse(String value) {
         VoiceItem it = new VoiceItem();
         it.raw = value == null ? "" : value;
         it.icon = EngineStore.voiceIcon(it.raw);
