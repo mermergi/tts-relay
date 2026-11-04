@@ -157,7 +157,7 @@ public final class Speaker {
                 }
             });
         }
-        LogBus.add("⏸ 朗读已暂停");
+        LogBus.add("朗读已暂停");
     }
 
     public void resume() {
@@ -175,7 +175,7 @@ public final class Speaker {
                 }
             });
         }
-        LogBus.add("▶ 朗读已继续");
+        LogBus.add("朗读已继续");
     }
 
     /**
@@ -197,7 +197,7 @@ public final class Speaker {
                 }
             }
         });
-        LogBus.add("⏭ 已切到下一句" + caller());
+        LogBus.add("已切到下一句" + caller());
     }
 
     /** 谁点的跳过 —— 日志里带上，省得"自己跳了"还是"人点的"分不清。 */
@@ -283,7 +283,7 @@ public final class Speaker {
         // 打断会把"上一段还没念的"直接丢掉 —— 这是设计。但要看得出丢了几句，
         // 否则"队列里还剩三句却不念了"就分不清是打断丢的、还是工作线程卡住了。
         fire();   // 队列被清空 / 状态切换，通知和 UI 都要跟上（哪怕刚才本来就空闲）
-        if (dropped > 0) LogBus.add("⏭ 被打断，丢掉上一段没念的 " + dropped + " 句（队列清空）");
+        if (dropped > 0) LogBus.add("被打断，丢掉上一段没念的 " + dropped + " 句（队列清空）");
         Handler h = playH;
         if (h != null) {
             h.post(new Runnable() {
@@ -358,14 +358,14 @@ public final class Speaker {
             boolean lead = mp != null || !audioQ.isEmpty();
             long synthGrace = (lead ? Math.max(synthWait * 3, 120000L) : synthWait) + 15000L;
             if (synthBusy && now - synthBeat > synthGrace) {
-                LogBus.error("🩺 合成线程 " + ((now - synthBeat) / 1000) + " 秒没动"
+                LogBus.error("看门狗：合成线程 " + ((now - synthBeat) / 1000) + " 秒没动"
                         + "（卡在" + synthStage + "，这句最多该等 " + (synthWait / 1000) + " 秒），"
                         + "换新合成线程，这一句丢掉");
                 startSynthWorker();
             }
 
             if (now - playBeat > 6000L) {
-                LogBus.error("🩺 播放线程 " + ((now - playBeat) / 1000) + " 秒没动"
+                LogBus.error("看门狗：播放线程 " + ((now - playBeat) / 1000) + " 秒没动"
                         + "（卡在" + playStage + " —— 十有八九是 MediaPlayer 的原生调用没返回），"
                         + "已换一条新播放线程接着念");
                 rebuildPlayThread();
@@ -580,7 +580,7 @@ public final class Speaker {
                 long cost = System.currentTimeMillis() - t0;
                 EngineStore.noteSynthOk(cur.voice, cost);
                 if (cost > 8000L) {
-                    LogBus.add("🐢 这句下载花了 " + (cost / 1000) + " 秒（文本 "
+                    LogBus.add("这句下载花了 " + (cost / 1000) + " 秒（文本 "
                             + cur.text.length() + " 字 · 边下边播）");
                 }
                 cur = null;
@@ -590,7 +590,7 @@ public final class Speaker {
                 long cost = System.currentTimeMillis() - t0;
                 EngineStore.noteSynthOk(cur.voice, cost);
                 if (cost > 8000L) {
-                    LogBus.add("🐢 这句合成花了 " + (cost / 1000) + " 秒（文本 "
+                    LogBus.add("这句合成花了 " + (cost / 1000) + " 秒（文本 "
                             + cur.text.length() + " 字 · 音频 " + (data.length / 1024) + "KB）");
                 }
             }
@@ -642,7 +642,7 @@ public final class Speaker {
                         long back = Math.min(30000L, (busy ? 10000L : 2000L)
                                 << Math.min(failStreak - 1, busy ? 1 : 4));
                         nextTryAt = System.currentTimeMillis() + back;
-                        LogBus.add("⏸ 退避 " + (back / 1000) + " 秒（"
+                        LogBus.add("退避 " + (back / 1000) + " 秒（"
                                 + (busy ? "上一发还没返回，别再往上堆了" : "连续 " + failStreak + " 次连不上")
                                 + "，这一句留着不丢）");
                         if (!busy) TtsReviver.tryRevive(ctx);
@@ -653,7 +653,7 @@ public final class Speaker {
                         paceMs = Math.min(3000L, paceMs == 0 ? 500L : paceMs * 2);
                         long back = Math.min(30000L, 5000L << Math.min(curTries - 1, 2));
                         nextTryAt = System.currentTimeMillis() + back;
-                        LogBus.add("⏸ 退避 " + (back / 1000) + " 秒（引擎回的不是音频，"
+                        LogBus.add("退避 " + (back / 1000) + " 秒（引擎回的不是音频，"
                                 + "像是被限流/风控了；节奏放到 " + paceMs + "ms，第 " + curTries
                                 + " 次重试，这一句留着）");
                     } else {
@@ -878,7 +878,7 @@ public final class Speaker {
         fire();
         chars.addAndGet(clip.text.length());
         last = clip.text;
-        LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
+        LogBus.add((clip.voice == null || clip.voice.length() == 0
                 ? "" : "【" + clip.voice.replaceAll("_\\d+$", "") + "】")
                 + head(clip.text, 42) + "  (边下边播 · 文本 " + clip.text.length() + " 字)");
         playStart = 0;
@@ -942,7 +942,7 @@ public final class Speaker {
         // 多语音时把音色也打出来 —— 一眼就能看出这句是谁在念
         // 音频字节/码率也打出来 —— 有些引擎会把超长句子截断，听感是"没念完就自己停了"，
         // 这时候一眼能看出是音频本身短，而不是播放被打断
-        LogBus.add("🔊 " + (clip.voice == null || clip.voice.length() == 0
+        LogBus.add((clip.voice == null || clip.voice.length() == 0
                 ? "" : "【" + clip.voice.replaceAll("_\\d+$", "") + "】")
                 + head(clip.text, 42) + "  (" + playDur + "ms"
                 + " · 文本 " + clip.text.length() + " 字 · 音频 " + (clip.data == null ? 0 : clip.data.length) + " 字节"

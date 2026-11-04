@@ -81,7 +81,7 @@ public final class LogBus {
 
     public static void error(String msg) {
         lastError = msg;
-        add("❌ " + msg);
+        add(msg);
     }
 
     public static String lastError() { return lastError; }

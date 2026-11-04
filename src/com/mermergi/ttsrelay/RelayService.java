@@ -113,11 +113,25 @@ public final class RelayService extends Service {
         return START_STICKY;
     }
 
+    /**
+     * Speaker 的唯一出生点。曾经有两个创建点，其中一个忘了挂通知监听 ——
+     * onStartCommand 先到就把看门狗的注册跳了，通知从此变聋。收拢成一处。
+     */
+    private void ensureSpeaker() {
+        if (speaker == null) {
+            speaker = new Speaker(this);
+            speaker.start();
+            // 念到哪句/暂停/队列变了 → 通知立刻跟上，不用等 15 秒看门狗
+            Speaker.addListener(new Speaker.Listener() {
+                public void onSpeakerChanged() { updateNotification(); }
+            });
+        }
+    }
+
     private void startEverything() {
         startForegroundCompat("正在启动…");
         Prefs.setWanted(this, true);
-        if (speaker == null) speaker = new Speaker(this);
-        speaker.start();
+        ensureSpeaker();
         if (server == null) server = new HttpServer(this, speaker);
         if (!server.isRunning()) {
             try {
@@ -146,29 +160,27 @@ public final class RelayService extends Service {
         if (nm == null) return;
         boolean up = server != null && server.isRunning();
         StringBuilder sb = new StringBuilder();
-        if (up) {
-            // 折叠态常态可见的就这一行 —— 放用户最关心的：正在念什么 / 队列还有多少
-            int q = speaker == null ? 0 : speaker.queueSize();
-            String now = speaker == null ? "" : speaker.nowSpeaking();
-            if (now != null && now.length() > 0) {
-                sb.append("正在念：").append(now.length() > 24 ? now.substring(0, 24) + "…" : now);
-            } else {
-                sb.append("待命中");
-            }
-            if (q > 0) sb.append(" · 队列 ").append(q);
-            if (speaker != null && speaker.isPaused()) sb.append(" · 已暂停");
-            if (Prefs.muted(this)) sb.append(" · 已静音");
-            if (speaker != null) sb.append('\n').append("已念 ")
-                    .append(speaker.spokenCount()).append(" 句 · 127.0.0.1:").append(server.port());
+        String title, text;
+        if (!up) {
+            title = "已停止"; text = "";
         } else {
-            sb.append("未运行");
+            String now = speaker == null ? "" : speaker.nowSpeaking();
+            boolean speaking = now != null && now.length() > 0;
+            // 标题位放状态（App 名系统会显示在标题上面，不占我们的字），正文只留一句短的
+            if (Prefs.muted(this))      title = "已静音";
+            else if (speaker != null && speaker.isPaused()) title = "已暂停";
+            else if (speaking)          title = "朗读中";
+            else { title = "已念 " + (speaker == null ? 0 : speaker.spokenCount()) + " 句"; }
+            text = speaking
+                    ? (now.length() > 28 ? now.substring(0, 28) + "…" : now)
+                    : "127.0.0.1:" + server.port();
         }
-        Notification n = buildNotification(sb.toString());
+        Notification n = buildNotification(title, text);
         nm.notify(NID, n);
     }
 
     private void startForegroundCompat(String text) {
-        Notification n = buildNotification(text);
+        Notification n = buildNotification(getString(R.string.notif_title), text);
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
@@ -176,7 +188,7 @@ public final class RelayService extends Service {
         }
     }
 
-    private Notification buildNotification(String text) {
+    private Notification buildNotification(String title, String text) {
         int flags = Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0;
         PendingIntent pi = PendingIntent.getActivity(
                 this, 0, new Intent(this, MainActivity.class), flags);
@@ -200,14 +212,15 @@ public final class RelayService extends Service {
         b.addAction(action(paused ? "继续" : "暂停",
                 paused ? R.drawable.ic_notif_play : R.drawable.ic_notif_pause, pausePi));
         b.addAction(action("跳过", R.drawable.ic_notif_next, skipPi));
+        // 图标 = 现状（和左侧小图标同一个逻辑），文案 = 按下后做什么
         b.addAction(action(Prefs.muted(this) ? "取消静音" : "静音",
-                Prefs.muted(this) ? R.drawable.ic_notif_sound : R.drawable.ic_notif_mute, mutePi));
+                Prefs.muted(this) ? R.drawable.ic_notif_mute : R.drawable.ic_notif_sound, mutePi));
         b.addAction(action("停止", R.drawable.ic_notif_close, stopPi));
         // HyperOS / MIUI 折叠态把普通 action 全折进长按 —— MediaStyle 的 compact 行
         // 是唯一会常驻在折叠通知里的按钮排，放最常用的三个（暂停 / 跳过 / 静音）
         Notification.MediaStyle ms = new Notification.MediaStyle();
         ms.setShowActionsInCompactView(0, 1, 2);
-        return b.setContentTitle(getString(R.string.notif_title))
+        return b.setContentTitle(title)
                 .setContentText(text)
                 .setStyle(ms)
                 .setSmallIcon(Prefs.muted(this) ? R.drawable.ic_notif_mute

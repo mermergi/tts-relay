@@ -15,6 +15,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
@@ -98,7 +99,7 @@ public final class PluginEditorActivity extends Activity {
         // ── 顶栏 ──
         LinearLayout top = ui.row();
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(tinyKey("←", new View.OnClickListener() {
+        top.addView(tinyIcon(R.drawable.ic_back, new View.OnClickListener() {
             public void onClick(View v) { save(); finish(); }
         }));
         nameBox = ui.field("label", "", InputType.TYPE_CLASS_TEXT);
@@ -108,19 +109,19 @@ public final class PluginEditorActivity extends Activity {
         np.leftMargin = ui.dp(4);
         np.rightMargin = ui.dp(4);
         top.addView(nameBox, np);
-        top.addView(tinyKey("▶", new View.OnClickListener() {
+        top.addView(tinyIcon(R.drawable.ic_notif_play, new View.OnClickListener() {
             public void onClick(View v) { listen(); }
         }));
-        top.addView(tinyKey("↶", new View.OnClickListener() {
+        top.addView(tinyIcon(R.drawable.ic_undo, new View.OnClickListener() {
             public void onClick(View v) { undo(); }
         }));
-        top.addView(tinyKey("↷", new View.OnClickListener() {
+        top.addView(tinyIcon(R.drawable.ic_redo, new View.OnClickListener() {
             public void onClick(View v) { redo(); }
         }));
-        top.addView(tinyKey("💾", new View.OnClickListener() {
+        top.addView(tinyIcon(R.drawable.ic_save, new View.OnClickListener() {
             public void onClick(View v) { save(); toast("已保存"); }
         }));
-        top.addView(tinyKey("⋮", new View.OnClickListener() {
+        top.addView(tinyIcon(R.drawable.ic_more, new View.OnClickListener() {
             public void onClick(View v) { menu(v); }
         }));
         root.addView(top);
@@ -226,6 +227,18 @@ public final class PluginEditorActivity extends Activity {
     }
 
     /** 顶栏那些小方键（普通 Button 在这个高度太占地）。 */
+    /** 顶栏图标钮：和 chip 同底同涟漪，只是内容换成 20dp 白 glyph —— 全 app 一套图标语言。 */
+    private ImageView tinyIcon(int res, View.OnClickListener l) {
+        ImageView v = new ImageView(this);
+        v.setImageResource(res);
+        int pad = ui.dp(10);
+        v.setPadding(pad, pad, pad, pad);
+        v.setBackground(ui.pressable(p.chipBg, p.ripple, Ui.R_S, 0));
+        v.setOnClickListener(l);
+        v.setLayoutParams(new LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)));
+        return v;
+    }
+
     private TextView tinyKey(String s, View.OnClickListener l) {
         TextView t = ui.chip(s, false, l);
         t.setSingleLine(true);
