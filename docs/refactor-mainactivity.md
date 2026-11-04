@@ -180,3 +180,36 @@ public interface TabHost {
 ---
 
 *版本：v1 · 基于 MainActivity.java @ 728530c（2.9.1，3105 行）*
+
+
+---
+
+## 落地结果（v2.10.0 重构完成时补记）
+
+7 步全部完成，每步一个提交，均通过装机基线验证（/_split 五档 + /_status + /_voices 与 v2.9.1 全等）：
+
+| 步骤 | 提交 | 内容 |
+|---|---|---|
+| 1 | 22be3bb | ui/：SliderRow（原内部类 Sl）、Form（原 Fld）、Widgets（scroll/topGap/kvRow/paramSlider/selfTest 等） |
+| 2 | af61c09 | tab/Tab + Tab.Host 契约，LogTab 试点 |
+| 3 | cd133c6 | HomeTab（首页 + hero 卡 + 统计 + 快捷开关） |
+| 4 | 9e5c58c | SettingsTab（上游/TTS/小活判定/主题/常用上游 chips） |
+| 5 | 557e4ac | SpeakTab + VoicePicker（朗读页与分角色音色机制分家，页布局与音色机器分离） |
+| 6+7 | d50ac68 | EngineTab + EngineEditor（合并提交：引擎页与编辑器互相引用太深，拆开做会互相卡） |
+| 收尾 | ae72fa2 | 清壳：死字段 + 无用 import |
+
+### 与原方案的偏差（均为有意）
+- **Tab 契约加了 4 个 default/方法**：`saveInputs()`/`syncInputs()`（default 空实现）进入 Tab；`sheet(View)`/`dismissSheet()`/`sheetTheme()` 进入 Tab.Host —— 底部抽屉是 Activity 级共用基建（Material BottomSheetDialog + 单槽位管理），放 Widgets 做不了单槽位。
+- **行数预算**：MainActivity 460 行（目标 ≤400，差在 tab 栏/主题/生命周期是真壳代码，再砍只能删注释）；VoicePicker 677、EngineEditor 659（超 600 预算）——两处都是状态高度内聚的机器（选音色↔绑定↔试听、编辑框↔插件面板↔Cookie），再拆只会把一坨状态摊到两个文件。接受。
+- **sheet() 单槽位**：壳的 `sheet()` 内部登记 `roleSheet`，所有调用点（tab 里 `host.sheet(box)`）不再手动赋值 —— 顺手修了老代码"开了新抽屉忘登记就关不掉"的隐患。
+- **runOnUi 纪律**：tab/ 里所有 `new Thread` 的 UI 回写都走 `host.runOnUi`（grep 验证）；`VoiceItem`/`VoiceListAdapter`/`ChoiceSheet` 转 public 是跨包引用的最小改动。
+- **回归修复**（搬迁途中发现并修复的老问题）：① 抽屉保存后关不掉（槽位未登记）；② 朗读页"当前音色"文字不实时刷新（step3 误切，落位 SpeakTab.refresh()）。
+
+### 最终结构
+```
+src/com/mermergi/ttsrelay/
+├── MainActivity.java        460 行（壳：tab 栏 / 主题 / 生命周期 / 分发 / SAF 委托）
+├── ui/    Widgets 146 · SliderRow 59 · Form 46
+└── tab/   Tab 48 · LogTab 95 · HomeTab 319 · SpeakTab 271 · SettingsTab 352
+          VoicePicker 677 · EngineTab 512 · EngineEditor 659
+```
