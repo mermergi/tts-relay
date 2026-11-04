@@ -130,7 +130,7 @@ public final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.
     private final class Row extends RecyclerView.ViewHolder {
         final TextView name;
         final TextView sub;
-        final TextView ear;
+        final android.widget.ImageView ear;   // 试听按钮：iconChip 画的 ImageView（不是 TextView）
         final ImageView icon;
 
         Row(View v) {
@@ -140,7 +140,7 @@ public final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.
             LinearLayout col = (LinearLayout) row.getChildAt(1);
             name = (TextView) col.getChildAt(0);
             sub = (TextView) col.getChildAt(1);
-            ear = (TextView) row.getChildAt(2);
+            ear = (android.widget.ImageView) row.getChildAt(2);
         }
 
         void bind(final VoiceItem it) {

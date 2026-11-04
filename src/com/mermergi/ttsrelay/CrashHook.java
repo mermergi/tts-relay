@@ -42,7 +42,12 @@ public final class CrashHook {
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
-                try { save(c, t, e); } catch (Throwable ignored) { }
+                try {
+                    File f = save(c, t, e);
+                    LogBus.add("已捕获崩溃 → " + f.getName() + "（下次启动会弹分享）");
+                } catch (Throwable st) {
+                    LogBus.error("崩溃落盘失败：" + st);
+                }
                 try { scheduleRestart(c); } catch (Throwable ignored) { }
                 if (def != null) def.uncaughtException(t, e);   // 原有的默认行为照走（让系统弹"已停止"）
             }
@@ -89,7 +94,7 @@ public final class CrashHook {
         return new File(c.getFilesDir(), "crash");
     }
 
-    private static void save(android.content.Context c, Thread t, Throwable e) throws Exception {
+    private static File save(android.content.Context c, Thread t, Throwable e) throws Exception {
         File d = dir(c);
         d.mkdirs();
         File f = new File(d, "crash-" + FMT.format(new Date()) + ".txt");
@@ -109,6 +114,7 @@ public final class CrashHook {
             Arrays.sort(all);
             for (int i = 0; i < all.length - KEEP; i++) all[i].delete();
         }
+        return f;
     }
 
     private static String versionName(android.content.Context c) {

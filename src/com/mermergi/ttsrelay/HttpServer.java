@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.io.File;
 import java.util.Map;
 
 /**
@@ -313,6 +314,34 @@ public final class HttpServer {
             writeHead(out, 200, h, b.length, false);
             out.write(b);
             out.flush();
+            return;
+        }
+        if ("/_crashes".equals(path)) {
+            // 崩溃档案：?name=xxx 看某一份全文，不带参数给列表
+            File d = new File(ctx.getFilesDir(), "crash");
+            String name = qs.get("name");
+            if (name != null && name.length() > 0) {
+                File f = new File(d, name);
+                if (!f.exists() || !f.getParentFile().equals(d)) {
+                    json(out, 404, "{\"error\":\"没有这份\"}");
+                    return;
+                }
+                byte[] b = TtsClient.readAll(new java.io.FileInputStream(f), 4 * 1024 * 1024);
+                Map<String, String> h = new LinkedHashMap<String, String>();
+                h.put("Content-Type", "text/plain; charset=utf-8");
+                writeHead(out, 200, h, b.length, false);
+                out.write(b);
+                out.flush();
+                return;
+            }
+            org.json.JSONArray arr = new org.json.JSONArray();
+            File[] fs = d.listFiles();
+            if (fs != null) {
+                java.util.Arrays.sort(fs);
+                for (int i = fs.length - 1; i >= 0; i--) arr.put(fs[i].getName()
+                        + " (" + fs[i].length() + "B)");
+            }
+            json(out, 200, "{\"crashes\":" + arr + "}");
             return;
         }
         if ("/_log".equals(path)) {

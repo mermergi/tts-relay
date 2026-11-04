@@ -152,14 +152,34 @@ grep -vE '^warning: \[|^Note: ' "$out/javac.log" || true
 [ "$st" -eq 0 ] || { echo "javac 失败（见 $out/javac.log）" >&2; exit 1; }
 
 echo "==> d8/R8"; stamp "d8"
-if [ "${USE_R8:-1}" = "1" ]; then
-    # R8 摇树：规则见 tools/r8-rules.pro（不混淆，插件运行时全保）
+if [ "${USE_R8:-0}" = "1" ]; then
+    # R8 两段式：库的摇树结果按 内容+规则 哈希缓存（我们的类只引用被全保的包，
+    # 不影响库的可达性），每次构建只 dex 我们改动的类 —— R8 不再拖慢日常迭代
+    mapfile -t rclasses < <(find "$obj" \( -name 'R.class' -o -name 'R$*.class' \) | sort)
+    libs_h=""
+    for j in "${libs[@]:-}"; do
+        if [ -n "$j" ] && [ "$j" != "$out/kt.jar" ]; then libs_h="$libs_h$(sha256sum "$j")"; fi
+    done
+    r_h=""
+    for rc in "${rclasses[@]:-}"; do r_h="$r_h$(sha256sum "$rc")"; done
+    r8_hash="$(printf '%s' "$(sha256sum "$out/kt.jar" "$root/tools/r8-rules.pro")$libs_h$r_h" | sha256sum | cut -d' ' -f1)"
+    libr8="$root/.ktcache/libr8-$r8_hash"
+    if [ ! -f "$libr8/.done" ]; then
+        rm -rf "$libr8"; mkdir -p "$libr8"
+        echo "==> R8 摇库（变了，重摇；结果进 .ktcache 下次直接抄）"
+        r8 --release --lib "$android_jar" --min-api 26 \
+            --pg-conf "$root/tools/r8-rules.pro" \
+            --output "$libr8" "${rclasses[@]:-}" "${libs[@]:-}" \
+            >"$out/r8.log" 2>&1 || { tail -30 "$out/r8.log" >&2; echo "R8 失败（见 $out/r8.log）" >&2; exit 1; }
+        touch "$libr8/.done"
+    else
+        echo "==> R8 库缓存命中"
+    fi
     rm -rf "$dex"; mkdir -p "$dex"
-    mapfile -t classes < <(find "$obj" -name '*.class')
-    r8 --release --lib "$android_jar" --min-api 26 \
-        --pg-conf "$root/tools/r8-rules.pro" \
-        --output "$dex" "${classes[@]}" "${libs[@]:-}" \
-        >"$out/r8.log" 2>&1 || { tail -30 "$out/r8.log" >&2; echo "R8 失败（见 $out/r8.log）" >&2; exit 1; }
+    mapfile -t classes < <(find "$obj" -name '*.class' ! -name 'R.class' ! -name 'R$*.class')
+    mapfile -t libdexes < <(find "$libr8" -name 'classes*.dex' | sort)
+    d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libdexes[@]}" \
+        >"$out/d8.log" 2>&1 || { tail -20 "$out/d8.log" >&2; echo "d8 合并失败" >&2; exit 1; }
     echo "    R8 摇树完成（USE_R8=0 可退回 d8）"
 else
     # d8 依赖预 dex：整组一次合成（单进程才容忍跨 jar 的重复注解类），按组哈希缓存
