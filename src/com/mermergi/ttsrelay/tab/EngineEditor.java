@@ -308,7 +308,7 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
         LinearLayout tr = ui.row();
         tr.setGravity(Gravity.CENTER_VERTICAL);
         tr.addView(tryBox, ui.weightGap(1f, 8));
-        tr.addView(ui.chip("🎧", false, new View.OnClickListener() {
+        tr.addView(ui.iconChip(R.drawable.ic_notif_play, new View.OnClickListener() {
             public void onClick(View v) {
                 String t = tryBox.getText().toString().trim();
                 if (t.length() == 0) return;

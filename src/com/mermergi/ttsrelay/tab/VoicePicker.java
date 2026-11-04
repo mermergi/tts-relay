@@ -10,6 +10,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.ScrollView;
@@ -20,6 +21,7 @@ import com.mermergi.ttsrelay.ChoiceSheet;
 import com.mermergi.ttsrelay.EngineStore;
 import com.mermergi.ttsrelay.MultiVoice;
 import com.mermergi.ttsrelay.Palette;
+import com.mermergi.ttsrelay.R;
 import com.mermergi.ttsrelay.Prefs;
 import com.mermergi.ttsrelay.PluginTtsActivity;
 import com.mermergi.ttsrelay.RelayService;
@@ -129,7 +131,7 @@ public final class VoicePicker {
         userVoiceView.setTextSize(12.5f);
         userVoiceView.setTextColor(p.textSecondary);
         ur.addView(userVoiceView, ui.weightGap(1f, 8));
-        ur.addView(ui.chip("🎧", false, new View.OnClickListener() {
+        ur.addView(ui.iconChip(R.drawable.ic_notif_play, new View.OnClickListener() {
             public void onClick(View v) { auditionQuiet(userVoiceOf()); }
         }));
         ur.addView(ui.chip("选音色", false, new View.OnClickListener() {
@@ -470,7 +472,7 @@ public final class VoicePicker {
             col.addView(nn);
             row.addView(col, ui.weightGap(1f, 6));
 
-            TextView play = ui.chip("🎧", false, null);
+            ImageView play = ui.iconChip(R.drawable.ic_notif_play, null);
             play.setOnClickListener(new View.OnClickListener() {
                 public void onClick(View x) { auditionQuiet(voice); }
             });
@@ -524,7 +526,7 @@ public final class VoicePicker {
         title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         head.addView(title, ui.weightGap(1f, 8));
-        head.addView(ui.chip("🎧", false, new View.OnClickListener() {
+        head.addView(ui.iconChip(R.drawable.ic_notif_play, new View.OnClickListener() {
             public void onClick(View x) { auditionQuiet(voice); }
         }));
         box.addView(head);
@@ -633,7 +635,7 @@ public final class VoicePicker {
         });
         row.addView(e, ui.weightGap(1f, 6));
 
-        TextView ear = ui.chip("🎧", false, null);
+        ImageView ear = ui.iconChip(R.drawable.ic_notif_play, null);
         ear.setOnClickListener(new View.OnClickListener() {
             public void onClick(View x) { auditionQuiet(voice); }
         });

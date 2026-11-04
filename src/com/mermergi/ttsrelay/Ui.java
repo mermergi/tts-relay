@@ -13,6 +13,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -296,6 +297,18 @@ public final class Ui {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
         b.setLayoutParams(lp);
         return b;
+    }
+
+    /** 图标 chip：和文字 chip 同底同涟漪同圆角，内容是 20dp 白 glyph —— 全 app 一套图标语言。 */
+    public ImageView iconChip(int res, View.OnClickListener l) {
+        ImageView v = new ImageView(c);
+        v.setImageResource(res);
+        int pad = dp(10);
+        v.setPadding(pad, pad, pad, pad);
+        v.setBackground(pressable(p.chipBg, p.ripple, R_S, 0));
+        if (l != null) v.setOnClickListener(l);
+        v.setLayoutParams(new LinearLayout.LayoutParams(dp(40), dp(40)));
+        return v;
     }
 
     /**

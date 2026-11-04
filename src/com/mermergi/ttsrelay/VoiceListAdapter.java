@@ -122,7 +122,7 @@ public final class VoiceListAdapter extends ListAdapter<VoiceItem, RecyclerView.
         col.addView(sub);
         row.addView(col, ui.weightGap(1f, 6));
 
-        TextView ear = ui.chip("🎧", false, null);
+        android.widget.ImageView ear = ui.iconChip(R.drawable.ic_notif_play, null);
         row.addView(ear);
         return card;
     }

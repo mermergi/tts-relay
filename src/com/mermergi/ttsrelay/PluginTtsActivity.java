@@ -93,7 +93,7 @@ public final class PluginTtsActivity extends Activity {
         LinearLayout top = ui.row();
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(6));
-        top.addView(tiny("←", new View.OnClickListener() {
+        top.addView(ui.iconChip(R.drawable.ic_back, new View.OnClickListener() {
             public void onClick(View v) { finish(); }
         }));
         TextView title = new TextView(this);
@@ -104,7 +104,7 @@ public final class PluginTtsActivity extends Activity {
         LinearLayout.LayoutParams tp = ui.weight(1f);
         tp.leftMargin = ui.dp(10);
         top.addView(title, tp);
-        top.addView(tiny("💾", new View.OnClickListener() {
+        top.addView(ui.iconChip(R.drawable.ic_save, new View.OnClickListener() {
             public void onClick(View v) { save(); }
         }));
         root.addView(top);
@@ -381,13 +381,6 @@ public final class PluginTtsActivity extends Activity {
         return row;
     }
 
-    private TextView tiny(String s, View.OnClickListener l) {
-        TextView t = ui.chip(s, false, l);
-        t.setSingleLine(true);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8));
-        return t;
-    }
 
     private void toast(String s) {
         Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
