@@ -367,6 +367,41 @@ public final class HttpServer {
             }
             return;
         }
+        if ("/_backup".equals(path)) {
+            // 全量备份：relay 这一个 SharedPreferences 就是整个 app 的状态
+            try {
+                String txt = Prefs.backupJson(ctx);
+                out.write(("HTTP/1.1 200 OK\\r\\nContent-Type: application/json; charset=utf-8\\r\\n"
+                        + "Content-Disposition: attachment; filename=ttsrelay-backup-"
+                        + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.CHINA)
+                                .format(new java.util.Date()) + ".json\\r\\n"
+                        + "Content-Length: " + txt.getBytes("UTF-8").length
+                        + "\\r\\nConnection: close\\r\\n\\r\\n").getBytes("UTF-8"));
+                out.write(txt.getBytes("UTF-8"));
+                out.flush();
+            } catch (Throwable t) {
+                json(out, 500, "{\"error\":\"" + esc(String.valueOf(t.getMessage())) + "\"}");
+            }
+            return;
+        }
+        if ("/_restore".equals(path)) {
+            // 恢复 = 写回 prefs。带 Cookie/Token，属于危险操作：必须 ?confirm=1 显式确认
+            if (!"1".equals(qs.get("confirm"))) {
+                json(out, 403, "{\"error\":\"恢复会覆盖全部现有配置，加 ?confirm=1 确认\"}");
+                return;
+            }
+            try {
+                int n = Prefs.restoreJson(ctx, new String(body == null ? new byte[0] : body,
+                        java.nio.charset.StandardCharsets.UTF_8));
+                RelayService svc = RelayService.instance();
+                if (svc != null) svc.configReloaded();
+                LogBus.add("配置已从备份恢复（" + n + " 项）");
+                json(out, 200, "{\"restored\":" + n + "}");
+            } catch (Throwable t) {
+                json(out, 400, "{\"error\":\"" + esc(String.valueOf(t.getMessage())) + "\"}");
+            }
+            return;
+        }
         if ("/_export".equals(path)) {
             String fmt = qs.get("fmt");
             String txt = "legado".equals(fmt)

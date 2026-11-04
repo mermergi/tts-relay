@@ -13,6 +13,59 @@ public final class Prefs {
     public static final int PORT_DEF = 8788;
     public static final int MAXCHUNK_DEF = 90;
 
+    /** 备份/恢复用：全量读写。 */
+    public static SharedPreferences spRaw(Context c) {
+        return sp(c);
+    }
+
+    /** 整个 app 的状态都在 relay 这一个 XML 里 —— 全量 dump 即完整备份。 */
+    public static String backupJson(Context c) throws org.json.JSONException {
+        android.content.SharedPreferences spx = sp(c);
+        org.json.JSONObject prefs = new org.json.JSONObject();
+        for (java.util.Map.Entry<String, ?> e : spx.getAll().entrySet()) {
+            Object v = e.getValue();
+            org.json.JSONObject kv = new org.json.JSONObject();
+            if (v instanceof Boolean) { kv.put("t", "b"); kv.put("v", ((Boolean) v) ? 1 : 0); }
+            else if (v instanceof Integer) { kv.put("t", "i"); kv.put("v", ((Integer) v).intValue()); }
+            else if (v instanceof Long) { kv.put("t", "l"); kv.put("v", ((Long) v).longValue()); }
+            else if (v instanceof Float) { kv.put("t", "f"); kv.put("v", ((Float) v).doubleValue()); }
+            else { kv.put("t", "s"); kv.put("v", String.valueOf(v)); }
+            prefs.put(e.getKey(), kv);
+        }
+        org.json.JSONObject o = new org.json.JSONObject();
+        o.put("app", "ttsrelay-backup");
+        o.put("v", 1);
+        o.put("when", System.currentTimeMillis());
+        o.put("prefs", prefs);
+        return o.toString(2);
+    }
+
+    /** 覆盖式写回。返回恢复的键数；格式不对抛异常。调用方负责随后 configReloaded()。 */
+    public static int restoreJson(Context c, String json) throws org.json.JSONException {
+        org.json.JSONObject o = new org.json.JSONObject(json);
+        if (!"ttsrelay-backup".equals(o.optString("app")))
+            throw new org.json.JSONException("不是 ttsrelay-backup 文件");
+        android.content.SharedPreferences spx = sp(c);
+        org.json.JSONObject prefs = o.getJSONObject("prefs");
+        android.content.SharedPreferences.Editor ed = spx.edit();
+        ed.clear();
+        java.util.Iterator<String> it = prefs.keys();
+        int n = 0;
+        while (it.hasNext()) {
+            String k = it.next();
+            org.json.JSONObject kv = prefs.getJSONObject(k);
+            String t = kv.optString("t");
+            if ("b".equals(t)) ed.putBoolean(k, kv.optInt("v") != 0);
+            else if ("i".equals(t)) ed.putInt(k, kv.optInt("v"));
+            else if ("l".equals(t)) ed.putLong(k, kv.optLong("v"));
+            else if ("f".equals(t)) ed.putFloat(k, (float) kv.optDouble("v"));
+            else ed.putString(k, kv.optString("v"));
+            n++;
+        }
+        ed.apply();
+        return n;
+    }
+
     private static SharedPreferences sp(Context c) {
         return c.getApplicationContext().getSharedPreferences("relay", Context.MODE_PRIVATE);
     }

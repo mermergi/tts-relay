@@ -1,6 +1,7 @@
 package com.mermergi.ttsrelay.tab;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.text.InputType;
 import android.view.Gravity;
@@ -13,6 +14,7 @@ import android.widget.TextView;
 
 import com.mermergi.ttsrelay.ChoiceSheet;
 import com.mermergi.ttsrelay.Palette;
+import com.mermergi.ttsrelay.RelayService;
 import com.mermergi.ttsrelay.Prefs;
 import com.mermergi.ttsrelay.R;
 import com.mermergi.ttsrelay.Ui;
@@ -124,6 +126,25 @@ public final class SettingsTab implements Tab {
                 host.toast("已保存（端口 / 上游 / TTS 地址要重启中转生效）");
             }
         }));
+
+        // ═══ 备份 / 恢复 ═══
+        LinearLayout bc = new LinearLayout(ctx);
+        bc.setOrientation(LinearLayout.VERTICAL);
+        bc.addView(ui.sectionTitle("备份与恢复"));
+        bc.addView(ui.label("全部设置 + 引擎 + 音色表打进一个 JSON。恢复会覆盖现有配置。"));
+        LinearLayout brow = new LinearLayout(ctx);
+        brow.setOrientation(LinearLayout.HORIZONTAL);
+        brow.addView(ui.btn("导出备份", false, new View.OnClickListener() {
+            public void onClick(View v) { exportBackup(); }
+        }));
+        TextView gap = new TextView(ctx);
+        gap.setMinWidth(ui.dp(10));
+        brow.addView(gap);
+        brow.addView(ui.btn("导入备份", false, new View.OnClickListener() {
+            public void onClick(View v) { importBackup(); }
+        }));
+        bc.addView(brow, Widgets.topGap(ui, 8));
+        col.addView(bc);
 
         return Widgets.scroll(ctx, ui, col);
     }
@@ -268,6 +289,52 @@ public final class SettingsTab implements Tab {
                 t.setBackground(ui.pressable(p.cardHi, p.ripple, 20, p.border));
             }
         }
+    }
+
+    // ══════════════════════════ 备份 / 恢复 ══════════════════════════
+
+    /** 导出：JSON 丢给系统分享（存文件 / 发给自己 / 云盘都行）。 */
+    private void exportBackup() {
+        try {
+            String json = Prefs.backupJson(host.activity());
+            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_SEND);
+            i.setType("application/json");
+            i.putExtra(android.content.Intent.EXTRA_SUBJECT, "ttsrelay 备份");
+            i.putExtra(android.content.Intent.EXTRA_TEXT, json);
+            host.activity().startActivity(android.content.Intent.createChooser(i, "导出备份"));
+        } catch (Throwable t) {
+            host.toast("导出失败：" + t.getMessage());
+        }
+    }
+
+    /** 导入：粘贴 JSON（从备份文件/消息里复制来），确认后覆盖写回。 */
+    private void importBackup() {
+        android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                host.activity().getSystemService(Context.CLIPBOARD_SERVICE);
+        final String clip = cm == null || cm.getPrimaryClip() == null
+                ? "" : String.valueOf(cm.getPrimaryClip().getItemAt(0).getText());
+        if (!clip.contains("ttsrelay-backup")) {
+            host.toast("剪贴板里没有备份 JSON —— 先复制备份文件内容再点导入");
+            return;
+        }
+        new AlertDialog.Builder(host.activity(), host.dialogTheme())
+                .setTitle("导入备份")
+                .setMessage("将覆盖全部现有配置（含引擎和音色表），确定？")
+                .setPositiveButton("覆盖", new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        try {
+                            int n = Prefs.restoreJson(host.activity(), clip);
+                            RelayService svc = RelayService.instance();
+                            if (svc != null) svc.configReloaded();
+                            host.toast("已恢复 " + n + " 项");
+                            syncInputs();
+                        } catch (Throwable t) {
+                            host.toast("导入失败：" + t.getMessage());
+                        }
+                    }
+                })
+                .setNegativeButton("算了", null)
+                .show();
     }
 
     // ══════════════════════════ 主题 ══════════════════════════

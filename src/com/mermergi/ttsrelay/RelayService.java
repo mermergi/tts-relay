@@ -128,6 +128,20 @@ public final class RelayService extends Service {
         }
     }
 
+    /** 配置刚被备份恢复覆盖：端口等要重启才生效，主动拉一遍。 */
+    public void configReloaded() {
+        try {
+            if (server != null && server.isRunning()) {
+                server.stop();
+                server.start(Prefs.port(this));
+                LogBus.add("按恢复的配置重启了中转（端口 " + Prefs.port(this) + "）");
+            }
+            updateNotification();
+        } catch (Throwable t) {
+            LogBus.error("恢复后重启中转失败：" + t.getMessage());
+        }
+    }
+
     private void startEverything() {
         startForegroundCompat("正在启动…");
         Prefs.setWanted(this, true);
