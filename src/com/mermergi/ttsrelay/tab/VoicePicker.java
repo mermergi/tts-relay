@@ -41,10 +41,19 @@ public final class VoicePicker {
     private final Palette p;
     private final Tab.Host host;
 
+    /** 这次开音色库是给「用户消息」挑音色。 */
     private boolean pickUserVoice = false;
+    /** 这次开音色库，是为了给新音色填名字（先选音色，再填名字）。 */
     private boolean pickForBind = false;
+    /**
+     * 「音色 → 名称」那张表里，面板正在编辑的是哪一条：
+     * sheetOrig = 这条原来记在哪个音色名下（新加一条时是 null），
+     * sheetVoice = 面板上现在选中的音色。换音色时要把<b>这一条</b>搬过去，
+     * 不能两个音色各留一条 —— 那才是"新开一条"。
+     */
     private String sheetOrig = null;
     private String sheetVoice = null;
+    /** 换音色途中面板被关掉了，刚填的名字先存在这儿带过去。 */
     private String bindCarry = null;
 
     /** 所在 Activity（host.activity() 的缓存别名，视图活着它就活着）。 */

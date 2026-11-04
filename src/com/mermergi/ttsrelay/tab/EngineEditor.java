@@ -408,6 +408,7 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
             }
         }).start();
     }
+    /** 语言下拉：选项来自插件 getLocales()；换语言要重新问一遍声音列表。 */
     private void bindLangRow(final LinearLayout row, final java.util.LinkedHashMap<String, String> locs,
                              final String[] lang, final TextView langVal,
                              final LinearLayout voiceRow, final TextView voiceVal,
@@ -445,6 +446,7 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
             }
         });
     }
+    /** 声音下拉：选项来自插件 getVoices(locale)；选完通知插件换声音。 */
     private void bindVoiceRow(final LinearLayout row, final java.util.List<String[]> vs,
                               final String[] curVoice, final TextView voiceVal,
                               final String[] lang, final com.mermergi.ttsrelay.js.PluginBridge h,
@@ -471,6 +473,7 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
             }
         });
     }
+    /** 读剪贴板，读不到就空串。 */
     private String readClip() {
         try {
             ClipboardManager cm = (ClipboardManager) act().getSystemService(Context.CLIPBOARD_SERVICE);
@@ -482,11 +485,18 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
             return "";
         }
     }
+    /** 登录抓回来的值写进哪个配置键：JS 插件写它声明的那个变量（和 TTS Server 一样）。 */
     private static String loginTarget(EngineStore.Item it) {
         String k = it.s("login_key", "");
         if (k.length() > 0) return k;
         return "cred";
     }
+    /**
+     * 登录值单独编辑：它太长，放表单里会把整屏撑爆，所以丢进自己的对话框。
+     *
+     * 只有一个「粘贴」按钮 —— 粘的是裸串就原样收，是 cURL / 请求头就自己摘出来，
+     * 所以没必要让用户先自己选"智能提取"还是"原样粘贴"。保存时再整理一次兜底。
+     */
     private void editCookie(final EngineStore.Item it, final Runnable onChange) {
         final String key = loginTarget(it);
         LinearLayout box = ui.col();
@@ -529,6 +539,11 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
                 .setNegativeButton("取消", null)
                 .show();
     }
+    /**
+     * 插件声明的变量（它引擎文件里 {@code vars} 那些键）单独存一份 {@code user_vars} ——
+     * TTS Server 就是"声明"和"用户填的值"分开存的：放进 cfg 的散键里，插件读
+     * {@code ttsrv.userVars['api_key']} 时容易对不上。
+     */
     private void applyEditor(EngineStore.Item it, EditText nameBox, List<Form.Fld> flds,
                             List<String> extraKeys) {
         String nm = nameBox.getText().toString().trim();
@@ -572,6 +587,7 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
                 .setNegativeButton("取消", null)
                 .show();
     }
+    /** 把引擎能报出来的音色列出来，方便复制到音色表里。 */
     public void showEngineVoices(final EngineStore.Item it) {
         host.toast("正在拉音色…");
         final Context ctx = act();
@@ -607,6 +623,20 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
             }
         }).start();
     }
+    /**
+     * 「插件 TTS」：照 TTS Server 那个编辑页的<b>加载逻辑</b>搭的，页面不认识任何插件：
+     *
+     * <ol>
+     *   <li>显示名称 / 试听文本 —— 通用字段</li>
+     *   <li>语言 ← {@code engine.getLocales()}（问插件的）</li>
+     *   <li>声音 ← {@code engine.getVoices(locale)}（换语言就重问）</li>
+     *   <li><b>插件自己那块界面</b> ← {@code engine.onLoadData()} + {@code engine.onLoadUI(context, 容器)}，
+     *       插件往容器里塞什么就显示什么（JSpinner / JTextInput / JSeekBar）</li>
+     *   <li>语速 / 音量 / 音高 —— 这个引擎自己的，0 = 跟随全局</li>
+     * </ol>
+     *
+     * 换声音之后要调 {@code onVoiceChanged(locale, voice)}，插件会把它自己那坨控件跟着更新。
+     */
     public void openPluginEditor(final EngineStore.Item it, final boolean openVars) {
         // 没有插件源码的引擎（系统语音、HTTP 模板）：编辑器只管插件源码，
         // 所以这儿给一条「粘源码转成 JS 插件」的路 —— 照 TTS Server：引擎就是插件。
@@ -638,6 +668,7 @@ if (res == Activity.RESULT_OK && data != null && data.getData() != null && pendi
         pi.putExtra(PluginEditorActivity.EXTRA_OPEN_VARS, openVars);
         try { act().startActivity(pi); } catch (Throwable t) { host.toast("打不开插件编辑器：" + t.getMessage()); }
     }
+    /** 挑一份插件 .js（TTS Server 导出来的那种）→ 这个引擎就变成 JS 插件。 */
     private void pickPluginFile(EngineStore.Item it) {
         pendingJsPick = it;
         Intent i = new Intent(Intent.ACTION_GET_CONTENT);

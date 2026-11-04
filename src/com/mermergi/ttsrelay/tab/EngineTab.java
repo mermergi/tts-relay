@@ -417,6 +417,12 @@ public final class EngineTab implements Tab {
         syncJsMetaInBackground();
         EngineStore.warmVoices(act());
     }
+    /**
+     * 只改字、只改可见性 —— 不新增/删除视图，也就不会跳。
+     *
+     * <b>这里绝不执行插件</b>：它（TTS Server）的插件列表也是这样，只显示已存的数据
+     * （名字、作者-版本、要不要设置变量），插件要到真用的时候（试听/合成/编辑）才跑。
+     */
     private void refreshEngineRows() {
         String active = EngineStore.activeId(act());
         for (EngineStore.Item it : EngineStore.all(act())) {
@@ -439,6 +445,7 @@ public final class EngineTab implements Tab {
             engineNow.setTextColor(p.textSecondary);
         }
     }
+    /** 副标题：插件引擎写「作者 - v版本」，和它那边一样。 */
     private String subtitle(EngineStore.Item it) {
         String author = it.s("author", "");
         int v = it.i("version", -1);
@@ -449,6 +456,7 @@ public final class EngineTab implements Tab {
         else sb.append("  ·  ").append(kindName(it.kind));
         return sb.toString();
     }
+    /** 头像里那个字：插件用名字首字，系统引擎用「本」，HTTP 引擎用「H」。 */
     private static String avatarChar(EngineStore.Item it) {
         if (EngineStore.KIND_SYSTEM.equals(it.kind)) return "本";
         if (EngineStore.KIND_JS.equals(it.kind)) {
@@ -457,11 +465,13 @@ public final class EngineTab implements Tab {
         }
         return "H";
     }
+    /** 头像底色：按 id 散开，别都一个色。 */
     private int avatarColor(EngineStore.Item it) {
         int[] cs = {p.accent, p.ok, p.warn, 0xFF7E57C2, 0xFF26A69A, 0xFFEF6C00, 0xFF5C6BC0};
         int h = it.id == null ? 0 : it.id.hashCode();
         return cs[Math.abs(h) % cs.length];
     }
+    /** 照它的「导出配置」：把这一个引擎的配置导成 JSON（插件源码 + 变量都在里头）。 */
     private void exportEngineConfig(EngineStore.Item it) {
         try {
             java.util.List<EngineStore.Item> one = new java.util.ArrayList<EngineStore.Item>();
