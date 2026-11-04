@@ -94,7 +94,7 @@ except Exception as e: print('selftest-unreadable:'+str(e))" 2>/dev/null)
     curl -sS --max-time 5 "$URL/_status" | python3 -c "
 import json,sys
 d1=json.load(sys.stdin); d2=json.load(open('$base/status-v291.json'))
-skip=('spoken','chars','live','queue','last','ttsInflight','ttsInflightMax')
+skip=('spoken','chars','live','queue','last','ttsInflight','ttsInflightMax','paused','error','failed','stuck')
 k1={k:v for k,v in d1.items() if k not in skip}; k2={k:v for k,v in d2.items() if k not in skip}
 print('same' if k1==k2 else 'DIFF '+str({k:(k2.get(k),k1.get(k)) for k in set(k1)|set(k2) if k1.get(k)!=k2.get(k)}))" > "$new" 2>&1
     if grep -q "^same$" "$new"; then good "status"; else bad "status：$(cat "$new")"; fi

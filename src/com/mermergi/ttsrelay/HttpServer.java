@@ -183,7 +183,8 @@ public final class HttpServer {
                 } catch (Throwable ignored) { }
             }
 
-            if (path.startsWith("/_")) {
+            if (path.startsWith("/_") || "/".equals(path)) {
+                // "/" 是 LAN Web 面板，归 admin；其余不带下划线的照旧走代理
                 admin(rawOut, method, path, query, body);
             } else if ("OPTIONS".equals(method)) {
                 // 浏览器/网页版客户端（酒馆这类）会先发预检，必须答好，否则跨域直接被拦
@@ -303,6 +304,17 @@ public final class HttpServer {
             json(out, 200, o.toString());
             return;
         }
+        if ("/".equals(path)) {
+            // LAN Web 面板：自足单页，零外部资源。手机/PC 浏览器打开 http://本机:端口/ 就能管
+            byte[] b = WebPanel.HTML.getBytes(StandardCharsets.UTF_8);
+            Map<String, String> h = new LinkedHashMap<String, String>();
+            h.put("Content-Type", "text/html; charset=utf-8");
+            h.put("Cache-Control", "no-store");
+            writeHead(out, 200, h, b.length, false);
+            out.write(b);
+            out.flush();
+            return;
+        }
         if ("/_log".equals(path)) {
             byte[] b = LogBus.dump().getBytes(StandardCharsets.UTF_8);
             Map<String, String> h = new LinkedHashMap<String, String>();
@@ -320,6 +332,7 @@ public final class HttpServer {
                 o.put("port", port);
                 o.put("running", running);
                 o.put("muted", Prefs.muted(ctx));
+                o.put("paused", speaker.isPaused());
                 o.put("spoken", speaker.spokenCount());
                 o.put("failed", speaker.failedCount());
                 o.put("stuck", speaker.stuckCount());
@@ -368,7 +381,11 @@ public final class HttpServer {
             return;
         }
         if ("/_backup".equals(path)) {
-            // 全量备份：relay 这一个 SharedPreferences 就是整个 app 的状态
+            // 全量备份含 Cookie/Token：必须 ?confirm=1 才给（LAN 打开时不裸奔）
+            if (!"1".equals(qs.get("confirm"))) {
+                json(out, 403, "{\"error\":\"备份含 Cookie/Token，加 ?confirm=1 确认\"}");
+                return;
+            }
             try {
                 String txt = Prefs.backupJson(ctx);
                 out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
@@ -795,6 +812,21 @@ public final class HttpServer {
         if ("/_revive".equals(path)) {
             String r = TtsReviver.revive(ctx, "1".equals(qs.get("force")));
             json(out, 200, "{\"ok\":true,\"result\":\"" + esc(r) + "\"}");
+            return;
+        }
+        if ("/_pause".equals(path)) {
+            speaker.pause();
+            json(out, 200, "{\"ok\":true,\"paused\":true}");
+            return;
+        }
+        if ("/_resume".equals(path)) {
+            speaker.resume();
+            json(out, 200, "{\"ok\":true,\"paused\":false}");
+            return;
+        }
+        if ("/_skip".equals(path)) {
+            speaker.interrupt();
+            json(out, 200, "{\"ok\":true,\"skipped\":true}");
             return;
         }
         if ("/_stop".equals(path)) {
@@ -1679,6 +1711,61 @@ public final class HttpServer {
             } catch (Throwable ignored) { }
         }
         return m;
+    }
+
+    // ══════════════════════════ LAN Web 面板 ══════════════════════════
+
+    /** 自足单页：不引任何外部资源，轮询 /_status /_log /_engines，控制按钮走现成路由。 */
+    private static final class WebPanel {
+        static final String HTML = "<!doctype html>"
++ "<html lang=zh><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
++ "<title>TTS Relay 面板</title><style>"
++ ":root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101418;color:#e8eaed;"
++ "font:15px/1.6 system-ui,-apple-system,'Noto Sans SC',sans-serif;padding:14px;max-width:640px;margin:0 auto}"
++ "h1{font-size:19px;margin:0 0 2px}h2{font-size:14px;color:#9aa0a6;margin:20px 0 8px;"
++ "border-top:1px solid #2a2f36;padding-top:14px}"
++ ".st{font-size:26px;font-weight:700;margin:6px 0}.muted{color:#9aa0a6;font-size:13px}"
++ "button{background:#1f2630;color:#e8eaed;border:1px solid #333c48;border-radius:10px;"
++ "padding:10px 14px;font-size:15px;margin:4px 4px 0 0}"
++ "button:active{background:#2c3542}button.warn{border-color:#7a4040;color:#ff9e9e}"
++ "pre{background:#0b0e11;border:1px solid #22272e;border-radius:10px;padding:10px;"
++ "font:12px/1.5 monospace;max-height:300px;overflow:auto;white-space:pre-wrap}"
++ ".pill{display:inline-block;background:#1f2630;border:1px solid #333c48;border-radius:99px;"
++ "padding:2px 10px;margin:2px 4px 2px 0;font-size:12px;color:#c4c9d0}"
++ ".bad{border-color:#7a4040;color:#ff9e9e}.on{border-color:#3d7a4d;color:#8fe3a8}"
++ "label{font-size:13px;color:#9aa0a6}</style>"
++ "<h1>TTS Relay</h1><div id=sub class=muted>…</div><div id=st class=st>…</div>"
++ "<div id=last class=muted></div>"
++ "<div><button id=b1>暂停</button><button id=b2>跳过</button><button id=b3>静音</button>"
++ "<button id=b4 class=warn>停止</button>"
++ "<input id=say placeholder='测试朗读…' style='background:#0b0e11;border:1px solid #333c48;"
++ "color:#e8eaed;border-radius:10px;padding:10px;width:150px;font-size:14px'>"
++ "<button onclick=\"var t=document.getElementById('say').value;if(t)fetch('/_say?text='+encodeURIComponent(t))\">念</button></div>"
++ "<h2>引擎</h2><div id=eng></div>"
++ "<h2>日志 <label><input type=checkbox id=fl checked> 跟随</label></h2>"
++ "<pre id=log>…</pre>"
++ "<script>"
++ "function g(i){return document.getElementById(i)}"
++ "function st(){fetch('/_status').then(function(r){return r.json()}).then(function(d){"
++ "g('st').textContent=d.paused?'已暂停':(d.queue>0||d.ttsInflight>0?'朗读中':'空闲');"
++ "g('sub').textContent='引擎 '+(d.ttsEngine||'?')+' · 音色 '+(d.voice||'?')+' · '+d.splitModeName+' · 端口 '+d.port;"
++ "g('last').textContent=(d.last?'最近：'+d.last:'')+'　已念 '+d.spoken+' 句 / 败 '+d.failed;"
++ "g('b1').textContent=d.paused?'继续':'暂停';g('b3').textContent=d.muted?'取消静音':'静音';"
++ "}).catch(function(){g('st').textContent='连不上'})}"
++ "function lg(){if(g('fl').checked)fetch('/_log').then(function(r){return r.text()})"
++ ".then(function(t){var p=g('log');if(p.textContent!=t){p.textContent=t;p.scrollTop=p.scrollHeight}})}"
++ "function eg(){fetch('/_engines').then(function(r){return r.json()}).then(function(d){"
++ "var h='';d.engines.forEach(function(e){var cls='pill'+(e.id==d.active?' on':'')+(e.problem?' bad':'');"
++ "h+=\"<span class='\"+cls+\"'>\"+(e.id==d.active?'▶ ':'')+e.label"
++ "+(e.problem?' ⚠ '+e.problem:'')+\"</span>\"});"
++ "g('eng').innerHTML=h})}"
++ "g('b1').onclick=function(){fetch(d0()?'/_resume':'/_pause');setTimeout(st,300)};"
++ "function d0(){return g('b1').textContent=='继续'}"
++ "g('b2').onclick=function(){fetch('/_skip');setTimeout(st,300)};"
++ "g('b3').onclick=function(){fetch(g('b3').textContent=='静音'?'/_mute':'/_unmute');setTimeout(st,300)};"
++ "g('b4').onclick=function(){fetch('/_stop');setTimeout(st,300)};"
++ "st();lg();eg();setInterval(st,2000);setInterval(lg,3000);setInterval(eg,8000)"
++ "</script></html>";
     }
 
     // ══════════════════════════ 自测 ══════════════════════════
