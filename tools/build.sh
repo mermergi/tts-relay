@@ -115,8 +115,29 @@ for pj in "$PREFIX/opt/kotlin/lib/parcelize-compiler.jar" "$PREFIX/opt/kotlin/li
     [ -f "$pj" ] && kt_plugins+=("-Xplugin=$pj")
 done
 [ -f "$PREFIX/opt/kotlin/lib/parcelize-runtime.jar" ] && cp_kt="$cp_kt:$PREFIX/opt/kotlin/lib/parcelize-runtime.jar"
-kotlinc -jvm-target 1.8 -nowarn "${kt_plugins[@]}" -classpath "$cp_kt" -d "$out/kt.jar" "${kt_sources[@]}" >"$out/kotlinc.log" 2>&1 || {
-    tail -40 "$out/kotlinc.log" >&2; echo "kotlinc 失败（见 $out/kotlinc.log）" >&2; exit 1; }
+# ── kotlinc 缓存：kt/ 里的 TTS Server 插件运行时两次构建之间根本不变，
+#    它却占掉全量编译的大头。源码 + 编译器插件哈希没变就直接复用上次产物。
+kt_hash="$(
+    {
+        find "$root/kt" -name '*.kt' -print0 | sort -z | xargs -0 cat
+        printf '%s' "${kt_plugins[*]}"
+        printf '%s' "$kstdlib"
+    } | sha256sum | cut -d' ' -f1)"
+kt_cache="$root/.ktcache/kt-$kt_hash.jar"
+if [ -f "$kt_cache" ]; then
+    cp "$kt_cache" "$out/kt.jar"
+    echo "==> kotlinc 缓存命中，跳过（$kt_cache）"; stamp "kotlinc 缓存命中"
+else
+    echo "==> kotlinc（kt 变了，重新编译；产物进 .ktcache/ 下次直接抄）"
+    stamp "kotlinc 开始" >/dev/null
+    kotlinc -jvm-target 1.8 -nowarn "${kt_plugins[@]}" -classpath "$cp_kt" -d "$out/kt.jar" "${kt_sources[@]}" >"$out/kotlinc.log" 2>&1 || {
+        tail -40 "$out/kotlinc.log" >&2; echo "kotlinc 失败（见 $out/kotlinc.log）" >&2; exit 1; }
+    mkdir -p "$root/.ktcache"
+    cp "$out/kt.jar" "$kt_cache"
+    # 只留最近两份，防缓存目录无限长
+    ls -t "$root/.ktcache"/kt-*.jar 2>/dev/null | tail -n +3 | xargs -r rm -f
+    stamp "kotlinc 完成"
+fi
 libs+=("$out/kt.jar")
 
 cp_android="$android_jar"
@@ -131,20 +152,38 @@ grep -vE '^warning: \[|^Note: ' "$out/javac.log" || true
 [ "$st" -eq 0 ] || { echo "javac 失败（见 $out/javac.log）" >&2; exit 1; }
 
 echo "==> d8"; stamp "d8"
+# 依赖 jar 预 dex：所有 jar 一次 d8 合成一组 dex（单进程才容忍跨 jar 的重复注解类），
+# 按整组内容哈希缓存 —— 依赖不变就 30 秒陪跑免了，最终一步只 dex 我们自己的类
+libs_hash="$({ for j in "${libs[@]:-}"; do [ -n "$j" ] && sha256sum "$j"; done; } | sha256sum | cut -d' ' -f1)"
+libdex_dir="$root/.ktcache/libdex-all/$libs_hash"
+if [ ! -f "$libdex_dir/.done" ]; then
+    rm -rf "$libdex_dir"; mkdir -p "$libdex_dir"
+    d8 --lib "$android_jar" --min-api 26 --output "$libdex_dir" "${libs[@]:-}"
+    touch "$libdex_dir/.done"
+fi
 mapfile -t classes < <(find "$obj" -name '*.class')
-d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libs[@]:-}"
+mapfile -t libdexes < <(find "$libdex_dir" -name '*.dex' | sort)
+d8 --lib "$android_jar" --min-api 26 --output "$dex" "${classes[@]}" "${libdexes[@]}"
 
 echo "==> 依赖 jar 里的资源"; stamp "依赖 jar 里的资源"
 # d8 只吃 .class，jar 里的资源（Rhino 的 Messages.properties 这类）会被丢掉，
 # 于是运行时 ResourceBundle 找不到、抛 MissingResourceException。所以手动捞进 APK。
-resdir="$out/jarres"
-mkdir -p "$resdir"
-for j in "${libs[@]:-}"; do
-    [ -n "$j" ] || continue
-    unzip -o -q "$j" -x 'META-INF/*' -d "$resdir" || true
-done
-find "$resdir" -name '*.class' -delete 2>/dev/null || true
-find "$resdir" -type d -empty -delete 2>/dev/null || true
+# 同样按内容哈希缓存：依赖 jar 不变，解包结果就不会变（这步原来要 30+ 秒）
+res_hash="$({ for j in "${libs[@]:-}"; do [ -n "$j" ] && sha256sum "$j"; done; } | sha256sum | cut -d' ' -f1)"
+res_cache="$root/.ktcache/jarres-$res_hash"
+if [ ! -d "$res_cache" ]; then
+    mkdir -p "$res_cache"
+    for j in "${libs[@]:-}"; do
+        [ -n "$j" ] || continue
+        unzip -o -q "$j" -x 'META-INF/*' -d "$res_cache" || true
+    done
+    find "$res_cache" -name '*.class' -delete 2>/dev/null || true
+    find "$res_cache" -type d -empty -delete 2>/dev/null || true
+fi
+# 零拷贝：打包直接读缓存目录（只读，谁也不写它）
+resdir="$res_cache"
+echo "==> 依赖资源（$([ -f "$res_cache/.hit" ] && echo 缓存 || echo 新解包)）"
+touch "$res_cache/.hit" 2>/dev/null || true
 echo "    $(find "$resdir" -type f 2>/dev/null | wc -l) 个资源文件"
 
 echo "==> package"; stamp "package"

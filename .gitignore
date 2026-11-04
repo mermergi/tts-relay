@@ -16,3 +16,4 @@ __pycache__/
 tools/lib/*.jar
 tools/lib/aar/*.aar
 .ref-baseline/
+.ktcache/
