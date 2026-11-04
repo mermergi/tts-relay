@@ -1,60 +1,34 @@
 package com.mermergi.ttsrelay;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import android.text.Editable;
-import android.text.InputType;
-import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.widget.AdapterView;
-import android.widget.Button;
-import android.widget.CompoundButton;
-import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 import com.mermergi.ttsrelay.tab.HomeTab;
 import com.mermergi.ttsrelay.tab.LogTab;
-import com.mermergi.ttsrelay.tab.SettingsTab;
-import com.mermergi.ttsrelay.tab.SpeakTab;
 import com.mermergi.ttsrelay.tab.VoicePicker;
 import com.mermergi.ttsrelay.tab.EngineTab;
 import com.mermergi.ttsrelay.tab.Tab;
-import com.mermergi.ttsrelay.ui.Form;
-import com.mermergi.ttsrelay.ui.SliderRow;
 import com.mermergi.ttsrelay.ui.Widgets;
 
 /**
@@ -81,7 +55,6 @@ public class MainActivity extends Activity implements Tab.Host {
     // ── 首页 ──
 
     // ── 设置 ──
-    private TextView userVoiceView;
     /** 这次开音色库是给「用户消息」挑音色。 */
     /** 这次开音色库，是为了给新音色填名字（先选音色，再填名字）。 */
     /**
@@ -276,15 +249,11 @@ public class MainActivity extends Activity implements Tab.Host {
 
 
 
-    private boolean metaSyncing = false;
 
 
 
     // 行的零件都留着引用：后台结果回来时<b>原地改字</b>，不重建视图
     // （重建会把整页高度变来变去，看着就是"乱跳"）
-    private final java.util.Map<String, TextView> rowName = new java.util.HashMap<String, TextView>();
-    private final java.util.Map<String, TextView> rowSub = new java.util.HashMap<String, TextView>();
-    private final java.util.Map<String, TextView> rowNeed = new java.util.HashMap<String, TextView>();
 
 
 
@@ -308,8 +277,6 @@ public class MainActivity extends Activity implements Tab.Host {
     /** 照它的「导出配置」：把这一个引擎的配置导成 JSON（插件源码 + 变量都在里头）。 */
 
 
-    private static final int REQ_PICK_JS = 61;
-    private EngineStore.Item pendingJsPick;
 
     /** 挑一份插件 .js（TTS Server 导出来的那种）→ 这个引擎就变成 JS 插件。 */
 
