@@ -24,6 +24,8 @@ import android.widget.TextView;
 
 import com.mermergi.ttsrelay.tab.HomeTab;
 import com.mermergi.ttsrelay.tab.LogTab;
+import com.mermergi.ttsrelay.tab.SettingsTab;
+import com.mermergi.ttsrelay.tab.SpeakTab;
 import com.mermergi.ttsrelay.tab.VoicePicker;
 import com.mermergi.ttsrelay.tab.EngineTab;
 import com.mermergi.ttsrelay.tab.Tab;
@@ -71,6 +73,12 @@ public class MainActivity extends Activity implements Tab.Host {
         ui = new Ui(this, p);
         tabs[0] = new HomeTab(ui, p, this, new Runnable() { public void run() { dispatchSave(); } });
         tabs[4] = new LogTab(ui, p, this);
+        voicePicker = new VoicePicker(ui, p, this);
+        tabs[1] = new SpeakTab(ui, p, this, voicePicker);
+        tabs[2] = new SettingsTab(ui, p, this);
+        engTab = new EngineTab(ui, p, this);
+        tabs[3] = engTab;
+        engTab.voicePicker = voicePicker;
         applyWindow();
         buildShell();
         if (Build.VERSION.SDK_INT >= 33) {
@@ -188,7 +196,7 @@ public class MainActivity extends Activity implements Tab.Host {
         View page = null;
         Tab t = tabs[i];
         if (t != null) page = t.build(this);
-        content.addView(page, new FrameLayout.LayoutParams(
+        if (page != null) content.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         paintTabs();
         dispatchSync();
