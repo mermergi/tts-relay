@@ -196,11 +196,12 @@ public interface TabHost {
 | 4 | 9e5c58c | SettingsTab（上游/TTS/小活判定/主题/常用上游 chips） |
 | 5 | 557e4ac | SpeakTab + VoicePicker（朗读页与分角色音色机制分家，页布局与音色机器分离） |
 | 6+7 | d50ac68 | EngineTab + EngineEditor（合并提交：引擎页与编辑器互相引用太深，拆开做会互相卡） |
-| 收尾 | ae72fa2 | 清壳：死字段 + 无用 import |
+| 收尾 | ae72fa2 + c4b50bd | 清壳 + 孤儿 javadoc 归位（文档跟回所属方法） |
+| 补审 | ebab4e6 | **补回 tabs[1..3] 装配**：此前锚文本失配导致装配行从未落盘，切朗读/设置/引擎页必崩（详见下） |
 
 ### 与原方案的偏差（均为有意）
 - **Tab 契约加了 4 个 default/方法**：`saveInputs()`/`syncInputs()`（default 空实现）进入 Tab；`sheet(View)`/`dismissSheet()`/`sheetTheme()` 进入 Tab.Host —— 底部抽屉是 Activity 级共用基建（Material BottomSheetDialog + 单槽位管理），放 Widgets 做不了单槽位。
-- **行数预算**：MainActivity 460 行（目标 ≤400，差在 tab 栏/主题/生命周期是真壳代码，再砍只能删注释）；VoicePicker 677、EngineEditor 659（超 600 预算）——两处都是状态高度内聚的机器（选音色↔绑定↔试听、编辑框↔插件面板↔Cookie），再拆只会把一坨状态摊到两个文件。接受。
+- **行数预算**：MainActivity 317 行（达标 ≤400 —— 孤儿 javadoc 归位后自然瘦身）；VoicePicker 677、EngineEditor 659（超 600 预算）——两处都是状态高度内聚的机器（选音色↔绑定↔试听、编辑框↔插件面板↔Cookie），再拆只会把一坨状态摊到两个文件。接受。
 - **sheet() 单槽位**：壳的 `sheet()` 内部登记 `roleSheet`，所有调用点（tab 里 `host.sheet(box)`）不再手动赋值 —— 顺手修了老代码"开了新抽屉忘登记就关不掉"的隐患。
 - **runOnUi 纪律**：tab/ 里所有 `new Thread` 的 UI 回写都走 `host.runOnUi`（grep 验证）；`VoiceItem`/`VoiceListAdapter`/`ChoiceSheet` 转 public 是跨包引用的最小改动。
 - **回归修复**（搬迁途中发现并修复的老问题）：① 抽屉保存后关不掉（槽位未登记）；② 朗读页"当前音色"文字不实时刷新（step3 误切，落位 SpeakTab.refresh()）。
@@ -208,8 +209,12 @@ public interface TabHost {
 ### 最终结构
 ```
 src/com/mermergi/ttsrelay/
-├── MainActivity.java        460 行（壳：tab 栏 / 主题 / 生命周期 / 分发 / SAF 委托）
+├── MainActivity.java        317 行（壳：tab 栏 / 主题 / 生命周期 / 分发 / SAF 委托）
 ├── ui/    Widgets 146 · SliderRow 59 · Form 46
 └── tab/   Tab 48 · LogTab 95 · HomeTab 319 · SpeakTab 271 · SettingsTab 352
           VoicePicker 677 · EngineTab 512 · EngineEditor 659
 ```
+
+### 事后补审发现的事故（ebab4e6）
+步骤 4 起的多次脚本手术里，`tabs[1]/[2]/[3] = new …` 的装配行因锚文本失配**静默未落盘**，且 unused-import 清理随之把 SpeakTab/SettingsTab 的 import 删掉。HTTP 基线（/_split、/_status、/_voices）完全不依赖 tab 装配，所以每步"全绿"是假阴性；真机上点切这三页即 `Cannot add a null child view` 崩溃。
+**教训与改进**：装配行这类"接线"必须用 grep 断言存在（`tabs[i] =` 恰好 5 处）；每步验证在 HTTP 基线之外补 UI 冒烟——uiautomator dump 定位五个 tab 的坐标逐一点穿，断言进程存活、logcat 无 FATAL。
