@@ -82,6 +82,14 @@ if [ -d "$base" ]; then
             good "split-m$m"
         else bad "split-m$m 与基线不一致"; fi
     done
+    st=$(curl -sS --max-time 8 "$URL/_selftest" 2>/dev/null | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin); bad={k:v for k,v in d.items() if v!='ok'}
+    print('bad:'+str(bad) if bad else 'selftest-ok')
+except Exception as e: print('selftest-unreadable:'+str(e))" 2>/dev/null)
+    if [ "$st" = "selftest-ok" ]; then good "selftest（Splitter/MultiVoice/Item）"
+    else bad "设备端自测：$st"; fi
     new=$(mktemp)
     curl -sS --max-time 5 "$URL/_status" | python3 -c "
 import json,sys

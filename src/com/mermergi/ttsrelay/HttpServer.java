@@ -219,6 +219,14 @@ public final class HttpServer {
             json(out, 200, o.toString());
             return;
         }
+        if ("/_selftest".equals(path)) {
+            // 设备端自测：Splitter / MultiVoice / EngineStore.Item 的纯逻辑断言。
+            // verify.sh 顺手带上 —— 重构改了行为这里先红，不用等人肉点界面发现。
+            org.json.JSONObject o = new org.json.JSONObject();
+            selftest(o);
+            json(out, 200, o.toString());
+            return;
+        }
         if ("/_editortest".equals(path)) {
             // 本地自检：在主线程真建一个 sora 编辑器，跑和插件编辑器同一条初始化，
             // 把「语言/配色/字号/字数/TextMate 有没有起来」吐成 JSON —— 不用人肉点界面
@@ -1636,6 +1644,114 @@ public final class HttpServer {
             } catch (Throwable ignored) { }
         }
         return m;
+    }
+
+    // ══════════════════════════ 自测 ══════════════════════════
+
+    private static void selftest(org.json.JSONObject o) {
+        selfSplitter(o);
+        selfMultiVoice(o);
+        selfItem(o);
+    }
+
+    private static void t(org.json.JSONObject o, String name, boolean ok, String detail) {
+        try { o.put(name, ok ? "ok" : "FAIL: " + detail); }
+        catch (Throwable ignored) { }
+    }
+
+    private static int cnt(String s, char ch) {
+        int n = 0;
+        for (int i = 0; i < s.length(); i++) if (s.charAt(i) == ch) n++;
+        return n;
+    }
+
+    private static String join(List<String> xs) {
+        StringBuilder sb = new StringBuilder();
+        for (String x : xs) sb.append(x);
+        return sb.toString();
+    }
+
+    private static void selfSplitter(org.json.JSONObject o) {
+        try {
+            t(o, "sp_clamp", Splitter.clampMode(-5) == Splitter.MODE_NATURAL
+                    && Splitter.clampMode(99) == Splitter.MODE_NATURAL
+                    && Splitter.clampMode(2) == Splitter.MODE_LONG, "clampMode 越界回退不对");
+
+            String txt = "甲乙丙丁。戊己庚辛。壬癸子丑。寅卯辰巳。午未申酉。戌亥子丑。";
+            Splitter q = new Splitter(60, 20, Splitter.MODE_QUICK);
+            List<String> pq = q.feed(txt); pq.addAll(q.flush());
+            Splitter lg = new Splitter(60, 20, Splitter.MODE_LONG);
+            List<String> pl = lg.feed(txt); pl.addAll(lg.flush());
+            t(o, "sp_quick_vs_long", pq.size() >= pl.size(),
+                    "快句(" + pq.size() + ")应不少于长句(" + pl.size() + ")");
+            t(o, "sp_no_char_loss", cnt(join(pq), '。') == cnt(txt, '。')
+                    && cnt(join(pl), '。') == cnt(txt, '。'), "句号丢了：quick=" + join(pq));
+
+            // 标点结尾在 feed 里就吐完了；flush 只吐被 minChunk 扣住的没句号的尾巴
+            Splitter f = new Splitter(60, 20, Splitter.MODE_NATURAL);
+            f.feed(txt);
+            t(o, "sp_flush_empty_after_period", f.flush().isEmpty(), "句号结尾后 flush 不该还有货");
+            Splitter f2 = new Splitter(60, 20, Splitter.MODE_NATURAL);
+            f2.feed("这是一句没有句号的尾巴");
+            boolean once = f2.flush().size() > 0;
+            t(o, "sp_flush_once", once && f2.flush().isEmpty(), "flush 应恰好吐一次余量");
+
+            Splitter ln = new Splitter(1000, 1, Splitter.MODE_LINE);
+            List<String> pln = ln.feed("第一行\n第二行\n第三行\n第四行"); pln.addAll(ln.flush());
+            t(o, "sp_line", pln.size() >= 3, "按行切只出了 " + pln.size() + " 块：" + pln);
+
+            Splitter cd = new Splitter(60, 20, Splitter.MODE_NATURAL);
+            List<String> pc = cd.feed("前语```代码不念```后语"); pc.addAll(cd.flush());
+            String cj = join(pc);
+            t(o, "sp_fence", cj.contains("前语") && cj.contains("后语") && !cj.contains("代码不念"),
+                    "代码围栏没剥干净：" + cj);
+        } catch (Throwable e) {
+            t(o, "sp_crash", false, e.toString());
+        }
+    }
+
+    private static void selfMultiVoice(org.json.JSONObject o) {
+        try {
+            // 关闭分角色时 feed 返回空是设计：调用方（HttpServer）直接走普通 Splitter
+            MultiVoice off = new MultiVoice(60, 20, Splitter.MODE_NATURAL, false);
+            List<MultiVoice.Seg> so = off.feed("随便一段话。");
+            t(o, "mv_disabled", so != null && so.isEmpty(), "关闭分角色应返回空（调用方走普通切分）");
+
+            // feed 在 minChunk 之前会扣着 —— flush 之后必须见段
+            MultiVoice gal = new MultiVoice(60, 20, Splitter.MODE_NATURAL, true, MultiVoice.MODE_GAL);
+            List<MultiVoice.Seg> sg = gal.feed("甲：你好呀。\n旁白：风起了。");
+            sg.addAll(gal.flush());
+            boolean ok = sg != null && sg.size() >= 1;
+            boolean tagged = false;
+            if (ok) for (MultiVoice.Seg g : sg) if (g.tags != null && !g.tags.isEmpty()) tagged = true;
+            t(o, "mv_gal", ok, "GAL 模式 feed+flush 返回空");
+            t(o, "mv_gal_tagged", tagged, "GAL 模式没有任何角色标签：" + (sg == null ? "null" : sg.size() + " 段"));
+
+            MultiVoice rp = new MultiVoice(60, 20, Splitter.MODE_NATURAL, true, MultiVoice.MODE_RP);
+            List<MultiVoice.Seg> sr = rp.feed("他说：“你好。”然后走了。");
+            t(o, "mv_rp", sr != null && sr.size() >= 1, "RP 模式返回空");
+
+            MultiVoice m2 = new MultiVoice(60, 20, Splitter.MODE_NATURAL, true);
+            m2.feed("一点余量。");
+            boolean f1 = m2.flush().size() > 0;
+            t(o, "mv_flush_once", f1 && m2.flush().isEmpty(), "flush 应恰好吐一次");
+        } catch (Throwable e) {
+            t(o, "mv_crash", false, e.toString());
+        }
+    }
+
+    private static void selfItem(org.json.JSONObject o) {
+        try {
+            EngineStore.Item it = new EngineStore.Item();
+            it.label = "自测引擎";
+            it.put("k1", "值一");
+            EngineStore.Item cp = it.copy();
+            cp.put("k1", "改过的");
+            t(o, "item_copy_deep", "值一".equals(it.s("k1", "")) && "改过的".equals(cp.s("k1", "")),
+                    "copy 后 cfg 被共享了");
+        } catch (Throwable e) {
+            t(o, "item_crash", false, e.toString());
+        }
     }
 
     private static String esc(String s) {
