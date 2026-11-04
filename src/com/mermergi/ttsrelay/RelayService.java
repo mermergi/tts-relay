@@ -196,10 +196,13 @@ public final class RelayService extends Service {
                 new Intent(this, RelayService.class).setAction(ACTION_STOP), flags);
         PendingIntent skipPi = PendingIntent.getService(this, 4,
                 new Intent(this, RelayService.class).setAction(ACTION_SKIP), flags);
-        b.addAction(action(paused ? "继续" : "暂停", pausePi));
-        b.addAction(action("跳过", skipPi));
-        b.addAction(action(Prefs.muted(this) ? "取消静音" : "静音", mutePi));
-        b.addAction(action("停止", stopPi));
+        // 图标一套自己画的 Material 白 glyph（res/drawable/ic_notif_*），风格才是一家的
+        b.addAction(action(paused ? "继续" : "暂停",
+                paused ? R.drawable.ic_notif_play : R.drawable.ic_notif_pause, pausePi));
+        b.addAction(action("跳过", R.drawable.ic_notif_next, skipPi));
+        b.addAction(action(Prefs.muted(this) ? "取消静音" : "静音",
+                Prefs.muted(this) ? R.drawable.ic_notif_sound : R.drawable.ic_notif_mute, mutePi));
+        b.addAction(action("停止", R.drawable.ic_notif_close, stopPi));
         // HyperOS / MIUI 折叠态把普通 action 全折进长按 —— MediaStyle 的 compact 行
         // 是唯一会常驻在折叠通知里的按钮排，放最常用的三个（暂停 / 跳过 / 静音）
         Notification.MediaStyle ms = new Notification.MediaStyle();
@@ -207,15 +210,15 @@ public final class RelayService extends Service {
         return b.setContentTitle(getString(R.string.notif_title))
                 .setContentText(text)
                 .setStyle(ms)
-                .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+                .setSmallIcon(Prefs.muted(this) ? R.drawable.ic_notif_mute
+                                : R.drawable.ic_notif_sound)
                 .setContentIntent(pi)
                 .setOngoing(true)
                 .build();
     }
 
-    private static Notification.Action action(String title, PendingIntent pi) {
-        return new Notification.Action.Builder(
-                android.R.drawable.ic_media_play, title, pi).build();
+    private static Notification.Action action(String title, int icon, PendingIntent pi) {
+        return new Notification.Action.Builder(icon, title, pi).build();
     }
 
     private void createChannel() {
