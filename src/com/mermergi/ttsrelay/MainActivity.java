@@ -46,6 +46,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import com.mermergi.ttsrelay.ui.Form;
+import com.mermergi.ttsrelay.ui.SliderRow;
+import com.mermergi.ttsrelay.ui.Widgets;
 
 /**
  * 四页签：首页（状态 · 控制）/ 朗读（音色 · 语调 · 断句）/ 设置 / 日志。
@@ -275,22 +278,7 @@ public class MainActivity extends Activity {
         refresh();
     }
 
-    private View scroll(LinearLayout col) {
-        // M3 布局基准：16dp 页边距、区块之间 8dp 节奏
-        col.setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(32));
-        ScrollView sv = new ScrollView(this);
-        sv.setClipToPadding(false);
-        sv.addView(col, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        return sv;
-    }
 
-    private LinearLayout.LayoutParams topGap(int dp) {
-        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        l.topMargin = ui.dp(dp);
-        return l;
-    }
 
     /** 切页时先松手，免得还抓着上一页已经拆掉的控件。 */
     private void clearRefs() {
@@ -358,7 +346,7 @@ public class MainActivity extends Activity {
         hero.addView(toggleBtn);
 
         LinearLayout quick = ui.row();
-        quick.setLayoutParams(topGap(8));
+        quick.setLayoutParams(Widgets.topGap(ui, 8));
         pauseBtn = ui.btnOnContainer("暂停", new View.OnClickListener() {
             public void onClick(View v) { togglePause(); }
         });
@@ -405,7 +393,7 @@ public class MainActivity extends Activity {
         ac.addView(lanAddrView);
 
         LinearLayout ab = ui.row();
-        ab.setLayoutParams(topGap(12));
+        ab.setLayoutParams(Widgets.topGap(ui, 12));
         ab.addView(ui.btn("复制本机地址", true, new View.OnClickListener() {
             public void onClick(View v) { copy("http://127.0.0.1:" + curPort() + "/v1"); }
         }), ui.weightGap(1f, 8));
@@ -448,7 +436,7 @@ public class MainActivity extends Activity {
         tc.addView(tb);
         col.addView(tc);
 
-        return scroll(col);
+        return Widgets.scroll(this, ui, col);
     }
 
     // ══════════════════════════ 朗读 ══════════════════════════
@@ -484,12 +472,12 @@ public class MainActivity extends Activity {
         // ── 语调 ──
         LinearLayout tc = ui.card();
         tc.addView(ui.sectionTitle("语速 · 音调 · 音量"));
-        final Sl s1 = new Sl(), s2 = new Sl(), s3 = new Sl();
+        final SliderRow s1 = new SliderRow(), s2 = new SliderRow(), s3 = new SliderRow();
 
-        tc.addView(sliderRow("语速", 100, s1, new SeekBar.OnSeekBarChangeListener() {
+        tc.addView(Widgets.sliderRow(this, ui, p, "语速", 100, s1, new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar b, int prog, boolean fromUser) {
                 if (!fromUser) return;
-                String v = toneVal(prog);
+                String v = SliderRow.toneVal(prog);
                 s1.val.setText(v);
                 Prefs.setRate(MainActivity.this, v);
             }
@@ -498,10 +486,10 @@ public class MainActivity extends Activity {
                 LogBus.add("语速 → " + Prefs.rate(MainActivity.this) + "（下一句生效）");
             }
         }));
-        tc.addView(sliderRow("音调", 100, s2, new SeekBar.OnSeekBarChangeListener() {
+        tc.addView(Widgets.sliderRow(this, ui, p, "音调", 100, s2, new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar b, int prog, boolean fromUser) {
                 if (!fromUser) return;
-                String v = toneVal(prog);
+                String v = SliderRow.toneVal(prog);
                 s2.val.setText(v);
                 Prefs.setPitch(MainActivity.this, v);
             }
@@ -510,7 +498,7 @@ public class MainActivity extends Activity {
                 LogBus.add("音调 → " + Prefs.pitch(MainActivity.this) + "（下一句生效）");
             }
         }));
-        tc.addView(sliderRow("音量", 100, s3, new SeekBar.OnSeekBarChangeListener() {
+        tc.addView(Widgets.sliderRow(this, ui, p, "音量", 100, s3, new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar b, int prog, boolean fromUser) {
                 if (!fromUser) return;
                 float v = prog / 100f;
@@ -545,11 +533,11 @@ public class MainActivity extends Activity {
             public void onClick(View v) { pickParseMode(); }
         });
         modeBtn.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        mc.addView(modeBtn, topGap(12));
+        mc.addView(modeBtn, Widgets.topGap(ui, 12));
 
         mc.addView(ui.label("音色 → 名称"));
         roleBox = ui.col();
-        mc.addView(roleBox, topGap(8));
+        mc.addView(roleBox, Widgets.topGap(ui, 8));
         mc.addView(ui.btn("＋ 加一个音色", true, new View.OnClickListener() {
             public void onClick(View v) {
                 pickUserVoice = false;
@@ -559,11 +547,11 @@ public class MainActivity extends Activity {
                 pickForBind = true;
                 fetchVoicesAnd(null);
             }
-        }), topGap(8));
+        }), Widgets.topGap(ui, 8));
         renderVoiceTable();
         mc.addView(ui.btn("复制引导提示词（丢给酒馆）", false, new View.OnClickListener() {
             public void onClick(View v) { copy(GAL_PROMPT); }
-        }), topGap(8));
+        }), Widgets.topGap(ui, 8));
         col.addView(mc);
 
         // ── 朗读用户消息 ──
@@ -624,54 +612,11 @@ public class MainActivity extends Activity {
         pc.addView(previewOut);
         col.addView(pc);
 
-        return scroll(col);
+        return Widgets.scroll(this, ui, col);
     }
 
-    private static final class Sl {
-        SeekBar bar;
-        TextView val;
-    }
 
-    private LinearLayout sliderRow(String title, int max, final Sl out,
-                                   SeekBar.OnSeekBarChangeListener l) {
-        LinearLayout box = ui.col();
-        LinearLayout head = ui.row();
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView t = ui.label(title);
-        t.setPadding(0, ui.dp(6), 0, 0);
-        head.addView(t, ui.weight(1f));
-        TextView val = ui.value("");
-        val.setTextSize(12.5f);
-        val.setTextColor(p.accent);
-        val.setGravity(Gravity.END);
-        head.addView(val);
-        box.addView(head);
 
-        SeekBar bar = new SeekBar(this);
-        bar.setMax(max);
-        ui.tint(bar);
-        bar.setOnSeekBarChangeListener(l);
-        box.addView(bar, topGap(2));
-
-        out.bar = bar;
-        out.val = val;
-        return box;
-    }
-
-    private static final float TONE_LO = 0.5f, TONE_HI = 2.0f;
-
-    private static int toneProg(String s) {
-        float v;
-        try { v = Float.parseFloat(s); } catch (Throwable t) { v = 1f; }
-        if (v < TONE_LO) v = TONE_LO;
-        if (v > TONE_HI) v = TONE_HI;
-        return Math.round((v - TONE_LO) / (TONE_HI - TONE_LO) * 100f);
-    }
-
-    private static String toneVal(int prog) {
-        float v = TONE_LO + (TONE_HI - TONE_LO) * (prog / 100f);
-        return String.format(Locale.US, "%.2f", v);
-    }
 
     // ══════════════════════════ 设置 ══════════════════════════
 
@@ -741,7 +686,7 @@ public class MainActivity extends Activity {
         themeBtn = ui.btn("", false, new View.OnClickListener() {
             public void onClick(View v) { pickTheme(); }
         });
-        ac.addView(themeBtn, topGap(14));
+        ac.addView(themeBtn, Widgets.topGap(ui, 14));
         col.addView(ac);
 
         col.addView(ui.bigBtn("保存设置", true, new View.OnClickListener() {
@@ -752,7 +697,7 @@ public class MainActivity extends Activity {
             }
         }));
 
-        return scroll(col);
+        return Widgets.scroll(this, ui, col);
     }
 
     /** 重画「常用上游」那一行：内置的 + 自己加的 + 末尾那个「＋ 自定义」。 */
@@ -926,7 +871,7 @@ public class MainActivity extends Activity {
         c2.addView(engineBox);
         c2.addView(ui.btn("＋ 添加引擎", false, new View.OnClickListener() {
             public void onClick(View v) { addEngine(); }
-        }), topGap(8));
+        }), Widgets.topGap(ui, 8));
         col.addView(c2);
 
         LinearLayout c3 = ui.card();
@@ -945,7 +890,7 @@ public class MainActivity extends Activity {
         r1.addView(ui.btn("从剪贴板导入", false, new View.OnClickListener() {
             public void onClick(View v) { importFromClipboard(); }
         }), ui.weight(1f));
-        c4.addView(r1, topGap(8));
+        c4.addView(r1, Widgets.topGap(ui, 8));
         LinearLayout r2 = ui.row();
         r2.addView(ui.btn("导出到文件", false, new View.OnClickListener() {
             public void onClick(View v) { exportToFile(); }
@@ -953,10 +898,10 @@ public class MainActivity extends Activity {
         r2.addView(ui.btn("复制给别人", false, new View.OnClickListener() {
             public void onClick(View v) { exportMenu(); }
         }), ui.weight(1f));
-        c4.addView(r2, topGap(8));
+        c4.addView(r2, Widgets.topGap(ui, 8));
         col.addView(c4);
 
-        return scroll(col);
+        return Widgets.scroll(this, ui, col);
     }
 
     // ── 导入 / 导出 ──
@@ -1465,8 +1410,8 @@ public class MainActivity extends Activity {
         final String[] lang = new String[]{it.s("lang", "zh-CN")};
         langVal.setText(lang[0]);
         voiceVal.setText(TtsEngine.shortVoice(curVoice[0]));
-        final LinearLayout langRow = kvRow("语言", langVal);
-        final LinearLayout voiceRow = kvRow("声音", voiceVal);
+        final LinearLayout langRow = Widgets.kvRow(this, ui, p, "语言", langVal);
+        final LinearLayout voiceRow = Widgets.kvRow(this, ui, p, "声音", voiceVal);
         box.addView(langRow, ui.topGap(10));
         box.addView(voiceRow, ui.topGap(8));
 
@@ -1475,9 +1420,9 @@ public class MainActivity extends Activity {
         box.addView(host, ui.topGap(10));
 
         // ── 这个引擎自己的语速 / 音量 / 音高 ──
-        box.addView(paramSlider("语速", "speed", it), ui.topGap(6));
-        box.addView(paramSlider("音量", "vol", it));
-        box.addView(paramSlider("音高", "pitch_", it));
+        box.addView(Widgets.paramSlider(this, ui, p, "语速", "speed", it), ui.topGap(6));
+        box.addView(Widgets.paramSlider(this, ui, p, "音量", "vol", it));
+        box.addView(Widgets.paramSlider(this, ui, p, "音高", "pitch_", it));
 
         // 这个抽屉自己开的插件宿主（按当前音色），保存/关掉时要把它的 ttsrv.tts.data 存回去
         final com.mermergi.ttsrelay.js.PluginBridge[] hostRef =
@@ -1615,70 +1560,7 @@ public class MainActivity extends Activity {
     }
 
     /** 一行「名字 ▸ 值」（插件页里的下拉）。 */
-    private LinearLayout kvRow(String label, TextView val) {
-        LinearLayout row = ui.row();
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(ui.dp(14), ui.dp(12), ui.dp(12), ui.dp(12));
-        row.setBackground(ui.pressable(p.cardHi, p.ripple, 12, p.border));
-        row.setClickable(true);
-        TextView l = new TextView(this);
-        l.setText(label);
-        l.setTextColor(p.textMuted);
-        l.setTextSize(12.5f);
-        row.addView(l);
-        val.setTextSize(14);
-        val.setTextColor(p.textPrimary);
-        val.setPadding(ui.dp(12), 0, 0, 0);
-        val.setSingleLine(true);
-        val.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        row.addView(val, ui.weight(1f));
-        TextView arrow = new TextView(this);
-        arrow.setText("▾");
-        arrow.setTextColor(p.textSecondary);
-        arrow.setTextSize(14);
-        row.addView(arrow);
-        return row;
-    }
 
-    /** 这个引擎自己的语速/音量/音高（0 = 跟随全局，照 TTS Server 的 model）。 */
-    private LinearLayout paramSlider(final String label, final String key, final EngineStore.Item it) {
-        LinearLayout box = ui.col();
-        box.setPadding(0, ui.dp(8), 0, 0);
-        LinearLayout head = ui.row();
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView l = new TextView(this);
-        l.setText(label);
-        l.setTextColor(p.textSecondary);
-        l.setTextSize(12.5f);
-        head.addView(l, ui.weight(1f));
-        final TextView val = new TextView(this);
-        val.setTextColor(p.accent);
-        val.setTextSize(12.5f);
-        head.addView(val);
-        box.addView(head);
-
-        final SeekBar bar = new SeekBar(this);
-        bar.setMax(300);
-        float cur = 0f;
-        try { cur = Float.parseFloat(it.s(key, "")); } catch (Throwable ignored) { }
-        final int init = Math.round(cur * 100f);
-        bar.setProgress(init);
-        val.setText(init == 0 ? "跟随全局" : String.format(Locale.US, "%.2f", init / 100f));
-        ui.tint(bar);
-        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar b, int prog, boolean fromUser) {
-                if (!fromUser) return;
-                val.setText(prog == 0 ? "跟随全局" : String.format(Locale.US, "%.2f", prog / 100f));
-            }
-            public void onStartTrackingTouch(SeekBar b) { }
-            public void onStopTrackingTouch(SeekBar b) {
-                int prog = b.getProgress();
-                it.put(key, prog == 0 ? "" : String.format(Locale.US, "%.2f", prog / 100f));
-            }
-        });
-        box.addView(bar);
-        return box;
-    }
 
     private void addEngine() {
         ChoiceSheet.show(this, ui, p, sheetTheme(), "添加引擎", null,
@@ -1722,35 +1604,7 @@ public class MainActivity extends Activity {
 
     // ── 配置表单 ──
 
-    private static final class Fld {
-        String key;
-        EditText box;
-    }
 
-    /** spec 每行：{配置键, 显示名, 当前值, "single"|"multi"} */
-    private List<Fld> buildForm(LinearLayout box, String[][] spec) {
-        List<Fld> out = new ArrayList<Fld>();
-        for (String[] row : spec) {
-            boolean multi = row.length > 3 && "multi".equals(row[3]);
-            box.addView(ui.label(row[1]));
-            EditText e;
-            if (multi) {
-                e = ui.area("");
-                e.setText(row[2] == null ? "" : row[2]);
-                e.setMinLines(3);
-                e.setMaxLines(5);          // 长内容（headers 之类）别把整屏撑爆
-            } else {
-                e = ui.field(null, row[2] == null ? "" : row[2], InputType.TYPE_CLASS_TEXT);
-            }
-            e.setTag(null);
-            box.addView(e);
-            Fld f = new Fld();
-            f.key = row[0];
-            f.box = e;
-            out.add(f);
-        }
-        return out;
-    }
 
     private void editEngine(final EngineStore.Item it) {
         // 所有引擎都走整屏编辑器（JS 那条是代码页，其余是参数页）—— 不再用老表单
@@ -1833,7 +1687,7 @@ public class MainActivity extends Activity {
         }
         final List<String> extraKeys = extra;
 
-        final List<Fld> flds = buildForm(box, spec.toArray(new String[0][]));
+        final List<Form.Fld> flds = Form.buildForm(this, ui, box, spec.toArray(new String[0][]));
 
         // Cookie 单独一块：它动辄上千字符，塞进表单里没法看，所以只显示状态
         final String loginKey = loginTarget(it);
@@ -1870,7 +1724,7 @@ public class MainActivity extends Activity {
                         try { startActivityForResult(i, REQ_LOGIN); }
                         catch (Throwable t) { toast("打不开登录页：" + t.getMessage()); }
                     }
-                }), topGap(10));
+                }), Widgets.topGap(ui, 10));
             }
             LinearLayout ckRow = ui.row();
             ckRow.addView(ui.btn("查看/修改", false, new View.OnClickListener() {
@@ -1885,7 +1739,7 @@ public class MainActivity extends Activity {
                     toast("已清空");
                 }
             }), ui.weight(1f));
-            ck.addView(ckRow, topGap(8));
+            ck.addView(ckRow, Widgets.topGap(ui, 8));
             box.addView(ck);
         }
 
@@ -1896,7 +1750,7 @@ public class MainActivity extends Activity {
         act.addView(ui.btn("看看音色", false, new View.OnClickListener() {
             public void onClick(View v) { showEngineVoices(it); }
         }), ui.weight(1f));
-        box.addView(act, topGap(8));
+        box.addView(act, Widgets.topGap(ui, 8));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
@@ -1970,7 +1824,7 @@ public class MainActivity extends Activity {
                 toast((got.equals(raw.trim()) ? "已粘贴（原样）\n" : "已粘贴（摘出 Cookie）\n")
                         + CookieGrab.summary(got));
             }
-        }), topGap(8));
+        }), Widgets.topGap(ui, 8));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
@@ -1999,11 +1853,11 @@ public class MainActivity extends Activity {
                     "voices_name", "voices_id", "var_labels", "def_vars", "user_vars", "tts_data",
                     "login_key", "login_url", "binding", "ua", "author", "icon"));
 
-    private void applyEditor(EngineStore.Item it, EditText nameBox, List<Fld> flds,
+    private void applyEditor(EngineStore.Item it, EditText nameBox, List<Form.Fld> flds,
                             List<String> extraKeys) {
         String nm = nameBox.getText().toString().trim();
         if (nm.length() > 0) it.label = nm;
-        for (Fld f : flds) {
+        for (Form.Fld f : flds) {
             String v = f.box.getText().toString();
             if ("timeout".equals(f.key) || "sample_rate".equals(f.key)) {
                 try { it.put(f.key, Integer.parseInt(v.trim())); }
@@ -2339,11 +2193,11 @@ public class MainActivity extends Activity {
             else if (k.equals("smalltoken")) e.setText(String.valueOf(Prefs.smallTokenLimit(this)));
         }
         if (rateBar != null) {
-            rateBar.setProgress(toneProg(Prefs.rate(this)));
+            rateBar.setProgress(SliderRow.toneProg(Prefs.rate(this)));
             rateVal.setText(Prefs.rate(this));
         }
         if (pitchBar != null) {
-            pitchBar.setProgress(toneProg(Prefs.pitch(this)));
+            pitchBar.setProgress(SliderRow.toneProg(Prefs.pitch(this)));
             pitchVal.setText(Prefs.pitch(this));
         }
         if (volBar != null) {
@@ -3100,6 +2954,6 @@ public class MainActivity extends Activity {
     }
 
     private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+        Widgets.toast(this, s);
     }
 }
