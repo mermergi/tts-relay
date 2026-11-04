@@ -46,6 +46,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import com.mermergi.ttsrelay.tab.LogTab;
+import com.mermergi.ttsrelay.tab.Tab;
 import com.mermergi.ttsrelay.ui.Form;
 import com.mermergi.ttsrelay.ui.SliderRow;
 import com.mermergi.ttsrelay.ui.Widgets;
@@ -54,7 +56,7 @@ import com.mermergi.ttsrelay.ui.Widgets;
  * 四页签：首页（状态 · 控制）/ 朗读（音色 · 语调 · 断句）/ 设置 / 日志。
  * 界面全是代码搭的，颜色一律走 Palette —— 换主题只换一个对象，页面一行都不用动。
  */
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements Tab.Host {
 
     private static final int REQ_NOTIF = 41;
     private static final String[] TAB_NAME = {"首页", "朗读", "设置", "引擎", "日志"};
@@ -63,6 +65,8 @@ public class MainActivity extends Activity {
 
     private Palette p;
     private Ui ui;
+    /** 已迁移到 tab/ 协调器的页；null = 还是 MainActivity 里的老代码。 */
+    private final Tab[] tabs = new Tab[5];
 
     // ── 骨架 ──
     private FrameLayout content;
@@ -123,8 +127,6 @@ public class MainActivity extends Activity {
     private LinearLayout presetRow;
 
     // ── 日志 ──
-    private TextView logView;
-    private int logLen = -1;
 
     private final Handler tick = new Handler();
     private final Runnable refresher = new Runnable() {
@@ -151,6 +153,7 @@ public class MainActivity extends Activity {
         p = Palette.apply(this);
         super.onCreate(b);
         ui = new Ui(this, p);
+        tabs[4] = new LogTab(ui, p, this);   // 日志页试点
         applyWindow();
         buildShell();
         if (Build.VERSION.SDK_INT >= 33) {
@@ -266,11 +269,12 @@ public class MainActivity extends Activity {
         LAST_TAB = i;
         content.removeAllViews();
         View page;
-        if (i == 0) page = pageHome();
+        Tab t = tabs[i];
+        if (t != null) page = t.build(this);
+        else if (i == 0) page = pageHome();
         else if (i == 1) page = pageSpeak();
         else if (i == 2) page = pageSettings();
-        else if (i == 3) page = pageEngine();
-        else page = pageLog();
+        else page = pageEngine();
         content.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         paintTabs();
@@ -297,8 +301,8 @@ public class MainActivity extends Activity {
         speakUserSwitch = null; userVoiceView = null;
         engineBox = null; engineNow = null;
         presetChips.clear(); presetRow = null;
-        logView = null;
-        logLen = -1;
+        Tab t = (tab >= 0) ? tabs[tab] : null;
+        if (t != null) t.clearRefs();
     }
 
     // ══════════════════════════ 首页 ══════════════════════════
@@ -429,7 +433,6 @@ public class MainActivity extends Activity {
         tb.addView(ui.btn("清空日志", false, new View.OnClickListener() {
             public void onClick(View v) {
                 LogBus.clear();
-                if (logView != null) { logView.setText(""); logLen = 0; }
                 toast("日志已清空");
             }
         }), ui.weight(1f));
@@ -839,7 +842,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private int dialogTheme() {
+    @Override public int dialogTheme() {
         return p.light ? R.style.AppDialog_Light : R.style.AppDialog;
     }
 
@@ -1960,50 +1963,6 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    // ══════════════════════════ 日志 ══════════════════════════
-
-    private View pageLog() {
-        LinearLayout root = ui.col();
-        root.setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(12));
-
-        LinearLayout head = ui.row();
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView t = ui.sectionTitle("运行日志");
-        t.setPadding(0, 0, 0, 0);
-        head.addView(t, ui.weight(1f));
-        head.addView(ui.btn("复制全部", false, new View.OnClickListener() {
-            public void onClick(View v) { copy(LogBus.dump()); }
-        }));
-        LinearLayout.LayoutParams hg = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hg.leftMargin = ui.dp(8);
-        hg.rightMargin = ui.dp(8);
-        head.addView(ui.btn("清空", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                LogBus.clear();
-                if (logView != null) logView.setText("");
-                logLen = 0;
-            }
-        }), hg);
-        root.addView(head);
-
-        ScrollView sv = new ScrollView(this);
-        sv.setBackground(ui.round(p.card, p.border, 16));
-        sv.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
-        logView = new TextView(this);
-        logView.setTextSize(11);
-        logView.setTextColor(p.log);
-        logView.setTypeface(Typeface.MONOSPACE);
-        logView.setTextIsSelectable(true);
-        logView.setLineSpacing(ui.dp(2), 1f);
-        sv.addView(logView);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        lp.topMargin = ui.dp(10);
-        root.addView(sv, lp);
-        return root;
-    }
-
     // ══════════════════════════ 刷新 ══════════════════════════
 
     private void refresh() {
@@ -2061,25 +2020,14 @@ public class MainActivity extends Activity {
             lanSwitch.setChecked(Prefs.lanAllowed(this));
         }
 
-        if (logView != null) {
-            String all = LogBus.dump();
-            if (all.length() != logLen) {
-                logLen = all.length();
-                logView.setText(all);
-                View parent = (View) logView.getParent();
-                if (parent instanceof ScrollView) {
-                    final ScrollView sv = (ScrollView) parent;
-                    sv.post(new Runnable() {
-                        public void run() { sv.fullScroll(View.FOCUS_DOWN); }
-                    });
-                }
-            }
-        }
 
         if (up && (System.currentTimeMillis() % 5000) < 1000) {
             RelayService svc = RelayService.instance();
             if (svc != null) svc.updateNotification();
         }
+
+        Tab t2 = (tab >= 0) ? tabs[tab] : null;
+        if (t2 != null) t2.refresh();
     }
 
     private static String shortHost(String u) {
@@ -2923,7 +2871,7 @@ public class MainActivity extends Activity {
 
     // ══════════════════════════ 杂项 ══════════════════════════
 
-    private void copy(String s) {
+    @Override public void copy(String s) {
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("relay", s));
         toast("已复制：" + s);
@@ -2953,7 +2901,11 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private void toast(String s) {
+    @Override public void toast(String s) {
         Widgets.toast(this, s);
     }
+
+    @Override public void runOnUi(Runnable r) { runOnUiThread(r); }
+    @Override public void requestRefresh() { refresh(); }
+    @Override public Activity activity() { return this; }
 }
