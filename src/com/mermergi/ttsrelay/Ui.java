@@ -145,6 +145,40 @@ public final class Ui {
         return l;
     }
 
+    /** 可折叠卡（默认收起）：返回外壳，内容塞进 foldBody；点标题行展开/收起。 */
+    public LinearLayout foldCard(Context ctx, String title) {
+        LinearLayout box = card();
+        LinearLayout head = new LinearLayout(ctx);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(0, dp(6), 0, dp(6));
+        TextView t = sectionTitle(title);
+        t.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        final TextView arrow = new TextView(ctx);
+        arrow.setText("▸");
+        arrow.setTextSize(14);
+        arrow.setTextColor(p.textSecondary);
+        head.addView(t);
+        head.addView(arrow);
+        final LinearLayout body = col();
+        body.setVisibility(View.GONE);
+        head.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                boolean show = body.getVisibility() != View.VISIBLE;
+                body.setVisibility(show ? View.VISIBLE : View.GONE);
+                arrow.setText(show ? "▾" : "▸");
+            }
+        });
+        box.addView(head);
+        box.addView(body);
+        foldBody = body;
+        return box;
+    }
+
+    /** foldCard 刚返回的那个内容体 —— build 里紧跟一行用。 */
+    public LinearLayout foldBody;
+
     /** M3 filled card：surface container 底、12dp 圆角、无描边（层级靠 tone，不靠阴影）。 */
     public LinearLayout card() {
         LinearLayout l = col();

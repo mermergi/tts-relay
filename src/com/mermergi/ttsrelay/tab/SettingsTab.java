@@ -56,69 +56,104 @@ public final class SettingsTab implements Tab {
         LinearLayout col = ui.col();
 
         // ── 上游 ──
-        LinearLayout uc = ui.card();
-        uc.addView(ui.sectionTitle("上游模型接口"));
-        uc.addView(ui.label("常用上游"));
+        LinearLayout uc = ui.foldCard(ctx, "上游模型接口");
+        LinearLayout foldUc = ui.foldBody;
+        foldUc.addView(ui.label("常用上游"));
         HorizontalScrollView hs = new HorizontalScrollView(ctx);
         hs.setHorizontalScrollBarEnabled(false);
         presetRow = ui.row();
         hs.addView(presetRow);
         buildPresetRow(ctx);
-        uc.addView(hs);
+        foldUc.addView(hs);
 
-        uc.addView(ui.label("上游 API 地址"));
+        foldUc.addView(ui.label("上游 API 地址"));
         upstreamField = ui.field("upstream", Prefs.UPSTREAM_DEF, InputType.TYPE_TEXT_VARIATION_URI);
-        uc.addView(upstreamField);
-        uc.addView(ui.label("监听端口"));
+        foldUc.addView(upstreamField);
+        foldUc.addView(ui.label("监听端口"));
         portField = ui.field("port", String.valueOf(Prefs.PORT_DEF), InputType.TYPE_CLASS_NUMBER);
-        uc.addView(portField);
+        foldUc.addView(portField);
         col.addView(uc);
 
         // ── TTS ──
-        LinearLayout tc = ui.card();
-        tc.addView(ui.sectionTitle("TTS Server"));
-        tc.addView(ui.label("转发器地址"));
+        LinearLayout tc = ui.foldCard(ctx, "TTS Server");
+        LinearLayout foldTc = ui.foldBody;
+        foldTc.addView(ui.label("转发器地址"));
         ttsField = ui.field("tts", Prefs.TTS_BASE_DEF, InputType.TYPE_TEXT_VARIATION_URI);
-        tc.addView(ttsField);
-        tc.addView(ui.label("单句最长字数（超了硬切）"));
+        foldTc.addView(ttsField);
+        foldTc.addView(ui.label("单句最长字数（超了硬切）"));
         maxChunkField = ui.field("maxchunk", String.valueOf(Prefs.MAXCHUNK_DEF),
                 InputType.TYPE_CLASS_NUMBER);
-        tc.addView(maxChunkField);
+        foldTc.addView(maxChunkField);
         col.addView(tc);
 
+        // ═══ 连接信息（原首页地址卡）═══
+        LinearLayout conn = ui.foldCard(ctx, "对话软件里填的 API 主机");
+        LinearLayout foldConn = ui.foldBody;
+        addrView = new android.widget.TextView(ctx);
+        addrView.setTextSize(14);
+        addrView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        foldConn.addView(addrView);
+        lanAddrView = new android.widget.TextView(ctx);
+        lanAddrView.setTextSize(12);
+        lanAddrView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        lanAddrView.setTextColor(p.textSecondary);
+        lanAddrView.setPadding(0, ui.dp(4), 0, 0);
+        foldConn.addView(lanAddrView);
+        LinearLayout cab = ui.row();
+        cab.addView(ui.btn("复制本机地址", true, new View.OnClickListener() {
+            public void onClick(View v) { host.copy("http://127.0.0.1:" + curPort(ctx) + "/v1"); }
+        }), ui.weightGap(1f, 8));
+        cab.addView(ui.btn("复制局域网地址", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                String ip = lanIp();
+                if (ip == null) { host.toast("没找到局域网 IP"); return; }
+                host.copy("http://" + ip + ":" + curPort(ctx) + "/v1");
+            }
+        }), ui.weight(1f));
+        foldConn.addView(cab, Widgets.topGap(ui, 12));
+        lanSwitch = ui.switchBox("允许局域网访问");
+        lanSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
+                Prefs.setLanAllowed(ctx, checked);
+                host.toast(checked ? "已开启 —— 注意：局域网里谁都能用你的 key" : "已关闭");
+            }
+        });
+        foldConn.addView(lanSwitch);
+        col.addView(conn);
+
         // ── 跳过规则 ──
-        LinearLayout sc = ui.card();
-        sc.addView(ui.sectionTitle("后台小活判定"));
+        LinearLayout sc = ui.foldCard(ctx, "后台小活判定");
+        LinearLayout foldSc = ui.foldBody;
         skipSwitch = ui.switchBox("检测后台小活\n起标题、写摘要这类请求不朗读");
         skipSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
                 Prefs.setSkipSmall(ctx, checked);
             }
         });
-        sc.addView(skipSwitch);
-        sc.addView(ui.label("额度阈值：输出上限小于它就当小活"));
+        foldSc.addView(skipSwitch);
+        foldSc.addView(ui.label("额度阈值：输出上限小于它就当小活"));
         smallTokenField = ui.field("smalltoken", String.valueOf(Prefs.SMALL_TOKEN_DEF),
                 InputType.TYPE_CLASS_NUMBER);
-        sc.addView(smallTokenField);
-        sc.addView(ui.label("关键词（英文逗号分隔，只在 system 提示词里找）"));
+        foldSc.addView(smallTokenField);
+        foldSc.addView(ui.label("关键词（英文逗号分隔，只在 system 提示词里找）"));
         skipKeyField = ui.field("skipkey", Prefs.SKIP_KEYWORDS_DEF, InputType.TYPE_CLASS_TEXT);
-        sc.addView(skipKeyField);
+        foldSc.addView(skipKeyField);
         col.addView(sc);
 
         // ── 自动化 ──
-        LinearLayout ac = ui.card();
-        ac.addView(ui.sectionTitle("自动化与外观"));
+        LinearLayout ac = ui.foldCard(ctx, "自动化与外观");
+        LinearLayout foldAc = ui.foldBody;
         autoStartSwitch = ui.switchBox("开机自启\n仅在上次是运行状态时拉起");
         autoStartSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
                 Prefs.setAutoStart(ctx, checked);
             }
         });
-        ac.addView(autoStartSwitch);
+        foldAc.addView(autoStartSwitch);
         themeBtn = ui.btn("", false, new View.OnClickListener() {
             public void onClick(View v) { pickTheme(); }
         });
-        ac.addView(themeBtn, Widgets.topGap(ui, 14));
+        foldAc.addView(themeBtn, Widgets.topGap(ui, 14));
         col.addView(ac);
 
         col.addView(ui.bigBtn("保存设置", true, new View.OnClickListener() {
@@ -129,61 +164,11 @@ public final class SettingsTab implements Tab {
             }
         }));
 
-        // ═══ 连接信息（原首页地址卡）═══
-        LinearLayout conn = ui.card();
-        conn.addView(ui.sectionTitle("对话软件里填的 API 主机"));
-        addrView = new android.widget.TextView(ctx);
-        addrView.setTextSize(14);
-        addrView.setTypeface(android.graphics.Typeface.MONOSPACE);
-        conn.addView(addrView);
-        lanAddrView = new android.widget.TextView(ctx);
-        lanAddrView.setTextSize(12);
-        lanAddrView.setTypeface(android.graphics.Typeface.MONOSPACE);
-        lanAddrView.setTextColor(p.textSecondary);
-        lanAddrView.setPadding(0, ui.dp(4), 0, 0);
-        conn.addView(lanAddrView);
-        LinearLayout cab = new LinearLayout(ctx);
-        cab.setOrientation(LinearLayout.HORIZONTAL);
-        cab.addView(ui.btn("复制本机地址", true, new View.OnClickListener() {
-            public void onClick(View v) { host.copy("http://127.0.0.1:" + curPort(ctx) + "/v1"); }
-        }));
-        conn.addView(cab, Widgets.topGap(ui, 12));
-        lanSwitch = ui.switchBox("允许局域网访问");
-        lanSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
-                Prefs.setLanAllowed(ctx, checked);
-                host.toast(checked ? "已开启 —— 注意：局域网里谁都能用你的 key" : "已关闭");
-            }
-        });
-        conn.addView(lanSwitch);
-        col.addView(conn);
-
-        // ═══ 排障 ═══
-        LinearLayout dbg = new LinearLayout(ctx);
-        dbg.setOrientation(LinearLayout.VERTICAL);
-        dbg.addView(ui.sectionTitle("排障"));
-        LinearLayout dbrow = new LinearLayout(ctx);
-        dbrow.setOrientation(LinearLayout.HORIZONTAL);
-        dbrow.addView(ui.btn("运行日志", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                ctx.startActivity(new android.content.Intent(ctx, com.mermergi.ttsrelay.LogActivity.class));
-            }
-        }));
-        dbrow.addView(ui.btn("清空日志", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                com.mermergi.ttsrelay.LogBus.clear();
-                host.toast("日志已清空");
-            }
-        }));
-        dbg.addView(dbrow, Widgets.topGap(ui, 8));
-        col.addView(dbg);
-
         // ═══ 保活 ═══
-        LinearLayout kc = new LinearLayout(ctx);
-        kc.setOrientation(LinearLayout.VERTICAL);
-        kc.addView(ui.sectionTitle("保活"));
-        kc.addView(ui.label(keepAliveText()));
-        kc.addView(ui.btn("申请电池优化豁免", false, new View.OnClickListener() {
+        LinearLayout kc = ui.foldCard(ctx, "保活");
+        LinearLayout foldKc = ui.foldBody;
+        foldKc.addView(ui.label(keepAliveText()));
+        foldKc.addView(ui.btn("申请电池优化豁免", false, new View.OnClickListener() {
             public void onClick(View v) {
                 try {
                     ctx.startActivity(new android.content.Intent(
