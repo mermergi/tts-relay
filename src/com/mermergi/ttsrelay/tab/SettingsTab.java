@@ -32,6 +32,8 @@ public final class SettingsTab implements Tab {
     private EditText upstreamField, portField, ttsField, maxChunkField, skipKeyField, smallTokenField;
     private com.google.android.material.materialswitch.MaterialSwitch skipSwitch, autoStartSwitch;
     private TextView themeBtn;
+    private TextView addrView, lanAddrView;
+    private android.widget.CompoundButton lanSwitch;
     private LinearLayout presetRow;
     private final List<TextView> presetChips = new ArrayList<TextView>();
 
@@ -126,6 +128,55 @@ public final class SettingsTab implements Tab {
                 host.toast("已保存（端口 / 上游 / TTS 地址要重启中转生效）");
             }
         }));
+
+        // ═══ 连接信息（原首页地址卡）═══
+        LinearLayout conn = ui.card();
+        conn.addView(ui.sectionTitle("对话软件里填的 API 主机"));
+        addrView = new android.widget.TextView(ctx);
+        addrView.setTextSize(14);
+        addrView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        conn.addView(addrView);
+        lanAddrView = new android.widget.TextView(ctx);
+        lanAddrView.setTextSize(12);
+        lanAddrView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        lanAddrView.setTextColor(p.textSecondary);
+        lanAddrView.setPadding(0, ui.dp(4), 0, 0);
+        conn.addView(lanAddrView);
+        LinearLayout cab = new LinearLayout(ctx);
+        cab.setOrientation(LinearLayout.HORIZONTAL);
+        cab.addView(ui.btn("复制本机地址", true, new View.OnClickListener() {
+            public void onClick(View v) { host.copy("http://127.0.0.1:" + curPort(ctx) + "/v1"); }
+        }));
+        conn.addView(cab, Widgets.topGap(ui, 12));
+        lanSwitch = ui.switchBox("允许局域网访问");
+        lanSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
+                Prefs.setLanAllowed(ctx, checked);
+                host.toast(checked ? "已开启 —— 注意：局域网里谁都能用你的 key" : "已关闭");
+            }
+        });
+        conn.addView(lanSwitch);
+        col.addView(conn);
+
+        // ═══ 排障 ═══
+        LinearLayout dbg = new LinearLayout(ctx);
+        dbg.setOrientation(LinearLayout.VERTICAL);
+        dbg.addView(ui.sectionTitle("排障"));
+        LinearLayout dbrow = new LinearLayout(ctx);
+        dbrow.setOrientation(LinearLayout.HORIZONTAL);
+        dbrow.addView(ui.btn("运行日志", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                ctx.startActivity(new android.content.Intent(ctx, com.mermergi.ttsrelay.LogActivity.class));
+            }
+        }));
+        dbrow.addView(ui.btn("清空日志", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                com.mermergi.ttsrelay.LogBus.clear();
+                host.toast("日志已清空");
+            }
+        }));
+        dbg.addView(dbrow, Widgets.topGap(ui, 8));
+        col.addView(dbg);
 
         // ═══ 保活 ═══
         LinearLayout kc = new LinearLayout(ctx);
@@ -309,6 +360,29 @@ public final class SettingsTab implements Tab {
         }
     }
 
+    private static int curPort(Context ctx) {
+        com.mermergi.ttsrelay.HttpServer srv = com.mermergi.ttsrelay.RelayService.serverOrNull();
+        return (srv != null && srv.isRunning()) ? srv.port() : Prefs.port(ctx);
+    }
+
+    private static String lanIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> ifs =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifs != null && ifs.hasMoreElements()) {
+                java.net.NetworkInterface ni = ifs.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                java.util.Enumeration<java.net.InetAddress> as = ni.getInetAddresses();
+                while (as.hasMoreElements()) {
+                    java.net.InetAddress a = as.nextElement();
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress())
+                        return a.getHostAddress();
+                }
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
     private String keepAliveText() {
         android.os.PowerManager pm = (android.os.PowerManager)
                 host.activity().getSystemService(Context.POWER_SERVICE);
@@ -430,8 +504,21 @@ public final class SettingsTab implements Tab {
 
     @Override
     public void refresh() {
+        Context ctx = host.activity();
         if (themeBtn != null) {
-            themeBtn.setText("主题：" + Palette.THEME_NAMES[Prefs.themeMode(host.activity())] + "  ▸");
+            themeBtn.setText("主题：" + Palette.THEME_NAMES[Prefs.themeMode(ctx)] + "  ▸");
+        }
+        int port = curPort(ctx);
+        if (addrView != null) addrView.setText("http://127.0.0.1:" + port + "/v1");
+        if (lanAddrView != null) {
+            String ip = lanIp();
+            lanAddrView.setText(ip == null
+                    ? "（没找到局域网 IP）"
+                    : "http://" + ip + ":" + port + "/v1"
+                    + (Prefs.lanAllowed(ctx) ? "  · 已开" : "  · 未开"));
+        }
+        if (lanSwitch != null && lanSwitch.isChecked() != Prefs.lanAllowed(ctx)) {
+            lanSwitch.setChecked(Prefs.lanAllowed(ctx));
         }
     }
 
@@ -440,6 +527,7 @@ public final class SettingsTab implements Tab {
         upstreamField = null; portField = null; ttsField = null;
         maxChunkField = null; skipKeyField = null; smallTokenField = null;
         skipSwitch = null; autoStartSwitch = null; themeBtn = null;
+        addrView = null; lanAddrView = null; lanSwitch = null;
         presetChips.clear(); presetRow = null;
     }
 }

@@ -31,9 +31,9 @@ esac
 
 # ── 1. 静态断言（不依赖设备）────────────────────────────────
 say "── 静态断言 ──"
-n=$(grep -c "tabs\[[0-4]\] = " "$root/src/com/mermergi/ttsrelay/MainActivity.java")
-[ "$n" -eq 5 ] && good "五页装配齐全（tabs[i] = … 共 $n 处）" || bad "装配行只有 $n 处（应 5）—— 装配缺失会点页崩溃"
-for f in Tab LogTab HomeTab SpeakTab SettingsTab VoicePicker EngineTab EngineEditor; do
+n=$(grep -c "tabs\[[0-3]\] = " "$root/src/com/mermergi/ttsrelay/MainActivity.java")
+[ "$n" -eq 4 ] && good "四页装配齐全（tabs[i] = … 共 $n 处）" || bad "装配行只有 $n 处（应 4）—— 装配缺失会点页崩溃"
+for f in Tab LogTab PlayerTab SpeakTab SettingsTab VoicePicker EngineTab EngineEditor; do
     p="$root/src/com/mermergi/ttsrelay/tab/$f.java"
     [ -f "$p" ] || { bad "缺 tab/$f.java"; continue; }
     if grep -q "MainActivity" "$p"; then
@@ -117,7 +117,7 @@ python3 - "$out/uidump.xml" <<'EOF' > "$out/tabs.txt" || { bad "解析 tab 坐�
 import re, sys
 s = open(sys.argv[1], encoding="utf-8").read()
 ok = True
-for name in ["首页", "朗读", "设置", "引擎", "日志"]:
+for name in ["朗读", "声音", "引擎", "设置"]:
     # text 在前、package/bounds 在后是 uiautomator 的固定属性序；限定本 app，防抓到别的窗口
     m = re.search(r'text="%s"[^>]*package="com\.mermergi\.ttsrelay"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"' % name, s)
     if not m: ok = False; continue

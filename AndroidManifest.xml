@@ -54,6 +54,9 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!-- 开机自启：只在用户开了开关、且上次是运行状态时才拉起服务 -->
+        <activity
+            android:name=".LogActivity"
+            android:exported="false" />
         <service
             android:name=".RelayTile"
             android:icon="@drawable/ic_notif_play"

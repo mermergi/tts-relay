@@ -22,8 +22,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import com.mermergi.ttsrelay.tab.HomeTab;
-import com.mermergi.ttsrelay.tab.LogTab;
+import com.mermergi.ttsrelay.tab.PlayerTab;
 import com.mermergi.ttsrelay.tab.SettingsTab;
 import com.mermergi.ttsrelay.tab.SpeakTab;
 import com.mermergi.ttsrelay.tab.VoicePicker;
@@ -32,13 +31,13 @@ import com.mermergi.ttsrelay.tab.Tab;
 import com.mermergi.ttsrelay.ui.Widgets;
 
 /**
- * 四页签：首页（状态 · 控制）/ 朗读（音色 · 语调 · 断句）/ 设置 / 日志。
+ * 四页签：朗读（播放器 · 快捷）/ 声音（音色 · 语调 · 断句 · 分角色）/ 引擎 / 设置（含运行日志入口）。
  * 界面全是代码搭的，颜色一律走 Palette —— 换主题只换一个对象，页面一行都不用动。
  */
 public class MainActivity extends Activity implements Tab.Host {
 
     private static final int REQ_NOTIF = 41;
-    private static final String[] TAB_NAME = {"首页", "朗读", "设置", "引擎", "日志"};
+    private static final String[] TAB_NAME = {"朗读", "声音", "引擎", "设置"};
     /** 转屏 / 换主题 recreate 之后停在原来那一页。 */
     private static int LAST_TAB = 0;
 
@@ -67,11 +66,6 @@ public class MainActivity extends Activity implements Tab.Host {
         public void onSpeakerChanged() { runOnUiThread(refreshUi); }
     };
     /** 有新日志 → 只在日志页时刷（别的页不需要跟着日志走）。 */
-    private final LogBus.Sink logLsn = new LogBus.Sink() {
-        public void onLog(String line) {
-            if (tab == 4) runOnUiThread(refreshUi);
-        }
-    };
     private final Runnable refreshUi = new Runnable() { public void run() { refresh(); } };
 
     // ══════════════════════════ 生命周期 ══════════════════════════
@@ -83,13 +77,12 @@ public class MainActivity extends Activity implements Tab.Host {
         p = Palette.apply(this);
         super.onCreate(b);
         ui = new Ui(this, p);
-        tabs[0] = new HomeTab(ui, p, this, new Runnable() { public void run() { dispatchSave(); } });
-        tabs[4] = new LogTab(ui, p, this);
+        tabs[0] = new PlayerTab(ui, p, this, new Runnable() { public void run() { dispatchSave(); } });
         voicePicker = new VoicePicker(ui, p, this);
         tabs[1] = new SpeakTab(ui, p, this, voicePicker);
-        tabs[2] = new SettingsTab(ui, p, this);
         engTab = new EngineTab(ui, p, this);
-        tabs[3] = engTab;
+        tabs[2] = engTab;
+        tabs[3] = new SettingsTab(ui, p, this);
         engTab.voicePicker = voicePicker;
         applyWindow();
         buildShell();
@@ -116,7 +109,6 @@ public class MainActivity extends Activity implements Tab.Host {
         tick.removeCallbacks(refresher);
         tick.post(refresher);
         Speaker.addListener(spkLsn);
-        LogBus.addSink(logLsn);
         dispatchSync();
     }
 
@@ -125,7 +117,6 @@ public class MainActivity extends Activity implements Tab.Host {
         super.onPause();
         tick.removeCallbacks(refresher);
         Speaker.removeListener(spkLsn);
-        LogBus.removeSink(logLsn);
         dispatchSave();
     }
 
@@ -179,7 +170,7 @@ public class MainActivity extends Activity implements Tab.Host {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(p.card);
         bar.setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6));
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < TAB_NAME.length; i++) {
             final int idx = i;
             TextView pill = new TextView(this);
             pill.setText(TAB_NAME[i]);
@@ -198,7 +189,7 @@ public class MainActivity extends Activity implements Tab.Host {
     }
 
     private void paintTabs() {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < TAB_NAME.length; i++) {
             boolean on = (i == tab);
             TextView t = tabName[i];
             if (t == null) continue;

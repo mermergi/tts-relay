@@ -23,8 +23,8 @@ import com.mermergi.ttsrelay.Speaker;
 import com.mermergi.ttsrelay.Ui;
 import com.mermergi.ttsrelay.ui.Widgets;
 
-/** 首页：状态大卡 + 统计 + 地址卡 + 快捷卡。 */
-public final class HomeTab implements Tab {
+/** 朗读页（主 tab）：状态大卡 + 统计 + 地址卡 + 快捷卡。 */
+public final class PlayerTab implements Tab {
     private final Ui ui;
     private final Palette p;
     private final Tab.Host host;
@@ -35,10 +35,7 @@ public final class HomeTab implements Tab {
     private TextView heroDot, heroStatus, heroSub;
     private Button toggleBtn, pauseBtn, muteBtn;
     private final TextView[] stat = new TextView[4];
-    private TextView addrView, lanAddrView;
-    private com.google.android.material.materialswitch.MaterialSwitch lanSwitch;
-
-    public HomeTab(Ui ui, Palette p, Tab.Host host, Runnable onSaveInputs) {
+    public PlayerTab(Ui ui, Palette p, Tab.Host host, Runnable onSaveInputs) {
         this.ui = ui;
         this.p = p;
         this.host = host;
@@ -96,11 +93,15 @@ public final class HomeTab implements Tab {
         muteBtn = ui.btnOnContainer("静音", new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
         });
+        Button replayB = ui.btnOnContainer("重念", new View.OnClickListener() {
+            public void onClick(View v) { replayLast(); }
+        });
         Button skipB = ui.btnOnContainer("下一句", new View.OnClickListener() {
             public void onClick(View v) { skipCurrent(); }
         });
         quick.addView(pauseBtn, ui.weightGap(1f, 8));
         quick.addView(muteBtn, ui.weightGap(1f, 8));
+        quick.addView(replayB, ui.weightGap(1f, 8));
         quick.addView(skipB, ui.weight(1f));
         hero.addView(quick);
         col.addView(hero);
@@ -121,44 +122,6 @@ public final class HomeTab implements Tab {
         }
         col.addView(stats);
 
-        // ── 地址卡 ──
-        LinearLayout ac = ui.card();
-        ac.addView(ui.sectionTitle("对话软件里填的 API 主机"));
-        addrView = new TextView(ctx);
-        addrView.setTextSize(14);
-        addrView.setTypeface(Typeface.MONOSPACE);
-        ac.addView(addrView);
-        lanAddrView = new TextView(ctx);
-        lanAddrView.setTextSize(12);
-        lanAddrView.setTypeface(Typeface.MONOSPACE);
-        lanAddrView.setTextColor(p.textSecondary);
-        lanAddrView.setPadding(0, ui.dp(4), 0, 0);
-        ac.addView(lanAddrView);
-
-        LinearLayout ab = ui.row();
-        ab.setLayoutParams(Widgets.topGap(ui, 12));
-        ab.addView(ui.btn("复制本机地址", true, new View.OnClickListener() {
-            public void onClick(View v) { host.copy("http://127.0.0.1:" + curPort(ctx) + "/v1"); }
-        }), ui.weightGap(1f, 8));
-        ab.addView(ui.btn("复制局域网地址", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                String ip = lanIp();
-                if (ip == null) { host.toast("没找到局域网 IP"); return; }
-                host.copy("http://" + ip + ":" + curPort(ctx) + "/v1");
-            }
-        }), ui.weight(1f));
-        ac.addView(ab);
-
-        lanSwitch = ui.switchBox("允许局域网访问");
-        lanSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton b, boolean checked) {
-                Prefs.setLanAllowed(ctx, checked);
-                host.toast(checked ? "已开启 —— 注意：局域网里谁都能用你的 key" : "已关闭");
-            }
-        });
-        ac.addView(lanSwitch);
-        col.addView(ac);
-
         // ── 快捷卡 ──
         LinearLayout tc = ui.card();
         tc.addView(ui.sectionTitle("快捷"));
@@ -168,12 +131,6 @@ public final class HomeTab implements Tab {
         }), ui.weightGap(1f, 8));
         tb.addView(ui.btn("自检", false, new View.OnClickListener() {
             public void onClick(View v) { Widgets.selfTest(ctx, curPort(ctx)); }
-        }), ui.weightGap(1f, 8));
-        tb.addView(ui.btn("清空日志", false, new View.OnClickListener() {
-            public void onClick(View v) {
-                LogBus.clear();
-                host.toast("日志已清空");
-            }
         }), ui.weight(1f));
         tc.addView(tb);
         col.addView(tc);
@@ -186,7 +143,6 @@ public final class HomeTab implements Tab {
         heroDot = null; heroStatus = null; heroSub = null;
         toggleBtn = null; pauseBtn = null; muteBtn = null;
         stat[0] = null; stat[1] = null; stat[2] = null; stat[3] = null;
-        addrView = null; lanAddrView = null; lanSwitch = null;
     }
 
     @Override
@@ -219,17 +175,6 @@ public final class HomeTab implements Tab {
         if (stat[2] != null) stat[2].setText(String.valueOf(spk == null ? 0 : spk.queued()));
         if (stat[3] != null) stat[3].setText(String.valueOf(spk == null ? 0 : spk.failedCount()));
 
-        if (addrView != null) addrView.setText("http://127.0.0.1:" + port + "/v1");
-        if (lanAddrView != null) {
-            String ip = lanIp();
-            lanAddrView.setText(ip == null
-                    ? "（没找到局域网 IP）"
-                    : "http://" + ip + ":" + port + "/v1"
-                    + (Prefs.lanAllowed(ctx) ? "  · 已开" : "  · 未开"));
-        }
-        if (lanSwitch != null && lanSwitch.isChecked() != Prefs.lanAllowed(ctx)) {
-            lanSwitch.setChecked(Prefs.lanAllowed(ctx));
-        }
     }
 
     private static String shortHost(String u) {
@@ -239,25 +184,6 @@ public final class HomeTab implements Tab {
     private static int curPort(Context ctx) {
         com.mermergi.ttsrelay.HttpServer srv = RelayService.serverOrNull();
         return (srv != null && srv.isRunning()) ? srv.port() : Prefs.port(ctx);
-    }
-
-    private static String lanIp() {
-        try {
-            java.util.Enumeration<java.net.NetworkInterface> ifs =
-                    java.net.NetworkInterface.getNetworkInterfaces();
-            while (ifs != null && ifs.hasMoreElements()) {
-                java.net.NetworkInterface ni = ifs.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) continue;
-                java.util.Enumeration<java.net.InetAddress> as = ni.getInetAddresses();
-                while (as.hasMoreElements()) {
-                    java.net.InetAddress a = as.nextElement();
-                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) {
-                        return a.getHostAddress();
-                    }
-                }
-            }
-        } catch (Throwable ignored) { }
-        return null;
     }
 
     private void toggle() {
@@ -302,6 +228,17 @@ public final class HomeTab implements Tab {
         if (spk == null) { host.toast("先启动中转"); return; }
         spk.skipCurrent();
         host.toast("已切到下一句");
+    }
+
+    /** 走神漏了那句？打回来重念一遍。 */
+    private void replayLast() {
+        Speaker spk = RelayService.speakerOrNull();
+        if (spk == null) { host.toast("先启动中转"); return; }
+        String last = spk.lastText();
+        if (last == null || last.length() == 0) { host.toast("还没念过"); return; }
+        spk.interrupt();
+        spk.feed(last);
+        host.toast("重念上一句");
     }
 
     private void openTtsServer(Context ctx) {
