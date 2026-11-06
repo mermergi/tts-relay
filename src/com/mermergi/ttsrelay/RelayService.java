@@ -57,6 +57,12 @@ public final class RelayService extends Service {
 
     public static RelayService instance() { return INSTANCE; }
 
+    /** 中转是否在跑（磁贴和通知都用它判断）。 */
+    public boolean serverUp() {
+        HttpServer h = server;
+        return h != null && h.isRunning();
+    }
+
     public static boolean isUp() {
         RelayService s = INSTANCE;
         return s != null && s.server != null && s.server.isRunning();
@@ -167,6 +173,7 @@ public final class RelayService extends Service {
         if (speaker != null) { speaker.stop(); speaker = null; }
         Prefs.setWanted(this, false);
         LogBus.add("中转已关闭");
+        RelayTile.requestRefresh(this);
     }
 
     public void updateNotification() {
