@@ -71,7 +71,7 @@ public final class VoicePicker {
 
     /** 「分角色朗读」卡：mvSwitch/modeBtn/roleBox 归这里管。 */
     public LinearLayout buildMultiVoiceCard(Context ctx) {
-        LinearLayout mc = ui.col();
+        LinearLayout mc = ui.card();
         mc.addView(ui.sectionTitle("分角色朗读"));
         mvSwitch = ui.switchBox("启用多语音\n关着就是一个音色念到底");
         mvSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
@@ -112,7 +112,7 @@ public final class VoicePicker {
 
     /** 「朗读用户消息」卡。 */
     public LinearLayout buildUserMsgCard(Context ctx) {
-        LinearLayout uc = ui.col();
+        LinearLayout uc = ui.card();
         uc.addView(ui.sectionTitle("朗读用户消息"));
         speakUserSwitch = ui.switchBox("念我自己发出去的那条");
         speakUserSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {

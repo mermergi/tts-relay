@@ -151,8 +151,9 @@ public final class Ui {
         LinearLayout head = new LinearLayout(ctx);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(0, dp(6), 0, dp(6));
+        head.setPadding(dp(4), 0, dp(4), 0);
         TextView t = sectionTitle(title);
+        t.setPadding(0, 0, 0, 0);
         t.setLayoutParams(new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         final TextView arrow = new TextView(ctx);

@@ -182,23 +182,36 @@ public final class SettingsTab implements Tab {
         col.addView(kc, Widgets.topGap(ui, 14));
 
         // ═══ 备份 / 恢复 ═══
-        LinearLayout bc = new LinearLayout(ctx);
-        bc.setOrientation(LinearLayout.VERTICAL);
-        bc.addView(ui.sectionTitle("备份与恢复"));
-        bc.addView(ui.label("全部设置 + 引擎 + 音色表打进一个 JSON。恢复会覆盖现有配置。"));
-        LinearLayout brow = new LinearLayout(ctx);
-        brow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout bc = ui.foldCard(ctx, "备份与恢复");
+        LinearLayout foldBc = ui.foldBody;
+        foldBc.addView(ui.label("全部设置 + 引擎 + 音色表打进一个 JSON。恢复会覆盖现有配置。"));
+        LinearLayout brow = ui.row();
         brow.addView(ui.btn("导出备份", false, new View.OnClickListener() {
             public void onClick(View v) { exportBackup(); }
-        }));
-        TextView gap = new TextView(ctx);
-        gap.setMinWidth(ui.dp(10));
-        brow.addView(gap);
+        }), ui.weightGap(1f, 8));
         brow.addView(ui.btn("导入备份", false, new View.OnClickListener() {
             public void onClick(View v) { importBackup(); }
-        }));
-        bc.addView(brow, Widgets.topGap(ui, 8));
+        }), ui.weight(1f));
+        foldBc.addView(brow, Widgets.topGap(ui, 8));
         col.addView(bc);
+
+        // ═══ 排障 ═══
+        LinearLayout dbg = ui.foldCard(ctx, "排障");
+        LinearLayout foldDbg = ui.foldBody;
+        LinearLayout dbrow = ui.row();
+        dbrow.addView(ui.btn("运行日志", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                ctx.startActivity(new android.content.Intent(ctx, com.mermergi.ttsrelay.LogActivity.class));
+            }
+        }), ui.weightGap(1f, 8));
+        dbrow.addView(ui.btn("清空日志", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                com.mermergi.ttsrelay.LogBus.clear();
+                host.toast("日志已清空");
+            }
+        }), ui.weight(1f));
+        foldDbg.addView(dbrow, Widgets.topGap(ui, 8));
+        col.addView(dbg);
 
         return Widgets.scroll(ctx, ui, col);
     }
