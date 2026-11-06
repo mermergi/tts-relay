@@ -21,10 +21,16 @@ public class RelayTile extends TileService {
         boolean on = serverUp();
         Intent i = new Intent(this, RelayService.class);
         i.setAction(on ? RelayService.ACTION_STOP : RelayService.ACTION_START);
-        // 磁贴点击自带短暂前台资格，startForegroundService 两条路都稳
         if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
-        refresh();   // 乐观翻面；服务的 requestListeningState 随后纠偏
+        // 乐观翻面：立刻显示期望态。服务起来后 updateNotification 检测到
+        // 运行状态翻转会再叫一次 onStartListening 纠偏 —— 面板开着也能实时变色
+        Tile t = getQsTile();
+        if (t != null) {
+            t.setState(on ? Tile.STATE_INACTIVE : Tile.STATE_ACTIVE);
+            t.setSubtitle(on ? "已停止" : "启动中…");
+            t.updateTile();
+        }
     }
 
     /** 服务起停时喊一声，磁贴状态立刻跟上（配 RelayService.notifyTile()）。 */

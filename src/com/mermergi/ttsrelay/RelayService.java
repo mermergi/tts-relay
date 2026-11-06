@@ -173,13 +173,19 @@ public final class RelayService extends Service {
         if (speaker != null) { speaker.stop(); speaker = null; }
         Prefs.setWanted(this, false);
         LogBus.add("中转已关闭");
-        RelayTile.requestRefresh(this);
+        updateNotification();
     }
+
+    private Boolean tileUp;   // 上次叫磁贴时的状态；null = 没叫过
 
     public void updateNotification() {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
         boolean up = server != null && server.isRunning();
+        if (tileUp == null || tileUp != up) {
+            tileUp = up;
+            RelayTile.requestRefresh(this);   // 运行状态翻转时让磁贴跟色（HTTP/通知/磁贴任何入口都覆盖）
+        }
         StringBuilder sb = new StringBuilder();
         String title, text;
         if (!up) {
