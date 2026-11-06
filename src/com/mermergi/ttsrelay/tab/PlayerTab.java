@@ -96,7 +96,7 @@ public final class PlayerTab implements Tab {
         Button replayB = ui.btnOnContainer("重念", new View.OnClickListener() {
             public void onClick(View v) { replayLast(); }
         });
-        Button skipB = ui.btnOnContainer("下一句", new View.OnClickListener() {
+        Button skipB = ui.btnOnContainer("下句", new View.OnClickListener() {
             public void onClick(View v) { skipCurrent(); }
         });
         quick.addView(pauseBtn, ui.weightGap(1f, 8));
