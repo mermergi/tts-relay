@@ -66,7 +66,8 @@ for i in $(seq 1 15); do
     sleep 1
 done
 if [ -z "$up" ]; then
-    adb shell am start-foreground-service -n "$PKG/.RelayService" >/dev/null 2>&1 || true
+    # 服务没导出，shell 起不动 —— 走导出的 MainActivity 捎口信（ACTION_START → 代拉服务）
+    adb shell am start -n "$ACT" -a com.mermergi.ttsrelay.START >/dev/null 2>&1 || true
     for i in $(seq 1 10); do
         curl -sS --max-time 2 "$URL/_status" >/dev/null 2>&1 && up=1 && break
         sleep 1

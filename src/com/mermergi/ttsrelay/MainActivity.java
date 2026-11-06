@@ -103,6 +103,12 @@ public class MainActivity extends Activity implements Tab.Host {
     @Override
     protected void onResume() {
         super.onResume();
+        // 口信通道：adb/快捷方式发 ACTION_START 过来就当「要开中转」。
+        // 服务没导出，shell 起不了它；但 Activity 是导出的，同 uid 代发合法。
+        if (RelayService.ACTION_START.equals(getIntent().getAction())
+                && !RelayService.isUp()) {
+            Prefs.setWanted(this, true);
+        }
         // 上次是开着的就自动拉起来
         if (Prefs.wanted(this) && !RelayService.isUp()) {
             try { startForegroundService(new Intent(this, RelayService.class)); } catch (Throwable ignored) { }
