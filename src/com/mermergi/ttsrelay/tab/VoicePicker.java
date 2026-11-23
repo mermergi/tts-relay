@@ -104,7 +104,7 @@ public final class VoicePicker {
             }
         }), com.mermergi.ttsrelay.ui.Widgets.topGap(ui, 8));
         renderVoiceTable();
-        mc.addView(ui.btn("复制引导提示词（丢给酒馆）", false, new View.OnClickListener() {
+        mc.addView(ui.btn("复制引导提示词", false, new View.OnClickListener() {
             public void onClick(View v) { host.copy(GAL_PROMPT); }
         }), com.mermergi.ttsrelay.ui.Widgets.topGap(ui, 8));
         return mc;
@@ -171,19 +171,27 @@ public final class VoicePicker {
         mvSwitch = null; speakUserSwitch = null; modeBtn = null; userVoiceView = null; roleBox = null;
     }
 
-    /** 丢给酒馆的格式规范 —— 照搬插件那段，模型按 [角色名] 输出才能分角色。 */
+    /** 引导提示词 —— 与 MultiVoice 当前的解析/匹配规则一字对齐。 */
     private static final String GAL_PROMPT =
-            "# 格式输出规范\n"
-            + "**描写任何角色（主要角色、NPC、路人、旁白）说话时，必须严格遵守格式，对话单开一行**\n\n"
-            + "## 格式：\n[角色名][情感][场景]「对话内容」\n\n"
-            + "### 角色名：\n当前说话的人物名称。\n\n"
-            + "### 情感：\n每个角色只选一个最贴合的：温柔、开心、害羞、生气、烦躁、悲伤、心疼、"
-            + "害怕、紧张、厌恶、讽刺、惊讶、平静、无奈、调侃；没有合适的就写 [通常]。\n\n"
-            + "### 对话内容：\n用「」或 “” 包裹角色说出的台词。\n\n"
-            + "### 场景：\n可留空。\n\n"
-            + "## 格式示例：\n[小明][开心][春日公园]「今天的天气真好呢。」\n"
+            "# 分角色朗读输出规范\n"
+            + "\n## 台词行格式（三种任选，方括号用半角 [ ]）\n"
+            + "[角色名]「台词」\n"
+            + "[角色名][情感]「台词」\n"
+            + "[角色名][情感][场景]「台词」\n"
+            + "\n## 铁律\n"
+            + "1. 每句台词单开一行，行首第一个 [ ] 里写说话角色名。\n"
+            + "2. 角色名必须与绑定表中的名称**逐字一致**，匹配是精确匹配；同一角色全文用同一个名字，禁止变体、绰号、代称。\n"
+            + "3. **无标签文本一律按旁白处理**：旁白、动作、心理、环境、过渡描写全部不加任何标签，直接写普通段落。\n"
+            + "4. 不继承上一行角色：每个说话的行都必须自带角色名标签；旁白段落之后恢复对话时也要重新加标签。\n"
+            + "5. 台词用「」包裹（接受 “”）；台词里不要出现换行。\n"
+            + "6. 可以在一行开头连写多个标签指定备选：[角色名][别名]「台词」——角色名不匹配时会依次尝试后面的标签。\n"
+            + "\n## 情感标签（可选，最多一个）\n"
+            + "温柔 开心 害羞 生气 烦躁 悲伤 心疼 害怕 紧张 厌恶 讽刺 惊讶 平静 无奈 调侃；都不合适就不写。\n"
+            + "\n## 示例\n"
+            + "[小明][开心]「今天的天气真好呢。」\n"
             + "他悠闲地在公园中漫步，看着来往的人群。\n"
-            + "\n（旁白、动作、心理描写不要加标签，直接写就行，会被当成旁白念。）";
+            + "[小红][害羞]「那…要不要一起走？」\n"
+            + "\n注意：示例第二行无标签，会作为旁白朗读——这正是要求的行为。";
 
     public void pickVoice() { pickUserVoice = false; fetchVoicesAnd(null); }
     private void fetchVoicesAnd(final String role) {
