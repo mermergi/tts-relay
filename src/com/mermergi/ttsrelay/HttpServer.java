@@ -730,8 +730,9 @@ public final class HttpServer {
                 MultiVoice mvo = newMultiVoice(qs.get("as") == null ? "" : qs.get("as").trim());
                 boolean[] started = new boolean[]{false};
                 int[] sent = new int[]{0};
-                emit(mvo.feed(t), started, sent, true);
-                emit(mvo.flush(), started, sent, true);
+                final long myTurn = speakTurn;
+                emit(mvo.feed(t), started, sent, true, myTurn);
+                emit(mvo.flush(), started, sent, true, myTurn);
                 json(out, 200, "{\"ok\":true,\"parts\":" + sent[0] + "}");
             } else {
                 speaker.feed(t);
@@ -890,11 +891,22 @@ public final class HttpServer {
     }
 
     // ══════════════════════════ 转发 ══════════════════════════
+
+    /**
+     * 朗读轮次号。每来一个 /chat/completions 就 ++；轮次过期的流（上一条消息的
+     * SSE 还没吐完）不许再往朗读队列灌句子 —— 否则短间隔连发两条时，旧回复的
+     * 残句会插进新回复中间，角色音色前后对不上。
+     */
+    private volatile long speakTurn = 0;
     private void proxy(Socket sock, OutputStream out, String method, String path, String query,
                        Map<String, String> headers, byte[] body) throws IOException {
 
         boolean chat = path.endsWith("/chat/completions") && "POST".equals(method);
-        if (chat) lastChatBody = new String(body == null ? new byte[0] : body, StandardCharsets.UTF_8);
+        if (chat) {
+            lastChatBody = new String(body == null ? new byte[0] : body, StandardCharsets.UTF_8);
+            speakTurn++;                      // 新一轮对话：旧流的喂句资格到此为止
+        }
+        final long myTurn = speakTurn;
         Decision dec = chat ? decide(body) : new Decision(false, true, "非对话请求");
         boolean speak = dec.speak;
         // 用户自己发的那条（开关打开时）先念出来；念了的话，这一发的回复就接在后面排队，
@@ -955,7 +967,7 @@ public final class HttpServer {
             if (ct != null) outHeaders.put("Content-Type", ct);
 
             if (ct != null && ct.contains("text/event-stream")) {
-                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut && !spokeUser, dec.speaker);
+                streamSse(out, conn, code, outHeaders, speak, turnStarted, dec.cut && !spokeUser, dec.speaker, myTurn);
                 return;
             }
 
@@ -976,8 +988,8 @@ public final class HttpServer {
                             if (c instanceof String) {
                                 MultiVoice mv = newMultiVoice(dec.speaker);
                                 int[] sent = new int[]{0};
-                                emit(mv.feed((String) c), turnStarted, sent, dec.cut && !spokeUser);
-                                emit(mv.flush(), turnStarted, sent, dec.cut && !spokeUser);
+                                emit(mv.feed((String) c), turnStarted, sent, dec.cut && !spokeUser, myTurn);
+                                emit(mv.flush(), turnStarted, sent, dec.cut && !spokeUser, myTurn);
                                 if (sent[0] > 0) LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
                             }
                         }
@@ -997,7 +1009,7 @@ public final class HttpServer {
     /** 边转发边解析，客户端拿到的字节和上游一模一样。 */
     private void streamSse(OutputStream out, HttpURLConnection conn, int code,
                            Map<String, String> headers, boolean speak, boolean[] started,
-                           boolean cut, String who) throws IOException {
+                           boolean cut, String who, long myTurn) throws IOException {
         writeHead(out, code, headers, -1, true);
 
         InputStream in = conn.getInputStream();
@@ -1032,12 +1044,12 @@ public final class HttpServer {
             while ((nl = lineBuf.indexOf("\n")) >= 0) {
                 String l = lineBuf.substring(0, nl);
                 lineBuf.delete(0, nl + 1);
-                sseLine(l, mv, started, sent, cut);
+                sseLine(l, mv, started, sent, cut, myTurn);
             }
         }
         if (speak) {
-            if (lineBuf.length() > 0) sseLine(lineBuf.toString(), mv, started, sent, cut);
-            emit(mv.flush(), started, sent, cut);
+            if (lineBuf.length() > 0) sseLine(lineBuf.toString(), mv, started, sent, cut, myTurn);
+            emit(mv.flush(), started, sent, cut, myTurn);
             // 这条请求到底吐了几句正文？—— 和请求日志对起来就知道是哪一发在发声
             LogBus.add("↳ 本轮念出 " + sent[0] + " 句");
         }
@@ -1230,8 +1242,9 @@ public final class HttpServer {
      * 多语音时逐段查音色表：设成「不念」的角色直接丢掉（连打断都不算）。
      */
     private void emit(java.util.List<MultiVoice.Seg> segs, boolean[] started, int[] sent,
-                      boolean cut) {
+                      boolean cut, long myTurn) {
         if (segs == null || segs.isEmpty()) return;
+        if (myTurn != speakTurn) return;      // 轮次过期：这条流已经被新对话顶掉了，闭嘴
         for (MultiVoice.Seg seg : segs) {
             String voice = MultiVoice.voiceFor(ctx, seg);
             if (voice == null) continue;              // 这个角色设成了「不念」
@@ -1245,12 +1258,13 @@ public final class HttpServer {
         }
     }
 
-    private void sseLine(String line, MultiVoice mv, boolean[] started, int[] sent, boolean cut) {
+    private void sseLine(String line, MultiVoice mv, boolean[] started, int[] sent, boolean cut,
+                         long myTurn) {
         line = line.trim();
         if (!line.startsWith("data:")) return;
         String payload = line.substring(5).trim();
         if (payload.length() == 0 || "[DONE]".equals(payload)) {
-            emit(mv.flush(), started, sent, cut);
+            emit(mv.flush(), started, sent, cut, myTurn);
             return;
         }
         try {
@@ -1263,12 +1277,12 @@ public final class HttpServer {
                 JSONObject d = c.optJSONObject("delta");
                 if (d != null) {
                     Object v = d.opt("content");
-                    if (v instanceof String) emit(mv.feed((String) v), started, sent, cut);
+                    if (v instanceof String) emit(mv.feed((String) v), started, sent, cut, myTurn);
                 }
                 JSONObject m = c.optJSONObject("message");
                 if (m != null) {
                     Object v = m.opt("content");
-                    if (v instanceof String) emit(mv.feed((String) v), started, sent, cut);
+                    if (v instanceof String) emit(mv.feed((String) v), started, sent, cut, myTurn);
                 }
             }
         } catch (Throwable ignored) { }
