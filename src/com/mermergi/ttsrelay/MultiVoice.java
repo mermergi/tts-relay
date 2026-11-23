@@ -609,13 +609,11 @@ public final class MultiVoice {
             text = g.dialogue;
             r = isNarratorName(n) ? NARRATOR : DIALOGUE;
             if (isNarratorName(n)) n = K_NARRATOR;
-        } else if (turnName.length() > 0) {
-            // 群聊：没打标签，但这轮说话的人已经从前缀认出来了
-            n = turnName;
-            text = line;
-            r = DIALOGUE;
         } else {
-            n = K_NARRATOR;          // 没打标签的行 → 旁白（和插件一致）
+            // 没打标签的行 → 一律旁白。曾经这里会继承上一行的说话人（群聊模型
+            // 只写一次名字的偷懒格式），但模型在对话后跟旁白描写时不带标签，
+            // 旁白全被划给上个角色 —— 规则改成铁的：无标签 = 旁白。
+            n = K_NARRATOR;
             text = line;
             r = NARRATOR;
         }
