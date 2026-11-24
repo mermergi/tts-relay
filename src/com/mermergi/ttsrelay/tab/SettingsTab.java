@@ -33,6 +33,7 @@ public final class SettingsTab implements Tab {
     private com.google.android.material.materialswitch.MaterialSwitch skipSwitch, autoStartSwitch;
     private TextView themeBtn;
     private TextView addrView, lanAddrView;
+    private android.widget.EditText tryField;
     private android.widget.CompoundButton lanSwitch;
     private LinearLayout presetRow;
     private final List<TextView> presetChips = new ArrayList<TextView>();
@@ -211,6 +212,19 @@ public final class SettingsTab implements Tab {
             }
         }), ui.weight(1f));
         foldDbg.addView(dbrow, Widgets.topGap(ui, 8));
+        foldDbg.addView(ui.label("试听文本（试听和换音色都念这句）"));
+        tryField = ui.field("trytext", Prefs.TRY_DEF, android.text.InputType.TYPE_CLASS_TEXT);
+        foldDbg.addView(tryField);
+        LinearLayout trrow = ui.row();
+        trrow.addView(ui.btn("试听", false, new View.OnClickListener() {
+            public void onClick(View v) { testSpeak(ctx); }
+        }), ui.weightGap(1f, 8));
+        trrow.addView(ui.btn("引擎自检", false, new View.OnClickListener() {
+            public void onClick(View v) {
+                com.mermergi.ttsrelay.ui.Widgets.selfTest(ctx, curPort(ctx));
+            }
+        }), ui.weight(1f));
+        foldDbg.addView(trrow, Widgets.topGap(ui, 8));
         col.addView(dbg);
 
         return Widgets.scroll(ctx, ui, col);
@@ -358,6 +372,31 @@ public final class SettingsTab implements Tab {
         }
     }
 
+    /** 试听：按当前断句方案切块排队（原声音页逻辑，搬进设置）。 */
+    private void testSpeak(Context ctx) {
+        com.mermergi.ttsrelay.Speaker spk = com.mermergi.ttsrelay.RelayService.speakerOrNull();
+        if (spk == null) { host.toast("先启动中转"); return; }
+        if (tryField != null) {
+            String v = tryField.getText().toString().trim();
+            if (v.length() > 0) Prefs.setTryText(ctx, v);
+        }
+        String text = Prefs.tryText(ctx);
+        com.mermergi.ttsrelay.Splitter sp = new com.mermergi.ttsrelay.Splitter(
+                Prefs.maxChunk(ctx), 4, Prefs.splitMode(ctx));
+        java.util.List<String> parts = new java.util.ArrayList<String>();
+        for (int i = 0; i < text.length(); i++) {
+            parts.addAll(sp.feed(String.valueOf(text.charAt(i))));
+        }
+        parts.addAll(sp.flush());
+        for (String ps : parts) spk.feed(ps);
+        com.mermergi.ttsrelay.LogBus.add("试听 · 断句方案「"
+                + com.mermergi.ttsrelay.Splitter.modeName(Prefs.splitMode(ctx))
+                + "」切成 " + parts.size() + " 块：");
+        for (String x : parts) com.mermergi.ttsrelay.LogBus.add("   ▸ " + x);
+        host.toast("已排队（" + parts.size() + " 块，方案："
+                + com.mermergi.ttsrelay.Splitter.modeName(Prefs.splitMode(ctx)) + "）");
+    }
+
     private static int curPort(Context ctx) {
         com.mermergi.ttsrelay.HttpServer srv = com.mermergi.ttsrelay.RelayService.serverOrNull();
         return (srv != null && srv.isRunning()) ? srv.port() : Prefs.port(ctx);
@@ -486,6 +525,7 @@ public final class SettingsTab implements Tab {
     @Override
     public void syncInputs() {
         Context ctx = host.activity();
+        if (tryField != null) tryField.setText(Prefs.tryText(ctx));
         if (upstreamField != null) upstreamField.setText(Prefs.upstream(ctx));
         if (ttsField != null) ttsField.setText(Prefs.ttsBase(ctx));
         if (portField != null) portField.setText(String.valueOf(Prefs.port(ctx)));
@@ -525,7 +565,7 @@ public final class SettingsTab implements Tab {
         upstreamField = null; portField = null; ttsField = null;
         maxChunkField = null; skipKeyField = null; smallTokenField = null;
         skipSwitch = null; autoStartSwitch = null; themeBtn = null;
-        addrView = null; lanAddrView = null; lanSwitch = null;
+        addrView = null; lanAddrView = null; lanSwitch = null; tryField = null;
         presetChips.clear(); presetRow = null;
     }
 }

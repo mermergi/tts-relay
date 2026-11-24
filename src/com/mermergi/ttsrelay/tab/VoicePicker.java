@@ -506,6 +506,9 @@ public final class VoicePicker {
         drow.addView(ui.iconChip(R.drawable.ic_notif_play, new View.OnClickListener() {
             public void onClick(View x) { auditionQuiet(Prefs.voice(act())); }
         }));
+        drow.addView(ui.chip("编辑", false, new View.OnClickListener() {
+            public void onClick(View x) { openVoiceEditor(Prefs.voice(act())); }
+        }));
         roleBox.addView(drow, ui.topGap(6));
 
         for (final java.util.Map.Entry<String, String> e : m.entrySet()) {

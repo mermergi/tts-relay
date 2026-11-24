@@ -39,7 +39,7 @@ public final class SpeakTab implements Tab {
 
     private TextView voiceView, rateVal, pitchVal, volVal, previewOut;
     private SeekBar rateBar, pitchBar, volBar;
-    private EditText tryField, previewIn;
+    private EditText previewIn;
     private Button splitBtn;
     private boolean syncing = false;
 
@@ -52,39 +52,9 @@ public final class SpeakTab implements Tab {
         this.vp = vp;
     }
 
-    private static int curPort(Context ctx) {
-        com.mermergi.ttsrelay.HttpServer srv = RelayService.serverOrNull();
-        return (srv != null && srv.isRunning()) ? srv.port() : Prefs.port(ctx);
-    }
-
     @Override
     public View build(Context ctx) {
         LinearLayout col = ui.col();
-
-        // ── 音色 ──
-        LinearLayout vc = ui.card();
-        vc.addView(ui.sectionTitle("音色"));
-        voiceView = ui.value("");
-        voiceView.setTextColor(p.textSecondary);
-        voiceView.setPadding(0, 0, 0, ui.dp(12));
-        vc.addView(voiceView);
-
-        LinearLayout vb = ui.row();
-        vb.addView(ui.btn("选择音色", true, new View.OnClickListener() {
-            public void onClick(View v) { vp.pickVoice(); }
-        }), ui.weightGap(1f, 8));
-        vb.addView(ui.btn("试听", false, new View.OnClickListener() {
-            public void onClick(View v) { testSpeak(); }
-        }), ui.weightGap(1f, 8));
-        vb.addView(ui.btn("自检", false, new View.OnClickListener() {
-            public void onClick(View v) { Widgets.selfTest(act(), curPort(act())); }
-        }), ui.weight(1f));
-        vc.addView(vb);
-
-        vc.addView(ui.label("试听文本（试听和换音色都念这句）"));
-        tryField = ui.field("trytext", Prefs.TRY_DEF, InputType.TYPE_CLASS_TEXT);
-        vc.addView(tryField);
-        col.addView(vc);
 
         // ── 语调 ──
         LinearLayout tc = ui.card();
@@ -182,23 +152,6 @@ public final class SpeakTab implements Tab {
         }
         previewOut.setText(sb.toString());
     }
-    private void testSpeak() {
-        Speaker spk = RelayService.speakerOrNull();
-        if (spk == null) { host.toast("先启动中转"); return; }
-        saveInputs();
-        String text = Prefs.tryText(act());
-        Splitter sp = new Splitter(Prefs.maxChunk(act()), 4, Prefs.splitMode(act()));
-        List<String> parts = new ArrayList<String>();
-        for (int i = 0; i < text.length(); i++) {
-            parts.addAll(sp.feed(String.valueOf(text.charAt(i))));
-        }
-        parts.addAll(sp.flush());
-        for (String s : parts) spk.feed(s);
-        LogBus.add("试听 · 断句方案「" + Splitter.modeName(Prefs.splitMode(act()))
-                + "」切成 " + parts.size() + " 块：");
-        for (String x : parts) LogBus.add("   ▸ " + x);
-        host.toast("已排队（" + parts.size() + " 块，方案：" + Splitter.modeName(Prefs.splitMode(act())) + "）");
-    }
     private void pickSplitMode() {
         String[] names = new String[Splitter.MODE_COUNT];
         String[] descs = new String[Splitter.MODE_COUNT];
@@ -231,18 +184,11 @@ public final class SpeakTab implements Tab {
         vp.refresh();
     }
 
-    @Override
-    public void saveInputs() {
-        if (tryField != null) {
-            String v = tryField.getText().toString().trim();
-            if (v.length() > 0) Prefs.setTryText(act(), v);
-        }
-    }
+
 
     @Override
     public void syncInputs() {
         syncing = true;
-        if (tryField != null) tryField.setText(Prefs.tryText(act()));
         if (rateBar != null) {
             rateBar.setProgress(SliderRow.toneProg(Prefs.rate(act())));
             rateVal.setText(Prefs.rate(act()));
@@ -263,7 +209,6 @@ public final class SpeakTab implements Tab {
 
     @Override
     public void clearRefs() {
-        voiceView = null; tryField = null;
         rateVal = null; pitchVal = null; volVal = null;
         rateBar = null; pitchBar = null; volBar = null;
         splitBtn = null; previewIn = null; previewOut = null;
