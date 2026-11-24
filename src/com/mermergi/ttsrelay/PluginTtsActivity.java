@@ -355,10 +355,16 @@ public final class PluginTtsActivity extends Activity {
             if (origVoice.equals(Prefs.voice(this))) Prefs.setVoice(this, curVoice);
             if (origVoice.equals(Prefs.userVoice(this))) Prefs.setUserVoice(this, curVoice);
         }
-        EngineStore.setParamsForVoice(it, curVoice,
+        // 跨引擎换的音色：参数和语气数据记到音色主人引擎名下，本插件自己的
+        // 配置（voice/lang）不动 —— 不然这家插件被塞进别家音色，朗读两头污染。
+        String vOwner = EngineStore.ownerOfVoice(this, curVoice);
+        EngineStore.Item oi = (vOwner == null || vOwner.length() == 0)
+                ? it : EngineStore.get(this, vOwner);
+        if (oi == null) oi = it;
+        EngineStore.setParamsForVoice(oi, curVoice,
                 barVal(spdBar, 0.5f, 2.0f), barVal(volBar, 0f, 2.0f), barVal(pitBar, 0.5f, 2.0f));
         it.put("lang", curLocale);
-        it.put("voice", curVoice);
+        if (oi.id.equals(it.id)) it.put("voice", curVoice);
         EngineStore.put(this, it);
         // 插件界面上改的东西（豆包那个「语气」下拉存在 ttsrv.tts.data 里）也要存下来 ——
         // 而且是按音色存的：这个音色选了什么语气，下次还是它。
@@ -366,7 +372,7 @@ public final class PluginTtsActivity extends Activity {
             LogBus.add("页面保存：voice=[" + curVoice + "] bridge=" + (bridge != null)
                     + " data=" + (bridge == null ? "-" : bridge.ttsData()));
         } catch (Throwable ignored) { }
-        JsTtsEngine.persistData(this, it, curVoice, bridge);
+        JsTtsEngine.persistData(this, oi, curVoice, bridge);
         JsTtsEngine.clearVoices();
         toast("已保存");
         finish();
