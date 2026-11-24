@@ -496,20 +496,24 @@ public final class VoicePicker {
         dv.setTextSize(15);
         dv.setTypeface(Typeface.DEFAULT_BOLD);
         dcol.addView(dv);
-        TextView dn = new TextView(act());
-        dn.setText("默认音色 · 没绑到的角色和旁白都用它");
-        dn.setTextColor(p.textSecondary);
-        dn.setTextSize(12.5f);
-        dn.setPadding(0, ui.dp(3), 0, 0);
-        dcol.addView(dn);
         drow.addView(dcol, ui.weightGap(1f, 6));
-        drow.addView(ui.iconChip(R.drawable.ic_notif_play, new View.OnClickListener() {
+
+        ImageView dplay = ui.iconChip(R.drawable.ic_notif_play, null);
+        dplay.setOnClickListener(new View.OnClickListener() {
             public void onClick(View x) { auditionQuiet(Prefs.voice(act())); }
-        }));
+        });
+        LinearLayout.LayoutParams dplp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dplp.rightMargin = ui.dp(8);
+        drow.addView(dplay, dplp);
+
         drow.addView(ui.chip("编辑", false, new View.OnClickListener() {
             public void onClick(View x) { openVoiceEditor(Prefs.voice(act())); }
         }));
-        roleBox.addView(drow, ui.topGap(6));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dlp.topMargin = ui.dp(6);
+        roleBox.addView(drow, dlp);
 
         for (final java.util.Map.Entry<String, String> e : m.entrySet()) {
             final String voice = e.getKey();
