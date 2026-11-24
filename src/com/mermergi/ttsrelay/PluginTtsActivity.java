@@ -346,6 +346,15 @@ public final class PluginTtsActivity extends Activity {
                 Prefs.putVoiceNames(this, curVoice, sb.toString());
             }
         }
+        // 编辑器里换过音色：所有指着旧音色的绑定跟着搬 —— 角色表、默认音色、用户消息
+        if (origVoice != null && origVoice.length() > 0 && !origVoice.equals(curVoice)) {
+            for (java.util.Map.Entry<String, String> e
+                    : Prefs.voiceTableMap(this).entrySet()) {
+                if (origVoice.equals(e.getValue())) Prefs.putVoice(this, e.getKey(), curVoice);
+            }
+            if (origVoice.equals(Prefs.voice(this))) Prefs.setVoice(this, curVoice);
+            if (origVoice.equals(Prefs.userVoice(this))) Prefs.setUserVoice(this, curVoice);
+        }
         EngineStore.setParamsForVoice(it, curVoice,
                 barVal(spdBar, 0.5f, 2.0f), barVal(volBar, 0f, 2.0f), barVal(pitBar, 0.5f, 2.0f));
         it.put("lang", curLocale);
