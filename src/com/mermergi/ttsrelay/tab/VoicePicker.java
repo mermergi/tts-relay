@@ -47,6 +47,7 @@ public final class VoicePicker {
     private boolean pickUserVoice = false;
     /** 这次开音色库，是为了给新音色填名字（先选音色，再填名字）。 */
     private boolean pickForBind = false;
+    private boolean pickForDefault = false;
     /**
      * 「音色 → 名称」那张表里，面板正在编辑的是哪一条：
      * sheetOrig = 这条原来记在哪个音色名下（新加一条时是 null），
@@ -193,7 +194,12 @@ public final class VoicePicker {
             + "[小红][害羞]「那…要不要一起走？」\n"
             + "\n注意：示例第二行无标签，会作为旁白朗读——这正是要求的行为。";
 
-    public void pickVoice() { pickUserVoice = false; fetchVoicesAnd(null); }
+    public void pickVoice() {
+        pickUserVoice = false;
+        pickForBind = false;
+        pickForDefault = true;     // 和绑定表里的「默认音色」行完全同一条选择逻辑
+        fetchVoicesAnd(null);
+    }
     private void fetchVoicesAnd(final String role) {
         new Thread(new Runnable() {
             public void run() {
@@ -297,8 +303,19 @@ public final class VoicePicker {
         VoiceListAdapter ad = new VoiceListAdapter(p, ui, new VoiceListAdapter.Listener() {
             public void onPick(VoiceItem vi) {
                 if (vi == null || vi.header) return;
+                if (pickForDefault) {
+                    pickForDefault = false;
+                    Prefs.setVoiceEngine(act(), vi.raw,
+                            EngineStore.ownerOfVoice(act(), vi.raw));
+                    Prefs.setVoice(act(), vi.raw);
+                    dlg.dismiss();
+                    auditionQuiet(vi.raw);
+                    renderVoiceTable();
+                    return;
+                }
                 if (pickUserVoice) {
                     pickUserVoice = false;
+                    pickForDefault = false;
                     Prefs.setUserVoice(act(), vi.raw);
                     renderUserVoice();
                     dlg.dismiss();
@@ -307,6 +324,7 @@ public final class VoicePicker {
                 }
                 if (pickForBind) {
                     pickForBind = false;
+                    pickForDefault = false;
                     dlg.dismiss();
                     String carry = bindCarry;
                     bindCarry = null;
@@ -455,6 +473,41 @@ public final class VoicePicker {
             roleBox.addView(ui.hint("还没配"));
             return;
         }
+        // ── 默认音色行：和角色行同一套选音色逻辑，只是写的是全局默认 ──
+        LinearLayout drow = ui.row();
+        drow.setGravity(Gravity.CENTER_VERTICAL);
+        drow.setPadding(ui.dp(14), ui.dp(11), ui.dp(10), ui.dp(11));
+        drow.setBackground(ui.pressable(p.cardHi, p.ripple, 14, p.border));
+        drow.setClickable(true);
+        drow.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View x) {
+                pickUserVoice = false;
+                pickForBind = false;
+                pickForDefault = true;
+                fetchVoicesAnd(null);
+            }
+        });
+        LinearLayout dcol = ui.col();
+        TextView dv = new TextView(act());
+        String cur = Prefs.voiceTableMap(act()).get("默认");
+        if (cur == null || cur.trim().length() == 0) cur = Prefs.voice(act());
+        dv.setText(TtsEngine.shortVoice(cur));
+        dv.setTextColor(p.accent);
+        dv.setTextSize(15);
+        dv.setTypeface(Typeface.DEFAULT_BOLD);
+        dcol.addView(dv);
+        TextView dn = new TextView(act());
+        dn.setText("默认音色 · 没绑到的角色和旁白都用它");
+        dn.setTextColor(p.textSecondary);
+        dn.setTextSize(12.5f);
+        dn.setPadding(0, ui.dp(3), 0, 0);
+        dcol.addView(dn);
+        drow.addView(dcol, ui.weightGap(1f, 6));
+        drow.addView(ui.iconChip(R.drawable.ic_notif_play, new View.OnClickListener() {
+            public void onClick(View x) { auditionQuiet(Prefs.voice(act())); }
+        }));
+        roleBox.addView(drow, ui.topGap(6));
+
         for (final java.util.Map.Entry<String, String> e : m.entrySet()) {
             final String voice = e.getKey();
             LinearLayout row = ui.row();
