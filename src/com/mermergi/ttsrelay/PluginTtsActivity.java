@@ -246,44 +246,76 @@ public final class PluginTtsActivity extends Activity {
         }
         voiceRow.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                final java.util.List<VoiceItem> items = new java.util.ArrayList<VoiceItem>();
-                EngineStore.SourceGroup g = new EngineStore.SourceGroup(
-                        it == null ? "" : it.id,
-                        it == null ? "插件" : it.s("name", "插件"));
-                for (String[] x : vs) {
-                    VoiceItem vi = new VoiceItem(x[0], x[1]);
-                    vi.srcId = g.id;
-                    vi.srcLabel = g.label;
-                    vi.tagLine = x[0];
-                    items.add(vi);
-                    g.voices.add(x[1]);
-                }
-                java.util.List<EngineStore.SourceGroup> groups =
-                        new java.util.ArrayList<EngineStore.SourceGroup>();
-                groups.add(g);
-                VoicePickerSheet.show(PluginTtsActivity.this, ui, p,
-                        p.light ? R.style.AppBottomSheet_Light : R.style.AppBottomSheet,
-                        "选择音色", items, groups, new VoiceListAdapter.Listener() {
-                            public void onPick(VoiceItem vi) {
-                                curVoice = vi.raw;
-                                voiceVal.setText(vi.name);
-                                // 换音色 = 换一套"每音色数据"，重开宿主让插件界面显示这个音色的语气
-                                loadPluginAsync();
-                            }
-
-                            public void onAudition(VoiceItem vi) {
-                                Speaker spk = RelayService.speakerOrNull();
-                                if (spk == null) {
-                                    Toast.makeText(PluginTtsActivity.this,
-                                            "朗读没在跑（先打开中转）", Toast.LENGTH_SHORT).show();
-                                    return;
+                // 和声音页完全同一份数据：所有启用中的引擎按来源分组，侧栏才全
+                new Thread(new Runnable() {
+                    public void run() {
+                        final java.util.List<VoiceItem> items =
+                                new java.util.ArrayList<VoiceItem>();
+                        final java.util.List<EngineStore.SourceGroup> groups;
+                        try {
+                            groups = EngineStore.voicesByEngine(PluginTtsActivity.this);
+                            for (EngineStore.SourceGroup g : groups) {
+                                for (String raw : g.voices) {
+                                    VoiceItem vi = VoiceItem.parse(raw);
+                                    vi.srcId = g.id;
+                                    vi.srcLabel = g.label;
+                                    java.util.List<String> roles =
+                                            EngineStore.rolesUsingVoice(PluginTtsActivity.this, raw);
+                                    StringBuilder rb = new StringBuilder();
+                                    for (String r : roles) {
+                                        if (rb.length() > 0) rb.append("、");
+                                        rb.append(r);
+                                    }
+                                    vi.usedBy = rb.length() > 8 ? roles.size() + " 个角色"
+                                            : rb.toString();
+                                    items.add(vi);
                                 }
-                                Prefs.setVoiceEngine(PluginTtsActivity.this, vi.raw,
-                                        EngineStore.ownerOfVoice(PluginTtsActivity.this, vi.raw));
-                                spk.interrupt();
-                                spk.feed(Prefs.tryText(PluginTtsActivity.this), vi.raw);
+                            }
+                        } catch (Throwable t) {
+                            final String m = String.valueOf(t.getMessage());
+                            runOnUiThread(new Runnable() {
+                                public void run() {
+                                    Toast.makeText(PluginTtsActivity.this,
+                                            "拉取失败：" + m, Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                            return;
+                        }
+                        runOnUiThread(new Runnable() {
+                            public void run() {
+                                VoicePickerSheet.show(PluginTtsActivity.this, ui, p,
+                                        p.light ? R.style.AppBottomSheet_Light
+                                                : R.style.AppBottomSheet,
+                                        "选择音色", items, groups,
+                                        new VoiceListAdapter.Listener() {
+                                            public void onPick(VoiceItem vi) {
+                                                curVoice = vi.raw;
+                                                voiceVal.setText(vi.name);
+                                                // 换音色 = 换一套"每音色数据"，重开宿主让插件界面显示这个音色的语气
+                                                loadPluginAsync();
+                                            }
+
+                                            public void onAudition(VoiceItem vi) {
+                                                Speaker spk = RelayService.speakerOrNull();
+                                                if (spk == null) {
+                                                    Toast.makeText(PluginTtsActivity.this,
+                                                            "朗读没在跑（先打开中转）",
+                                                            Toast.LENGTH_SHORT).show();
+                                                    return;
+                                                }
+                                                Prefs.setVoiceEngine(PluginTtsActivity.this,
+                                                        vi.raw,
+                                                        EngineStore.ownerOfVoice(
+                                                                PluginTtsActivity.this, vi.raw));
+                                                spk.interrupt();
+                                                spk.feed(Prefs.tryText(PluginTtsActivity.this),
+                                                        vi.raw);
+                                            }
+                                        });
                             }
                         });
+                    }
+                }).start();
             }
         });
     }
