@@ -334,11 +334,14 @@ public final class PluginTtsActivity extends Activity {
         } catch (Throwable ignored) { }
     }
 
-    /** 当前音色的主人引擎 —— 跨引擎音色的参数/语气数据都归它管。 */
+    /** 当前音色的主人引擎 —— 跨引擎音色的参数/语气数据都归它管。
+        主人就是本引擎时**必须返回 it 本身**：EngineStore.get 每次都重新解析，
+        拿回来的是另一个实例，参数写它身上、落盘的却是 it —— 保存完就被冲掉。 */
     private EngineStore.Item ownerItem() {
         String o = EngineStore.ownerOfVoice(this, curVoice);
         EngineStore.Item oi = (o == null || o.length() == 0) ? it : EngineStore.get(this, o);
-        return oi == null ? it : oi;
+        if (oi == null || oi.id.equals(it.id)) return it;
+        return oi;
     }
 
     private void save() {
@@ -387,7 +390,7 @@ public final class PluginTtsActivity extends Activity {
     protected void onPause() {
         super.onPause();
         // 直接按返回键离开也要把插件界面上的选择留下（保存按钮只是"我确信"一下）
-        try { JsTtsEngine.persistData(this, it, curVoice, bridge); } catch (Throwable ignored) { }
+        try { JsTtsEngine.persistData(this, ownerItem(), curVoice, bridge); } catch (Throwable ignored) { }
     }
 
     /** 一条滑杆：progress 0..100，0 = 跟随；其余按 [lo, hi] 线性映射。 */
