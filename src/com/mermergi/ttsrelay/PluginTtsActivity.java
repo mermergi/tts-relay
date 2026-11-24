@@ -141,7 +141,7 @@ public final class PluginTtsActivity extends Activity {
         col.addView(voiceRow, ui.topGap(8));
 
         col.addView(ui.label("语速 / 音量 / 音高"), ui.topGap(14));
-        float[] pv = EngineStore.paramsForVoice(it, curVoice);
+        float[] pv = EngineStore.paramsForVoice(ownerItem(), curVoice);
         spdBar = paramBar(0.5f, 2.0f, pv[0], 1.0f);
         volBar = paramBar(0f, 2.0f, pv[1], 1.0f);
         pitBar = paramBar(0.5f, 2.0f, pv[2], 1.0f);
@@ -334,6 +334,13 @@ public final class PluginTtsActivity extends Activity {
         } catch (Throwable ignored) { }
     }
 
+    /** 当前音色的主人引擎 —— 跨引擎音色的参数/语气数据都归它管。 */
+    private EngineStore.Item ownerItem() {
+        String o = EngineStore.ownerOfVoice(this, curVoice);
+        EngineStore.Item oi = (o == null || o.length() == 0) ? it : EngineStore.get(this, o);
+        return oi == null ? it : oi;
+    }
+
     private void save() {
         String nm = nameBox.getText().toString().trim();
         java.util.List<String> list = MultiVoice.splitNames(nm);
@@ -357,15 +364,13 @@ public final class PluginTtsActivity extends Activity {
         }
         // 跨引擎换的音色：参数和语气数据记到音色主人引擎名下，本插件自己的
         // 配置（voice/lang）不动 —— 不然这家插件被塞进别家音色，朗读两头污染。
-        String vOwner = EngineStore.ownerOfVoice(this, curVoice);
-        EngineStore.Item oi = (vOwner == null || vOwner.length() == 0)
-                ? it : EngineStore.get(this, vOwner);
-        if (oi == null) oi = it;
+        EngineStore.Item oi = ownerItem();
         EngineStore.setParamsForVoice(oi, curVoice,
                 barVal(spdBar, 0.5f, 2.0f), barVal(volBar, 0f, 2.0f), barVal(pitBar, 0.5f, 2.0f));
         it.put("lang", curLocale);
         if (oi.id.equals(it.id)) it.put("voice", curVoice);
         EngineStore.put(this, it);
+        if (!oi.id.equals(it.id)) EngineStore.put(this, oi);   // 主人引擎的参数也要落盘
         // 插件界面上改的东西（豆包那个「语气」下拉存在 ttsrv.tts.data 里）也要存下来 ——
         // 而且是按音色存的：这个音色选了什么语气，下次还是它。
         try {
