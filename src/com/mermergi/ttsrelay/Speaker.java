@@ -549,8 +549,18 @@ public final class Speaker {
                     beat("起播流");
                     Handler hp = playH;
                     if (hp != null) hp.post(playNext);       // 队列里刚有东西：叫醒播放线程
+                    // 一个字节都没吐过的流，不享受"有声音在播就慢慢等"的宽限：
+                    // 那是宿主死了（跨引擎换声时两条会话互相踢），拖着只会白静音几十秒。
+                    // 8 秒没动静就判死 → 丢宿主重试，静音洞压到最小。
+                    final HardCall.Clock streamClock = new HardCall.Clock() {
+                        public long lastActivity() { return pluginClock.lastActivity(); }
+                        public boolean hasLead() {
+                            if (la.available() <= 0) return false;
+                            return pluginClock.hasLead();
+                        }
+                    };
                     HardCall.runIdle("合成", 8000L, 90000L, synthWait, Math.max(synthWait * 3, 120000L),
-                            pluginClock, new HardCall.Job<byte[]>() {
+                            streamClock, new HardCall.Job<byte[]>() {
                         public byte[] run() throws Throwable {
                             EngineStore.synthTo(ctx, text_safe(job.text), job.voice, new AudioSink() {
                                 public void chunk(byte[] b, int o, int l) { la.chunk(b, o, l); }
