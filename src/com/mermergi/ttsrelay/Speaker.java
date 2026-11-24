@@ -606,25 +606,32 @@ public final class Speaker {
             }
             if (data == null) {
                 if (timedOut) {
-                    // 这不是"慢"，是"吊住了"（宿主里的 WebSocket 会话废了）。
-                    // 丢掉那个宿主，立刻用新宿主重试同一句 —— 既不用等第二次超时，
-                    // 也不至于平白少念一句。
-                    EngineStore.abandonPluginHosts();
-                    if (curTimeouts == 0) {
-                        curTimeouts++;
-                        LogBus.error("⏱ " + err + " —— 丢掉它、换新宿主重试这一句：「"
+                    // 三振出局：宿主重建 + 握手要十几秒，一超时就丢宿主，
+                    // 下一句永远赶不上 8 秒窗口 —— 级联丢句。所以：
+                    //   第 1 次超时：宿主留着直接重试（让它把握手跑完）
+                    //   第 2 次超时：才丢宿主重建
+                    //   第 3 次超时：真不行，略过这句
+                    if (curTimeouts >= 2) {
+                        failed.incrementAndGet();
+                        LogBus.error("⏱ " + err + " —— 三振出局，略过这句：「"
                                 + head(cur.text, 16) + "」");
-                        continue;                          // cur 留着
+                        cur = null;
+                        curTimeouts = 0;
+                        curFails = 0;
+                        curTries = 0;
+                        failStreak = 0;
+                        continue;
                     }
-                    failed.incrementAndGet();
-                    LogBus.error("⏱ " + err + " —— 换过宿主还是不行，略过这句：「"
-                            + head(cur.text, 16) + "」");
-                    cur = null;
-                    curTimeouts = 0;
-                    curFails = 0;
-                    curTries = 0;
-                    failStreak = 0;
-                    continue;
+                    if (curTimeouts == 1) {
+                        EngineStore.abandonPluginHosts();  // 第二次才动宿主
+                        LogBus.error("⏱ " + err + " —— 丢掉宿主、换新宿主重试这一句：「"
+                                + head(cur.text, 16) + "」");
+                    } else {
+                        LogBus.error("⏱ " + err + " —— 宿主留着，原地重试这一句：「"
+                                + head(cur.text, 16) + "」");
+                    }
+                    curTimeouts++;
+                    continue;                              // cur 留着
                 }
                 if (err != null && my == gen) {
                     boolean conn = isConnErr(err);
