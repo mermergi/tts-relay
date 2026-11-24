@@ -21,6 +21,7 @@ import com.mermergi.ttsrelay.ChoiceSheet;
 import com.mermergi.ttsrelay.EngineStore;
 import com.mermergi.ttsrelay.MultiVoice;
 import com.mermergi.ttsrelay.Palette;
+import com.mermergi.ttsrelay.VoicePickerSheet;
 import com.mermergi.ttsrelay.R;
 import com.mermergi.ttsrelay.Prefs;
 import com.mermergi.ttsrelay.PluginTtsActivity;
@@ -238,143 +239,57 @@ public final class VoicePicker {
             }
         }).start();
     }
-    private void showVoiceDialog(final List<VoiceItem> all, final List<EngineStore.SourceGroup> groups,
-                                 final String role) {
+    private void showVoiceDialog(final List<VoiceItem> all,
+                                 final List<EngineStore.SourceGroup> groups, final String role) {
         if (all.isEmpty()) { host.toast("没拿到音色"); return; }
         String who = role == null ? "选择音色" : "给「" + role + "」选音色";
-
-        LinearLayout box = ui.col();
-        box.setBackground(ui.sheetBg());
-        box.setPadding(ui.dp(16), 0, ui.dp(16), ui.dp(10));
-
-        TextView title = new TextView(act());
-        title.setText(who);
-        title.setTextColor(p.textPrimary);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(title);
-
-        final EditText filter = new EditText(act());
-        filter.setHint("搜：名字 / 女声 / 青年 / 温柔…");
-        filter.setSingleLine(true);
-        filter.setTextColor(p.textPrimary);
-        filter.setHintTextColor(p.textMuted);
-        filter.setTextSize(14);
-        filter.setBackground(ui.round(p.cardHi, p.border, 12));
-        filter.setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10));
-        box.addView(filter);
-
-        final LinearLayout chips = ui.row();
-        chips.setPadding(0, ui.dp(10), 0, ui.dp(2));
-        box.addView(chips);
-
-        final RecyclerView rv = new RecyclerView(act());
-        rv.setLayoutManager(new LinearLayoutManager(act()));
-        rv.setClipToPadding(false);
-        rv.setPadding(0, ui.dp(2), 0, ui.dp(6));
-
-        // ── 左边那一栏：按来源引擎分类 ──
-        final LinearLayout rail = ui.col();
-        rail.setPadding(0, ui.dp(4), ui.dp(8), 0);
-        ScrollView railScroll = new ScrollView(act());
-        railScroll.addView(rail);
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ui.dp(104),
-                ViewGroup.LayoutParams.MATCH_PARENT);
-        railScroll.setLayoutParams(rlp);
-
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(0, ui.dp(430), 1f);
-        vlp.topMargin = ui.dp(4);
-        rv.setLayoutParams(vlp);
-
-        LinearLayout mid = ui.row();
-        mid.addView(railScroll);
-        mid.addView(rv);
-        box.addView(mid);
-
-        final String[] kw = new String[]{""};
-        final String[] gen = new String[]{""};
-        final String[] src = new String[]{""};
-        final List<VoiceItem> rows = new ArrayList<VoiceItem>();
-
-        final com.google.android.material.bottomsheet.BottomSheetDialog dlg =
-                new com.google.android.material.bottomsheet.BottomSheetDialog(act(), host.sheetTheme());
-        dlg.setContentView(box);
-
-        VoiceListAdapter ad = new VoiceListAdapter(p, ui, new VoiceListAdapter.Listener() {
-            public void onPick(VoiceItem vi) {
-                if (vi == null || vi.header) return;
-                if (pickForDefault) {
-                    pickForDefault = false;
-                    Prefs.setVoiceEngine(act(), vi.raw,
-                            EngineStore.ownerOfVoice(act(), vi.raw));
-                    Prefs.setVoice(act(), vi.raw);
-                    dlg.dismiss();
-                    auditionQuiet(vi.raw);
-                    renderVoiceTable();
-                    return;
-                }
-                if (pickUserVoice) {
-                    pickUserVoice = false;
-                    pickForDefault = false;
-                    Prefs.setUserVoice(act(), vi.raw);
-                    renderUserVoice();
-                    dlg.dismiss();
-                    auditionQuiet(vi.raw);
-                    return;
-                }
-                if (pickForBind) {
-                    pickForBind = false;
-                    pickForDefault = false;
-                    dlg.dismiss();
-                    String carry = bindCarry;
-                    bindCarry = null;
-                    if (sheetOrig == null) {
-                        newBinding(vi.raw);         // ＋ 加一个音色：先选音色 → 紧接着填名字
-                    } else {
-                        sheetVoice = vi.raw;        // 换音色：还是这一条，只是换个嗓子
-                        showBindSheet(carry);
+        // 与「编辑插件 TTS」页共用同一个选择音色页面
+        VoicePickerSheet.show(act(), ui, p, host.sheetTheme(), who, all, groups,
+                new VoiceListAdapter.Listener() {
+                    public void onPick(VoiceItem vi) {
+                        if (vi == null || vi.header) return;
+                        if (pickForDefault) {
+                            pickForDefault = false;
+                            Prefs.setVoiceEngine(act(), vi.raw,
+                                    EngineStore.ownerOfVoice(act(), vi.raw));
+                            Prefs.setVoice(act(), vi.raw);
+                            auditionQuiet(vi.raw);
+                            renderVoiceTable();
+                            return;
+                        }
+                        if (pickUserVoice) {
+                            pickUserVoice = false;
+                            pickForDefault = false;
+                            Prefs.setUserVoice(act(), vi.raw);
+                            renderUserVoice();
+                            auditionQuiet(vi.raw);
+                            return;
+                        }
+                        if (pickForBind) {
+                            pickForBind = false;
+                            pickForDefault = false;
+                            String carry = bindCarry;
+                            bindCarry = null;
+                            if (sheetOrig == null) {
+                                newBinding(vi.raw);     // ＋ 加一个音色：先选音色 → 紧接着填名字
+                            } else {
+                                sheetVoice = vi.raw;    // 换音色：还是这一条，只是换个嗓子
+                                showBindSheet(carry);
+                            }
+                            return;
+                        }
+                        Prefs.setVoiceEngine(act(), vi.raw,
+                                EngineStore.ownerOfVoice(act(), vi.raw));
+                        Prefs.setVoice(act(), vi.raw);
+                        audition(vi.raw);
+                        refresh();
                     }
-                    return;
-                }
-                Prefs.setVoiceEngine(act(), vi.raw,
-                        EngineStore.ownerOfVoice(act(), vi.raw));
-                Prefs.setVoice(act(), vi.raw);
-                dlg.dismiss();
-                audition(vi.raw);
-                refresh();
-            }
 
-            public void onAudition(VoiceItem vi) {
-                if (vi == null || vi.header) return;
-                auditionQuiet(vi.raw);
-            }
-        });
-        rv.setAdapter(ad);
-
-        final Runnable refill = new Runnable() {
-            public void run() {
-                fillVoiceList(rows, all, kw[0], gen[0], src[0]);
-                ad.submitList(new ArrayList<VoiceItem>(rows));
-            }
-        };
-        renderGenderChips(chips, gen, refill);
-        renderSourceRail(rail, groups, all, src, refill, rv);
-        refill.run();
-
-        filter.addTextChangedListener(new TextWatcher() {
-            public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
-            public void onTextChanged(CharSequence s, int a, int b, int c) { }
-            public void afterTextChanged(Editable e) {
-                kw[0] = e.toString().trim();
-                refill.run();
-            }
-        });
-
-        dlg.show();
-        try {   // 起来就是全展开（不是先露出一个 peek）
-            dlg.getBehavior().setSkipCollapsed(true);
-            dlg.getBehavior().setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
-        } catch (Throwable ignored) { }
+                    public void onAudition(VoiceItem vi) {
+                        if (vi == null || vi.header) return;
+                        auditionQuiet(vi.raw);
+                    }
+                });
     }
     private static List<String> splitNames(String s) {
         List<String> out = new ArrayList<String>();

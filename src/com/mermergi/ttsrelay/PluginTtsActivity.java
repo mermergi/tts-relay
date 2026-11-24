@@ -246,20 +246,42 @@ public final class PluginTtsActivity extends Activity {
         }
         voiceRow.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                String[] names = new String[vs.size()];
-                int cur = 0;
-                for (int i = 0; i < vs.size(); i++) {
-                    names[i] = vs.get(i)[0];
-                    if (vs.get(i)[1].equals(curVoice)) cur = i;
+                final java.util.List<VoiceItem> items = new java.util.ArrayList<VoiceItem>();
+                EngineStore.SourceGroup g = new EngineStore.SourceGroup(
+                        it == null ? "" : it.id,
+                        it == null ? "插件" : it.s("name", "插件"));
+                for (String[] x : vs) {
+                    VoiceItem vi = new VoiceItem(x[0], x[1]);
+                    vi.srcId = g.id;
+                    vi.srcLabel = g.label;
+                    vi.tagLine = x[0];
+                    items.add(vi);
+                    g.voices.add(x[1]);
                 }
-                ChoiceSheet.show(PluginTtsActivity.this, ui, p,
+                java.util.List<EngineStore.SourceGroup> groups =
+                        new java.util.ArrayList<EngineStore.SourceGroup>();
+                groups.add(g);
+                VoicePickerSheet.show(PluginTtsActivity.this, ui, p,
                         p.light ? R.style.AppBottomSheet_Light : R.style.AppBottomSheet,
-                        "声音", null, names, null, cur, new ChoiceSheet.OnPick() {
-                            public void onPick(int i) {
-                                curVoice = vs.get(i)[1];
-                                voiceVal.setText(vs.get(i)[0]);
+                        "选择音色", items, groups, new VoiceListAdapter.Listener() {
+                            public void onPick(VoiceItem vi) {
+                                curVoice = vi.raw;
+                                voiceVal.setText(vi.name);
                                 // 换音色 = 换一套"每音色数据"，重开宿主让插件界面显示这个音色的语气
                                 loadPluginAsync();
+                            }
+
+                            public void onAudition(VoiceItem vi) {
+                                Speaker spk = RelayService.speakerOrNull();
+                                if (spk == null) {
+                                    Toast.makeText(PluginTtsActivity.this,
+                                            "朗读没在跑（先打开中转）", Toast.LENGTH_SHORT).show();
+                                    return;
+                                }
+                                Prefs.setVoiceEngine(PluginTtsActivity.this, vi.raw,
+                                        EngineStore.ownerOfVoice(PluginTtsActivity.this, vi.raw));
+                                spk.interrupt();
+                                spk.feed(Prefs.tryText(PluginTtsActivity.this), vi.raw);
                             }
                         });
             }
