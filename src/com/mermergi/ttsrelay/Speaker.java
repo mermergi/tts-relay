@@ -549,9 +549,10 @@ public final class Speaker {
                     beat("起播流");
                     Handler hp = playH;
                     if (hp != null) hp.post(playNext);       // 队列里刚有东西：叫醒播放线程
-                    // 一个字节都没吐过的流，不享受"有声音在播就慢慢等"的宽限：
-                    // 那是宿主死了（跨引擎换声时两条会话互相踢），拖着只会白静音几十秒。
-                    // 8 秒没动静就判死 → 丢宿主重试，静音洞压到最小。
+                    // 一个字节都没吐过的流，不享受"有声音在播就慢慢等"的 90 秒宽限。
+                    // 但窗口要盖过「宿主重建 + WebSocket 握手」的全程（实测 12 秒+，
+                    // 计时器只认音频字节，握手不算活动）—— 否则每句都被砍在
+                    // SessionStarted 的瞬间。18 秒判死；真死了三振最多 54 秒跳过。
                     final HardCall.Clock streamClock = new HardCall.Clock() {
                         public long lastActivity() { return pluginClock.lastActivity(); }
                         public boolean hasLead() {
@@ -559,7 +560,7 @@ public final class Speaker {
                             return pluginClock.hasLead();
                         }
                     };
-                    HardCall.runIdle("合成", 8000L, 90000L, synthWait, Math.max(synthWait * 3, 120000L),
+                    HardCall.runIdle("合成", 18000L, 90000L, synthWait, Math.max(synthWait * 3, 120000L),
                             streamClock, new HardCall.Job<byte[]>() {
                         public byte[] run() throws Throwable {
                             EngineStore.synthTo(ctx, text_safe(job.text), job.voice, new AudioSink() {
